@@ -20,6 +20,8 @@ Validated on 2026-10-17 with synthetic FITS images and isolated test environment
 | Both wheel metadata checks | twine check --strict PASS |
 | Compiled source comparison | Public Rust, Python, web and installer source matches the container build source, allowing line-ending normalization |
 
+The Unicode filename result above verifies file loading. It does not verify Chinese glyph rendering or external clipboard paste. A later investigation reproduced missing Chinese glyphs in the native path field while the internal Unicode path and image loading remained correct; see [next release task FV-NEXT-001](../NEXT_RELEASE.md#fv-next-001-chinese-paths--中文路径支持).
+
 Wheel identities:
 
 | Asset | SHA256 |
