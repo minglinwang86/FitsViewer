@@ -1,12 +1,10 @@
-# FitsViewer — fitsrs edition
+# FitsViewer
 
-[中文说明](README.zh-CN.md) · [Commands](docs/COMMANDS.md) · [Build](docs/BUILDING.md) · [Releases](docs/RELEASING.md)
+[中文说明](README.zh-CN.md) · [Commands](docs/COMMANDS.md) · [Build](docs/BUILDING.md) · [Releases](https://github.com/minglinwang86/FitsViewer/releases)
 
-A read-only FITS image viewer with a Rust/fitsrs backend and a shared Rust/egui native and WebAssembly interface. Double-click a FITS file in JupyterLab, open it from a Linux terminal, or embed it in a Notebook.
+FitsViewer is a lightweight FITS viewer for quickly opening and visually inspecting research images on remote servers, in local containers, or on desktop computers. It supports FITS files and gzip-compressed FITS such as `.fits.gz`.
 
-**Release candidates: Linux / Windows 0.1.4rc2.** The Python distribution is `fitsviewer`; the terminal command is `fitsviewer`. Download the appropriate platform's assets from [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases); this package is not yet published on PyPI.
-
-Upgrading from rc1? Follow the [migration instructions](docs/releases/v0.1.4-rc.2.md) to remove the previous distribution before installing the renamed package.
+Double-click files in JupyterLab, launch the viewer from a Linux terminal, embed it in a Notebook, or use a native graphical window on Linux and Windows.
 
 ## Interface preview
 
@@ -37,14 +35,14 @@ The prebuilt wheel requires GNU/Linux with glibc; it does not cover Alpine/musl 
 
 ## Windows desktop installation
 
-Download `FitsViewer-0.1.4rc2-windows-x86_64-setup.exe` from the [Windows candidate](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.4-rc.2). Setup offers an optional existing Python/Conda environment for JupyterLab/Notebook and a separate default FITS file association checkbox. The desktop viewer needs no Python or server port. A portable ZIP and Windows wheel are also provided. See the [Windows installation, defaults and build guide](docs/WINDOWS.md).
+Windows builds include a Setup installer, a portable ZIP and a Python wheel. Published files are listed in [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases); source build instructions are in the [Windows guide](docs/WINDOWS.md). Setup offers an optional existing Python/Conda environment for JupyterLab/Notebook and a separate default FITS file association checkbox. The desktop viewer needs no Python or server port.
 
 ## Linux: install and double-click a FITS file
 
-Download the wheel from the [Linux candidate](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.4-rc.2). Activate the Conda or virtual environment that runs JupyterLab, then install the local file:
+Use a Linux wheel downloaded from [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases) or built from source. The Python package and command are `fitsviewer`; this project is not yet published on PyPI. Place the matching wheel in the current directory, activate the Conda or virtual environment that runs JupyterLab, then install it:
 
 ```bash
-python -m pip install --upgrade ./fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl
+python -m pip install --upgrade ./fitsviewer-*-py3-none-manylinux_2_28_x86_64.whl
 fitsviewer jupyter start --root "$HOME/data" --port 8082
 ```
 
@@ -81,13 +79,13 @@ fitsviewer install --python /path/to/env/bin/python --default-viewer no --deskto
 For a first pip installation into an existing Conda environment:
 
 ```bash
-conda run -n astro python -m pip install ./fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl
+conda run -n astro python -m pip install ./fitsviewer-*-py3-none-manylinux_2_28_x86_64.whl
 conda run -n astro fitsviewer defaults set --jupyter yes --desktop no
 ```
 
 For a Python/venv target, run its `bin/python -m pip install ...` and then its `bin/fitsviewer defaults set ...`. Replace `yes` with `no` to keep FitsViewer available through Open With without making it JupyterLab's default. No desktop is required for this route.
 
-For Git source installation, after the repository is published:
+For Git source installation:
 
 ```bash
 git clone https://github.com/minglinwang86/FitsViewer.git
@@ -167,19 +165,20 @@ Display changes reuse loaded pixels and do not modify FITS files. Brightness/con
 ## Data support and limits
 
 - Ordinary 2D Primary/Image HDUs, multiple HDUs and externally gzip-compressed FITS.
+- Direct compressed-file viewing supports `.fits.gz`, `.fit.gz` and `.fts.gz`. Extract ZIP or TAR archives before opening their FITS files.
 - BITPIX 8, 16, 32, 64, -32 and -64; typed raw storage is retained.
 - `BSCALE`, `BZERO`, integer `BLANK` and non-finite floating values are handled. Physical/display calculations use f64; raw large integers remain exact in the raw readout.
 - Up to 512 MiB per input/decompressed file and 32 Mi pixels per image. These are capacity limits, not a performance guarantee.
 
 Tile-compressed `.fz`, cube slicing, FITS tables, WCS sky coordinates, regions and photometry are not implemented. There is no tiled rendering, image pyramid or browser worker yet. Unsupported data produces an error or a disabled HDU. All fixtures in `examples/` are synthetic, including deliberately invalid validation inputs.
 
-`.fits.gz` is decompressed on the Linux backend; browser memory depends on the uncompressed pixels, WASM buffers and display textures. Closing a FITS document explicitly destroys its renderer before detaching the iframe. Independent ordinary FITS and gzip FITS tests each covered six 2048x2048 float32 images over eight cycles, repeated and early closes, with no surviving WASM memory instances. An additional instrumented run found no surviving viewer widgets or iframes. Browser/Jupyter caches and allocator reserves can keep process memory above its initial level. See [the memory validation report](docs/releases/MEMORY-0.1.4rc1.md); maximum-size images and long-running sessions remain outside these tests.
+`.fits.gz` is decompressed by the Rust reader; browser memory depends on the uncompressed pixels, WASM buffers and display textures. Closing a FITS document explicitly destroys its renderer before detaching the iframe. Independent ordinary FITS and gzip FITS tests each covered six 2048x2048 float32 images over eight cycles, repeated and early closes, with no surviving WASM memory instances. An additional instrumented run found no surviving viewer widgets or iframes. Browser/Jupyter caches and allocator reserves can keep process memory above its initial level. See [the memory validation report](docs/releases/MEMORY-0.1.4rc1.md); maximum-size images and long-running sessions remain outside these tests.
 
 ## Build and contribution
 
 [BUILDING.md](docs/BUILDING.md) provides a setup independent of any particular container path. Dependencies use Cargo/npm lockfiles, pinned build tools and a separate QA lockfile. Building produces artifacts; installation is explicit.
 
-See the [candidate release notes](docs/releases/v0.1.4-rc.2.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [public API](docs/API.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [public API](docs/API.md).
 
 ## License
 

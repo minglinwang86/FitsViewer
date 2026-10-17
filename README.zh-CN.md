@@ -1,12 +1,10 @@
-# FitsViewer — fitsrs 版
+# FitsViewer
 
-[English](README.md) · [基础命令](docs/COMMANDS.md) · [构建说明](docs/BUILDING.md) · [预发布流程](docs/RELEASING.md)
+[English](README.md) · [基础命令](docs/COMMANDS.md) · [构建说明](docs/BUILDING.md) · [发行文件](https://github.com/minglinwang86/FitsViewer/releases)
 
-一个只读 FITS 图像查看器：Rust/fitsrs 读取数据，Rust/egui 提供原生窗口与 WebAssembly 共用的界面。支持 JupyterLab 文件列表双击打开、Linux 终端调用和 Notebook 内嵌。
+FitsViewer 是一款轻量化、快速启动的 FITS 文件查看器，为科研中使用远程服务器、本地容器等环境时的人工查看和数据检查提供便捷的解决方案。支持 FITS 文件及 gzip 压缩 FITS（如 `.fits.gz`）。
 
-**候选版本：Linux / Windows 0.1.4rc2。** Python 包名为 `fitsviewer`，终端命令为 `fitsviewer`。请从 [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases) 下载对应平台的发行物；本项目尚未发布到 PyPI。
-
-从 rc1 升级时，请先按[迁移说明](docs/releases/v0.1.4-rc.2.md)移除旧发行包，再安装改名后的新包。
+可在 JupyterLab 文件列表中双击打开，通过 Linux 命令行调用，或在 Notebook 中内嵌查看；也支持 Linux 图形化桌面和 Windows 独立窗口。
 
 ## 界面预览
 
@@ -37,14 +35,14 @@ Windows、macOS 也可以通过 SSH 通道，在本机浏览器使用 Linux 服�
 
 ## Windows 桌面安装
 
-从 [Windows 候选版](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.4-rc.2) 下载 `FitsViewer-0.1.4rc2-windows-x86_64-setup.exe`。安装界面可选已有 Python/Conda 环境，用于绑定 JupyterLab/Notebook，并独立选择是否设为默认 FITS 查看器。独立桌面窗口无需 Python，也不占用服务端口。另提供免安装 ZIP 和 Windows wheel。安装、默认关联和构建方式见 [Windows 说明](docs/WINDOWS.md)。
+Windows 构建产物包括 Setup 安装器、免安装 ZIP 和 Python wheel。已发布文件列在 [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases)，源码构建步骤见 [Windows 说明](docs/WINDOWS.md)。安装界面可选已有 Python/Conda 环境，用于绑定 JupyterLab/Notebook，并独立选择是否设为默认 FITS 查看器。独立桌面窗口无需 Python，也不占用服务端口。
 
 ## Linux：安装并双击打开 FITS
 
-从 [Linux 候选版](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.4-rc.2) 下载 wheel。先激活实际启动 JupyterLab 的 Conda 或虚拟环境，再安装本地文件：
+使用从 [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases) 获取或从源码构建的 Linux wheel。Python 包名和终端命令均为 `fitsviewer`；本项目尚未发布到 PyPI。将对应 wheel 放入当前目录，激活实际启动 JupyterLab 的 Conda 或虚拟环境，再安装本地文件：
 
 ```bash
-python -m pip install --upgrade ./fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl
+python -m pip install --upgrade ./fitsviewer-*-py3-none-manylinux_2_28_x86_64.whl
 fitsviewer jupyter start --root "$HOME/data" --port 8082
 ```
 
@@ -81,13 +79,13 @@ fitsviewer install --python /path/to/env/bin/python --default-viewer no --deskto
 首次通过 pip 安装到已有 Conda 环境：
 
 ```bash
-conda run -n astro python -m pip install ./fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl
+conda run -n astro python -m pip install ./fitsviewer-*-py3-none-manylinux_2_28_x86_64.whl
 conda run -n astro fitsviewer defaults set --jupyter yes --desktop no
 ```
 
 Python/venv 环境则使用其 `bin/python -m pip install ...` 和 `bin/fitsviewer defaults set ...`。将 `yes` 改为 `no` 可取消 Jupyter 默认关联，同时保留 Open With 入口。此流程不需要图形桌面。
 
-仓库发布后，从 Git 源码安装：
+从 Git 源码安装：
 
 ```bash
 git clone https://github.com/minglinwang86/FitsViewer.git
@@ -167,19 +165,20 @@ show("image.fits", height=650)
 ## 数据支持及限制
 
 - 普通二维 Primary/Image HDU、多 HDU、外部 gzip 压缩 FITS。
+- 可直接打开 `.fits.gz`、`.fit.gz`、`.fts.gz`；ZIP、TAR 归档需先解压，再查看其中的 FITS 文件。
 - BITPIX 8、16、32、64、-32、-64，保留原始存储类型。
 - 处理 `BSCALE`、`BZERO`、整数 `BLANK` 和非有限浮点值。物理值和显示采用 f64；raw 大整数读数保留精度。
 - 单文件及解压后上限 512 MiB，二维图像上限 32 Mi 像素。这些是容量限制，不代表始终流畅。
 
 尚未实现分块压缩 `.fz`、数据立方切片、FITS 表格、WCS 天球坐标、区域、测光，也没有分块渲染、图像金字塔或浏览器 Worker。不支持的数据会报错或禁用对应 HDU。`examples/` 全部为合成样本，包括故意构造的无效测试文件。
 
-`.fits.gz` 在 Linux 后端解压；浏览器内存取决于解压后的像素、WASM 缓冲区及显示纹理。关闭 FITS 页签会在移除 iframe 前主动销毁渲染器。普通 FITS 与 gzip FITS 已各自独立测试：6 个 2048x2048 float32 图像反复开关 8 轮，以及单文件反复开关、加载中关闭，关闭后无存活的 WASM 内存实例；额外的对象检查确认无存活的查看器或 iframe。浏览器、Jupyter 缓存和分配器仍可能保留部分进程内存。详见[内存验证报告](docs/releases/MEMORY-0.1.4rc1.md)；最大尺寸图像和长时间会话不在此次验证范围内。
+`.fits.gz` 由 Rust 读取端解压；浏览器内存取决于解压后的像素、WASM 缓冲区及显示纹理。关闭 FITS 页签会在移除 iframe 前主动销毁渲染器。普通 FITS 与 gzip FITS 已各自独立测试：6 个 2048x2048 float32 图像反复开关 8 轮，以及单文件反复开关、加载中关闭，关闭后无存活的 WASM 内存实例；额外的对象检查确认无存活的查看器或 iframe。浏览器、Jupyter 缓存和分配器仍可能保留部分进程内存。详见[内存验证报告](docs/releases/MEMORY-0.1.4rc1.md)；最大尺寸图像和长时间会话不在此次验证范围内。
 
 ## 构建与贡献
 
 [BUILDING.md](docs/BUILDING.md) 提供不依赖特定容器路径的步骤。源码使用 Cargo/npm 锁文件、固定构建工具和独立 QA 锁文件。构建产出发行物，安装另行执行。
 
-另见[候选版说明](docs/releases/v0.1.4-rc.2.md)、[参与开发](CONTRIBUTING.md)、[安全问题](SECURITY.md)和[公开 API](docs/API.md)。
+另见[参与开发](CONTRIBUTING.md)、[安全问题](SECURITY.md)和[公开 API](docs/API.md)。
 
 ## 许可
 
