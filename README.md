@@ -6,6 +6,12 @@ A read-only FITS image viewer with a Rust/fitsrs backend and a shared Rust/egui 
 
 **Release candidate: 0.1.4rc1.** The Python distribution is `fitsview-jupyter`; the terminal command is `fitsview`. This is a separate project from the existing PyPI distribution named `fitsview`. Download the wheel from [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases); this package is not yet published on PyPI.
 
+## Interface preview
+
+![FITSView showing a synthetic FITS star field, scale and zoom controls](docs/images/viewer-interface.png)
+
+Actual running interface with the bundled synthetic `starfield.fits`. Use the mouse wheel to zoom, left-drag to pan, and right-drag to adjust brightness/contrast. The same viewer is available in JupyterLab and the native window.
+
 ## Requirements
 
 | Component | Requirement |
@@ -15,6 +21,8 @@ A read-only FITS image viewer with a Rust/fitsrs backend and a shared Rust/egui 
 | JupyterLab | 4.4 or newer, below 5; install into the environment running the server |
 | Browser | WebAssembly and WebGL; Linux Chromium is tested |
 | Native window | Optional X11/OpenGL display, including a separately configured forwarding session |
+
+The JupyterLab range means `4.4 <= version < 5`. JupyterLab 5.x has not been validated and is currently excluded by the Python and frontend dependency ranges. The native desktop window operates independently of JupyterLab. See the [official extension compatibility guidance](https://jupyterlab.readthedocs.io/en/stable/extension/extension_dev.html#overview-of-extensions).
 
 Windows and macOS can use a browser connected to the Linux server through SSH. They do not need the Linux wheel installed locally. Safari and actual X2Go/X11 forwarding have not been validated. Wheel users do not need Rust, Node.js or `jupyter lab build`.
 

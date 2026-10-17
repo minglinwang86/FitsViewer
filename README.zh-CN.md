@@ -6,6 +6,12 @@
 
 **候选版本：0.1.4rc1。** Python 包名为 `fitsview-jupyter`，终端命令为 `fitsview`。它与 PyPI 上已有的同名 `fitsview` 项目不同。请从 [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases) 下载 wheel；本项目尚未发布到 PyPI。
 
+## 界面预览
+
+![FITSView 显示合成 FITS 星场，以及 scale 和缩放控件](docs/images/viewer-interface.png)
+
+程序实际运行截图，使用随包提供的合成示例 `starfield.fits`。滚轮缩放、左键拖动平移、右键拖动调整亮度和对比度；JupyterLab 与原生窗口共用查看界面。
+
 ## 环境要求
 
 | 组件 | 要求 |
@@ -15,6 +21,8 @@
 | JupyterLab | 4.4 及以上、低于 5；安装到启动服务的环境 |
 | 浏览器 | 支持 WebAssembly、WebGL；已验证 Linux Chromium |
 | 原生窗口 | 可选；需要已配置的 X11/OpenGL 显示或转发环境 |
+
+JupyterLab 的范围表示 `4.4 <= 版本 < 5`。5.x 尚未验证，当前 Python 和前端扩展依赖暂时排除了 5.x。原生窗口独立运行，不受 JupyterLab 版本限制。参见 [JupyterLab 官方扩展兼容说明](https://jupyterlab.readthedocs.io/en/stable/extension/extension_dev.html#overview-of-extensions)。
 
 Windows、macOS 可以通过 SSH 通道，在本机浏览器使用 Linux 服务，无需在本机安装 Linux wheel。Safari 和真实 X2Go/X11 转发尚未验证。安装 wheel 无需 Rust、Node.js 或 `jupyter lab build`。
 
