@@ -1,0 +1,19 @@
+[package]
+name = "fitsview"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fitsview-core = { path = "../core" }
+fitsview-web = { path = "../viewer" }
+eframe = { version = "=0.32.3", default-features = false, features = ["default_fonts", "glow", "x11"] }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tower-http = { version = "0.6", features = ["fs"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+urlencoding = "2"
+ureq = { version = "2", default-features = false, features = ["json"] }
+uuid = { version = "1", features = ["v4"] }

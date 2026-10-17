@@ -1,0 +1,81 @@
+FITSView 0.1.4rc1 - environment dependencies / 环境依赖清单
+Repository / 仓库: https://github.com/minglinwang86/FitsViewer
+
+This is an environment checklist, not a pip requirements file.
+本文件用于检查完整环境。Python 运行依赖使用 requirements.txt，构建依赖使用 requirements-build.txt。
+
+1. Prebuilt wheel runtime / 预编译 wheel 运行环境
+   - GNU/Linux x86_64; glibc >= 2.28 and libgcc_s.so.1.
+   - Python >= 3.10 with pip.
+   - JupyterLab >= 4.4, < 5.
+   - jupyter-server-proxy >= 4.4, < 5.
+   - IPython >= 8 (Notebook embedding / Notebook 内嵌).
+   - Browser with WebAssembly and WebGL / 浏览器支持 WebAssembly、WebGL.
+
+   Python dependencies / Python 依赖安装:
+     python -m pip install -r requirements.txt
+   Install the FITSView wheel separately; pip also installs its declared dependencies.
+   FITSView 自身需要安装 wheel；直接安装 wheel 时 pip 会自动处理上述 Python 依赖。
+   Use the JupyterLab server's environment. A separate Notebook kernel needs the
+   importable package for show(). / 服务与内核分属两个环境时，按 README 分别安装。
+
+2. Optional Linux native window / 可选 Linux 原生窗口
+   - X11, or Wayland with XWayland; usable OpenGL/GLX/EGL.
+   - Typical Ubuntu 22.04 packages / Ubuntu 22.04 常用系统包:
+       libx11-6 libx11-xcb1 libxcursor1 libxrandr2 libxi6
+       libxkbcommon0 libxkbcommon-x11-0 libgl1 libegl1 libglx-mesa0
+   - Other distributions may use different package names.
+     其他发行版的系统包名可能不同；manylinux 标签并不保证显示驱动已配置。
+   - Desktop default/Open With registration / 桌面默认关联与打开方式:
+       xdg-utils shared-mime-info
+       desktop-file-utils (optional cache refresh / 可选桌面缓存刷新)
+   - X2Go requires a separately configured server/client and a working GLX session.
+     X2Go 需自行配置服务端、客户端及显示能力；真实 X2Go 尚未验证。
+
+3. Optional environment/remote tools / 可选环境与远程工具
+   - Conda: needed only for --conda-env selection; --python/--prefix also accept venvs.
+     选择 Conda 环境需可用的 conda 命令，或通过 --conda-exe 指定路径。
+   - Python venv: Ubuntu may need python3-venv or the selected version's venv package.
+     例如 Python 3.10 使用 python3.10-venv。
+   - SSH access: OpenSSH client on the browser computer and an accessible SSH server.
+     SSH 通道模式不需要 Linux 图形桌面；服务端无需安装浏览器。
+
+4. Source/Git build / 源码与 Git 构建
+   - Python >= 3.11 with venv (build environment / 构建环境).
+     Runtime target Python may still be 3.10+ / 目标运行环境仍可使用 Python 3.10+。
+   - Git, Bash, curl, C/C++ compiler, make, pkg-config.
+   - Typical Ubuntu headers / Ubuntu 常用开发包:
+       build-essential pkg-config python3-venv
+       libxkbcommon-dev libxkbcommon-x11-dev libx11-dev
+       libxrandr-dev libxi-dev libgl1-mesa-dev
+   - Rust 1.99.1 with wasm32-unknown-unknown, rustfmt, clippy.
+   - Node.js 24.22.0 and its bundled npm.
+   - wasm-bindgen-cli 0.2.129 (must match Cargo.lock / 必须匹配锁文件).
+   - cargo-zigbuild 0.23.4 and ziglang 0.13.0 for the glibc 2.28 build.
+   - Python build tools: exact versions in requirements-build.txt.
+   - Rust dependencies: Cargo.lock, including fitsrs 0.4.1.
+   - Frontend dependencies: jupyter/package-lock.json.
+   - Bootstrap installs development tools under .tools/; see docs/BUILDING.md.
+     bootstrap 将开发工具安装到项目 .tools/，不会替代所选的运行环境。
+   - scripts/install.py --from-source skips optional QA browser downloads.
+     Git 源码安装自动跳过测试浏览器；手动 bootstrap 可用 --no-qa 跳过。
+
+5. Optional validation tools / 可选验证工具
+   - Node Playwright 1.64.1 and Chromium: qa/package-lock.json.
+     npm ci --prefix qa
+     ./qa/node_modules/.bin/playwright install --with-deps chromium
+   - Native desktop tests: Xvfb, xwininfo (x11-utils), GIO (libglib2.0-bin),
+     desktop-file-validate (desktop-file-utils), xdg-utils, shared-mime-info.
+   - Native screenshot script: Pillow (validated with 12.3.0).
+   - Additional numerical scripts: NumPy and Astropy (available QA versions:
+     NumPy 2.5.2, Astropy 8.0.1). These are optional validation dependencies.
+   - Archived glibc loader checks: dpkg-deb (dpkg), xz support, network access.
+
+6. Verified scope / 已验证范围
+   - Ubuntu 22.04 x86_64 container; current wheel is manylinux_2_28_x86_64.
+   - Python 3.10.12 + JupyterLab 4.4.0; Python 3.14.6 + JupyterLab 4.6.4.
+   - glibc 2.28 and 2.31 isolated loader/backend checks, not full distribution tests.
+   - Native window and desktop launcher with isolated Xvfb/software OpenGL.
+   - Alpine/musl and ARM wheels, Safari and real X2Go forwarding remain unvalidated.
+   - Wheel users do not need the source build or validation toolchains.
+     安装预编译 wheel 无需源码构建或验证工具链。

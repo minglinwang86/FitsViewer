@@ -1,0 +1,68 @@
+name: Build and validate candidate
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: System build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+      - name: Prepare development tools
+        run: bash scripts/bootstrap.sh "$(command -v python)"
+      - name: Build and check
+        shell: bash
+        run: |
+          source scripts/env.sh
+          bash scripts/build.sh --portable --repair
+          cargo test --locked -p fitsview-core
+          python -m twine check --strict dist/*.whl
+      - uses: actions/upload-artifact@v5
+        with:
+          name: candidate-wheel
+          path: dist/*.whl
+  integration:
+    needs: build
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: '3.10'
+            jupyter: '==4.4.0'
+          - python: '3.14'
+            jupyter: '>=4.4,<5'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.22.0'
+      - uses: actions/download-artifact@v6
+        with:
+          name: candidate-wheel
+          path: dist
+      - name: Prepare browser QA
+        run: npm ci --prefix qa && ./qa/node_modules/.bin/playwright install --with-deps chromium
+      - name: Desktop launcher test tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xdg-utils shared-mime-info desktop-file-utils libglib2.0-bin xvfb x11-utils
+      - name: Isolated wheel regression
+        shell: bash
+        run: python scripts/verify_wheel.py "$(find dist -maxdepth 1 -name '*.whl' -print -quit)" --jupyterlab '${{ matrix.jupyter }}'
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: validation-${{ matrix.python }}
+          path: reports/

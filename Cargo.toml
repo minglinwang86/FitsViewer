@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/core", "crates/viewer", "crates/server"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.4-rc.1"
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+opt-level = 2
+
+[profile.release.package.fitsview-web]
+opt-level = "s"

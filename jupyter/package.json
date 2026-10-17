@@ -1,0 +1,36 @@
+{
+  "name": "fitsview-jupyter",
+  "version": "0.1.4-rc.1",
+  "private": true,
+  "description": "FITSView document viewer for JupyterLab",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "scripts": {
+    "build": "tsc && jupyter labextension build . --development=False"
+  },
+  "dependencies": {
+    "@jupyterlab/application": "^4.4.0",
+    "@jupyterlab/docregistry": "^4.4.0",
+    "@jupyterlab/docmanager": "^4.4.0",
+    "@jupyterlab/coreutils": "^6.4.0",
+    "@jupyterlab/services": "^7.4.0",
+    "@lumino/widgets": "^2.7.2"
+  },
+  "devDependencies": {
+    "@jupyterlab/builder": "^4.5.11",
+    "typescript": "~5.9.3"
+  },
+  "jupyterlab": {
+    "extension": true,
+    "outputDir": "fitsview_jupyter/labextension",
+    "sharedPackages": {
+      "@jupyterlab/application": {"bundled": false, "singleton": true, "requiredVersion": "^4.4.0"},
+      "@jupyterlab/docregistry": {"bundled": false, "singleton": true, "requiredVersion": "^4.4.0"},
+      "@jupyterlab/docmanager": {"bundled": false, "singleton": true, "requiredVersion": "^4.4.0"},
+      "@jupyterlab/coreutils": {"bundled": false, "singleton": true, "requiredVersion": "^6.4.0"},
+      "@jupyterlab/services": {"bundled": false, "singleton": true, "requiredVersion": "^7.4.0"},
+      "@lumino/widgets": {"bundled": false, "singleton": true, "requiredVersion": "^2.7.2"}
+    }
+  }
+}
