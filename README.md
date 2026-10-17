@@ -10,9 +10,11 @@ Upgrading from rc1? Follow the [migration instructions](docs/releases/v0.1.4-rc.
 
 ## Interface preview
 
-![FitsViewer showing a synthetic FITS star field, scale and zoom controls](docs/images/viewer-interface.png)
+![FitsViewer displaying the JWST NIRCam F277W FITS image of gravitational-lensing cluster SMACS 0723](docs/images/jwst-smacs0723-interface.png)
 
-Actual running interface with the bundled synthetic `starfield.fits`. Use the mouse wheel to zoom, left-drag to pan, and right-drag to adjust brightness/contrast. The same viewer is available in JupyterLab and the native window.
+Actual FitsViewer screenshot of the SMACS 0723 gravitational-lensing field in [Webb's First Deep Field](https://science.nasa.gov/asset/webb/webbs-first-deep-field-nircam-image/). This grayscale view uses a 1.4 arcminute crop of the NIRCam F277W FITS mosaic with Asinh stretch. Use the mouse wheel to zoom, left-drag to pan, and right-drag to adjust brightness/contrast.
+
+Observations: NASA, ESA, CSA, STScI. FITS mosaic: [Gabriel Brammer (2022)](https://doi.org/10.5281/zenodo.6874301), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). [Preview data and capture details](docs/images/README.md).
 
 ## Requirements
 

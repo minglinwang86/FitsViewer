@@ -10,9 +10,11 @@
 
 ## 界面预览
 
-![FitsViewer 显示合成 FITS 星场，以及 scale 和缩放控件](docs/images/viewer-interface.png)
+![FitsViewer 显示 JWST NIRCam F277W 波段的 SMACS 0723 引力透镜星系团 FITS 图像](docs/images/jwst-smacs0723-interface.png)
 
-程序实际运行截图，使用随包提供的合成示例 `starfield.fits`。滚轮缩放、左键拖动平移、右键拖动调整亮度和对比度；JupyterLab 与原生窗口共用查看界面。
+程序实际运行截图，显示[韦布首张深场](https://science.nasa.gov/asset/webb/webbs-first-deep-field-nircam-image/)中的 SMACS 0723 引力透镜区。采用 NIRCam F277W 单波段 FITS 灰度图，裁剪视场约 1.4 角分，使用 Asinh 拉伸。滚轮缩放、左键拖动平移、右键拖动调整亮度和对比度。
+
+观测来源：NASA、ESA、CSA、STScI。FITS 拼接数据：[Gabriel Brammer（2022）](https://doi.org/10.5281/zenodo.6874301)，采用 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 许可。参见[预览数据和截图记录](docs/images/README.md)。
 
 ## 环境要求
 
