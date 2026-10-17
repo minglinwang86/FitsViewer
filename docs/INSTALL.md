@@ -2,14 +2,15 @@
 
 安装包包含 Rust 程序、WASM 网页、JupyterLab 预编译扩展和 Notebook 内嵌接口。使用 wheel 不需要 Rust、Node.js，也不需要执行 `jupyter lab build`。
 
-目前交付 Linux x86_64 wheel，要求 glibc 2.28 及以上，通过固定 Zig/Rust 工具链构建并经 auditwheel 检查。其他架构需要另行构建；原生 `--native` 窗口另需 X11/OpenGL 系统库，浏览器入口不需要桌面显示环境。
+当前提供 Linux x86_64 wheel（glibc 2.28 及以上）和 Windows x64 wheel、Setup 安装器、免安装 ZIP，下载链接和逐步命令见 [当前版本安装说明](releases/v0.1.4-rc.2.md)。Linux 原生 `--native` 窗口另需 X11/OpenGL 系统库，浏览器入口不需要桌面显示环境。Jupyter 集成需要 Python 3.10+、JupyterLab 4.4 及以上且低于 5。
 
 ## 安装到运行 JupyterLab 的环境
 
 先激活实际启动 JupyterLab 的 Conda 或 venv 环境，然后安装下载的 wheel：
 
 ```bash
-python -m pip install --upgrade /path/to/fitsviewer-0.1.4rc1-py3-none-manylinux_2_28_x86_64.whl
+python -m pip install --upgrade "https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.4-rc.2/fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl"
+fitsviewer defaults set --jupyter yes --desktop no
 ```
 
 安装完成后重新启动该环境中的 JupyterLab，并刷新浏览器。扩展会自动注册 `.fits`、`.fit`、`.fts`、对应 gzip 文件及主要大写后缀。双击 FITS 文件就会默认使用 FitsViewer，支持缩放、scale 切换和右键亮度/对比度调节。`.fz` 会识别为 FITS，但当前内核仍不支持其压缩图像格式。
@@ -27,7 +28,7 @@ jupyter labextension list
 jupyter server extension list
 ```
 
-应分别显示 `fitsviewer` 和 `fitsviewer` 已启用。若 FITS 的默认打开方式曾被用户改过，在文件列表中右键文件，选择 **Open With → FitsViewer**；再检查 JupyterLab 的默认查看器设置。若另一扩展也声明 FITS 为默认类型，需要选择一次所需查看器。
+前端应显示 `fitsviewer` 已启用，后端应显示 `fitsviewer` 和 `jupyter_server_proxy` 已启用。若 FITS 的默认打开方式曾被用户改过，在文件列表中右键文件，选择 **Open With → FitsViewer**；再检查 JupyterLab 的默认查看器设置。若另一扩展也声明 FITS 为默认类型，需要选择一次所需查看器。
 
 ## Notebook 内嵌
 
@@ -78,7 +79,7 @@ python scripts/build_wheel.py --repair
 用隔离环境验证安装、默认打开、内嵌、命令行和卸载：
 
 ```bash
-python scripts/verify_wheel.py dist/fitsviewer-0.1.4rc1-py3-none-manylinux_2_28_x86_64.whl
+python scripts/verify_wheel.py dist/fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl
 ```
 
 参考：[JupyterLab 预编译扩展分发](https://jupyterlab.readthedocs.io/en/stable/extension/extension_dev.html#distributing-a-prebuilt-extension)、[Jupyter Server Proxy 的 Python 包注册](https://jupyter-server-proxy.readthedocs.io/en/latest/server-process.html#specifying-config-from-python-packages)。

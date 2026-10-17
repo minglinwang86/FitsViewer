@@ -12,13 +12,13 @@
 - Previous Windows fallback defaults restored on removal; protected UserChoice is handled through Windows Settings.
 - Clarified the JupyterLab `>=4.4,<5` support range and its independence from native viewing.
 
-## 0.1.4rc1 — Linux prerelease, 2026-10-17
+### Included Linux and Jupyter functionality
 
 - English/Chinese public READMEs, portable examples, support boundaries and release notes.
 - Primary MIT license and bundled dependency/font notices included in distributions.
 - Python long description and prerelease metadata; strict wheel metadata validation.
 - Portable build/bootstrap, explicit installation, locked QA dependencies and CI checks.
-- Clean source archive, checksums and a release plan awaiting maintainer approval.
+- Clean source archive and release checksums.
 - Frontend shared dependency ranges aligned with the JupyterLab 4.4 support floor.
 - Portable x86_64 wheel build with a glibc 2.28 baseline.
 - Terminal installation choices for Python/Conda and Jupyter/desktop defaults, shared by pip and Git routes.
@@ -26,7 +26,7 @@
 - Explicit WebRunner/texture cleanup before a Jupyter document is detached; disconnected path signals and stopped popup polling on close.
 - Multi-file memory diagnostics with a plain-text Jupyter control, weak-reference checks and isolated process measurements.
 
-中文：补齐中英文说明、许可、包元数据、构建与验证入口；Linux 候选版已发布。
+中文：包含 Linux/Jupyter 查看功能、中英文说明、许可、包元数据、构建与验证入口。
 
 ## 0.1.3 — local build, 2026-10-16
 
