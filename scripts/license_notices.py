@@ -15,7 +15,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--offline", action="store_true")
 args = parser.parse_args()
 packages = {}
-for target in ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]:
+for target in ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-gnu", "wasm32-unknown-unknown"]:
     command = ["cargo", "metadata", "--locked", "--format-version", "1", "--filter-platform", target]
     if args.offline: command.append("--offline")
     metadata = json.loads(subprocess.check_output(command, cwd=root, text=True))
@@ -84,6 +84,11 @@ for package in sorted(packages.values(), key=lambda p: (p["name"], p["version"])
 lines = ["# Third-party notices / 第三方许可", "",
          "Project source is MIT. This inventory covers locked Cargo dependencies reachable in native/WASM build graphs, including build dependencies for completeness. It does not assert every crate is linked into every binary.", "",
          "Dependencies and bundled fonts retain their original terms. Full texts are under `licenses/`. Jupyter/Lumino frontend packages are shared by the host; generated frontend notices accompany the prebuilt extension.", ""]
+if (root/'licenses/windows/MinGW-w64-CRT.txt').is_file():
+    lines.extend(['## Windows native runtime / Windows 原生运行时','',
+        'The MinGW build also includes compiler/CRT runtime components. These are outside Cargo metadata. Original notices are included separately; LicenseRef-MinGW-w64-CRT refers to the MinGW-w64 CRT notice collection.', '',
+        '- [MinGW-w64 CRT notices](licenses/windows/MinGW-w64-CRT.txt)',
+        '- [GCC runtime notices and GCC Runtime Library Exception](licenses/windows/GCC-runtime-copyright.txt)', ''])
 for p in inventory:
     lines.extend(["## " + p["name"] + " " + p["version"], "", "License: `" + str(p["license"]) + "`.", ""])
     if p["authors"]: lines.extend(["Upstream authors: " + "; ".join(p["authors"]), ""])

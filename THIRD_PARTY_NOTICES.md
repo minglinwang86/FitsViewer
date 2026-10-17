@@ -83,6 +83,15 @@ Source: https://github.com/rust-cli/anstyle
 - [licenses/rust/anstyle-query-1.1.5/LICENSE-APACHE](licenses/rust/anstyle-query-1.1.5/LICENSE-APACHE)
 - [licenses/rust/anstyle-query-1.1.5/LICENSE-MIT](licenses/rust/anstyle-query-1.1.5/LICENSE-MIT)
 
+## anstyle-wincon 3.0.11
+
+License: `MIT OR Apache-2.0`.
+
+Source: https://github.com/rust-cli/anstyle
+
+- [licenses/rust/anstyle-wincon-3.0.11/LICENSE-APACHE](licenses/rust/anstyle-wincon-3.0.11/LICENSE-APACHE)
+- [licenses/rust/anstyle-wincon-3.0.11/LICENSE-MIT](licenses/rust/anstyle-wincon-3.0.11/LICENSE-MIT)
+
 ## arboard 3.7.0
 
 License: `MIT OR Apache-2.0`.
@@ -369,6 +378,16 @@ Source: https://github.com/clap-rs/clap
 - [licenses/rust/clap_lex-1.1.1/LICENSE-APACHE](licenses/rust/clap_lex-1.1.1/LICENSE-APACHE)
 - [licenses/rust/clap_lex-1.1.1/LICENSE-MIT](licenses/rust/clap_lex-1.1.1/LICENSE-MIT)
 
+## clipboard-win 5.4.1
+
+License: `BSL-1.0`.
+
+Upstream authors: Douman <douman@gmx.se>
+
+Source: https://github.com/DoumanAsh/clipboard-win
+
+- [licenses/rust/clipboard-win-5.4.1/upstream-LICENSE](licenses/rust/clipboard-win-5.4.1/upstream-LICENSE)
+
 ## codespan-reporting 0.12.0
 
 License: `Apache-2.0`.
@@ -606,6 +625,16 @@ Source: https://github.com/lambda-fairy/rust-errno
 
 - [licenses/rust/errno-0.3.14/LICENSE-APACHE](licenses/rust/errno-0.3.14/LICENSE-APACHE)
 - [licenses/rust/errno-0.3.14/LICENSE-MIT](licenses/rust/errno-0.3.14/LICENSE-MIT)
+
+## error-code 3.4.0
+
+License: `BSL-1.0`.
+
+Upstream authors: Douman <douman@gmx.se>
+
+Source: https://github.com/DoumanAsh/error-code
+
+- [licenses/rust/error-code-3.4.0/LICENSE](licenses/rust/error-code-3.4.0/LICENSE)
 
 ## fastrand 2.5.0
 
@@ -865,6 +894,16 @@ Upstream authors: Kirill Chibisov <contact@kchibisov.com>
 Source: https://github.com/rust-windowing/glutin
 
 - [licenses/rust/glutin_glx_sys-0.6.1/LICENSE](licenses/rust/glutin_glx_sys-0.6.1/LICENSE)
+
+## glutin_wgl_sys 0.6.1
+
+License: `Apache-2.0`.
+
+Upstream authors: Kirill Chibisov <contact@kchibisov.com>
+
+Source: https://github.com/rust-windowing/glutin
+
+- [licenses/rust/glutin_wgl_sys-0.6.1/LICENSE](licenses/rust/glutin_wgl_sys-0.6.1/LICENSE)
 
 ## half 2.7.1
 
@@ -1425,6 +1464,15 @@ Source: https://github.com/matklad/once_cell
 
 - [licenses/rust/once_cell-1.21.4/LICENSE-APACHE](licenses/rust/once_cell-1.21.4/LICENSE-APACHE)
 - [licenses/rust/once_cell-1.21.4/LICENSE-MIT](licenses/rust/once_cell-1.21.4/LICENSE-MIT)
+
+## once_cell_polyfill 1.70.2
+
+License: `MIT OR Apache-2.0`.
+
+Source: https://github.com/polyfill-rs/once_cell_polyfill
+
+- [licenses/rust/once_cell_polyfill-1.70.2/LICENSE-APACHE](licenses/rust/once_cell_polyfill-1.70.2/LICENSE-APACHE)
+- [licenses/rust/once_cell_polyfill-1.70.2/LICENSE-MIT](licenses/rust/once_cell_polyfill-1.70.2/LICENSE-MIT)
 
 ## owned_ttf_parser 0.25.1
 
@@ -2670,6 +2718,101 @@ Source: https://github.com/gfx-rs/wgpu
 - [licenses/rust/wgpu-types-25.0.0/LICENSE.APACHE](licenses/rust/wgpu-types-25.0.0/LICENSE.APACHE)
 - [licenses/rust/wgpu-types-25.0.0/LICENSE.MIT](licenses/rust/wgpu-types-25.0.0/LICENSE.MIT)
 
+## winapi 0.3.9
+
+License: `MIT/Apache-2.0`.
+
+Upstream authors: Peter Atashian <retep998@gmail.com>
+
+Source: https://github.com/retep998/winapi-rs
+
+- [licenses/rust/winapi-0.3.9/LICENSE-APACHE](licenses/rust/winapi-0.3.9/LICENSE-APACHE)
+- [licenses/rust/winapi-0.3.9/LICENSE-MIT](licenses/rust/winapi-0.3.9/LICENSE-MIT)
+
+## winapi-util 0.1.11
+
+License: `Unlicense OR MIT`.
+
+Upstream authors: Andrew Gallant <jamslam@gmail.com>
+
+Source: https://github.com/BurntSushi/winapi-util
+
+- [licenses/rust/winapi-util-0.1.11/COPYING](licenses/rust/winapi-util-0.1.11/COPYING)
+- [licenses/rust/winapi-util-0.1.11/LICENSE-MIT](licenses/rust/winapi-util-0.1.11/LICENSE-MIT)
+- [licenses/rust/winapi-util-0.1.11/UNLICENSE](licenses/rust/winapi-util-0.1.11/UNLICENSE)
+
+## winapi-x86_64-pc-windows-gnu 0.4.0
+
+License: `MIT/Apache-2.0`.
+
+Upstream authors: Peter Atashian <retep998@gmail.com>
+
+Source: https://github.com/retep998/winapi-rs
+
+- [licenses/rust/winapi-x86_64-pc-windows-gnu-0.4.0/lib/libwinapi_oemlicense.a](licenses/rust/winapi-x86_64-pc-windows-gnu-0.4.0/lib/libwinapi_oemlicense.a)
+
+## windows-link 0.2.1
+
+License: `MIT OR Apache-2.0`.
+
+Source: https://github.com/microsoft/windows-rs
+
+- [licenses/rust/windows-link-0.2.1/license-apache-2.0](licenses/rust/windows-link-0.2.1/license-apache-2.0)
+- [licenses/rust/windows-link-0.2.1/license-mit](licenses/rust/windows-link-0.2.1/license-mit)
+
+## windows-sys 0.52.0
+
+License: `MIT OR Apache-2.0`.
+
+Upstream authors: Microsoft
+
+Source: https://github.com/microsoft/windows-rs
+
+- [licenses/rust/windows-sys-0.52.0/license-apache-2.0](licenses/rust/windows-sys-0.52.0/license-apache-2.0)
+- [licenses/rust/windows-sys-0.52.0/license-mit](licenses/rust/windows-sys-0.52.0/license-mit)
+
+## windows-sys 0.59.0
+
+License: `MIT OR Apache-2.0`.
+
+Upstream authors: Microsoft
+
+Source: https://github.com/microsoft/windows-rs
+
+- [licenses/rust/windows-sys-0.59.0/license-apache-2.0](licenses/rust/windows-sys-0.59.0/license-apache-2.0)
+- [licenses/rust/windows-sys-0.59.0/license-mit](licenses/rust/windows-sys-0.59.0/license-mit)
+
+## windows-sys 0.61.2
+
+License: `MIT OR Apache-2.0`.
+
+Source: https://github.com/microsoft/windows-rs
+
+- [licenses/rust/windows-sys-0.61.2/license-apache-2.0](licenses/rust/windows-sys-0.61.2/license-apache-2.0)
+- [licenses/rust/windows-sys-0.61.2/license-mit](licenses/rust/windows-sys-0.61.2/license-mit)
+
+## windows-targets 0.52.6
+
+License: `MIT OR Apache-2.0`.
+
+Upstream authors: Microsoft
+
+Source: https://github.com/microsoft/windows-rs
+
+- [licenses/rust/windows-targets-0.52.6/license-apache-2.0](licenses/rust/windows-targets-0.52.6/license-apache-2.0)
+- [licenses/rust/windows-targets-0.52.6/license-mit](licenses/rust/windows-targets-0.52.6/license-mit)
+
+## windows_x86_64_gnu 0.52.6
+
+License: `MIT OR Apache-2.0`.
+
+Upstream authors: Microsoft
+
+Source: https://github.com/microsoft/windows-rs
+
+- [licenses/rust/windows_x86_64_gnu-0.52.6/license-apache-2.0](licenses/rust/windows_x86_64_gnu-0.52.6/license-apache-2.0)
+- [licenses/rust/windows_x86_64_gnu-0.52.6/license-mit](licenses/rust/windows_x86_64_gnu-0.52.6/license-mit)
+
 ## winit 0.30.13
 
 License: `Apache-2.0`.
@@ -2904,3 +3047,10 @@ Source: https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg
 - [licenses/rust/zune-jpeg-0.5.15/LICENSE-APACHE](licenses/rust/zune-jpeg-0.5.15/LICENSE-APACHE)
 - [licenses/rust/zune-jpeg-0.5.15/LICENSE-MIT](licenses/rust/zune-jpeg-0.5.15/LICENSE-MIT)
 - [licenses/rust/zune-jpeg-0.5.15/LICENSE-ZLIB](licenses/rust/zune-jpeg-0.5.15/LICENSE-ZLIB)
+
+## Windows native runtime / Windows runtime
+
+The MinGW build includes compiler/CRT runtime components outside Cargo metadata. LicenseRef-MinGW-w64-CRT refers to the MinGW-w64 CRT notice collection.
+
+- [MinGW-w64 CRT notices](licenses/windows/MinGW-w64-CRT.txt)
+- [GCC runtime notices and Runtime Library Exception](licenses/windows/GCC-runtime-copyright.txt)

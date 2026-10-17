@@ -11,15 +11,16 @@ DEFAULTS = {"jupyter_port": 8082, "browser_port": None, "viewer_port": 8765,
 
 
 def config_path():
-    override = os.environ.get("FITSVIEW_CONFIG")
+    override = os.environ.get("FITSVIEWER_CONFIG")
     if override:
         return Path(override).expanduser().resolve()
-    home = os.environ.get("FITSVIEW_HOME")
+    home = os.environ.get("FITSVIEWER_HOME")
     if home and (Path(home) / "Cargo.toml").is_file():
         return Path(home).resolve() / ".runtime/config.json"
-    base = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+    fallback = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "FitsViewer/config" if os.name=='nt' else Path.home()/'.config'
+    base = Path(os.environ.get("XDG_CONFIG_HOME", str(fallback)))
     environment = hashlib.sha256(str(Path(sys.prefix).resolve()).encode()).hexdigest()[:16]
-    return base / "fitsview" / (environment + ".json")
+    return base / "fitsviewer" / (environment + ".json")
 
 
 def validate(settings):

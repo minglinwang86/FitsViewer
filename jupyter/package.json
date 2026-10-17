@@ -1,8 +1,8 @@
 {
-  "name": "fitsview-jupyter",
-  "version": "0.1.4-rc.1",
+  "name": "fitsviewer",
+  "version": "0.1.4-rc.2",
   "private": true,
-  "description": "FITSView document viewer for JupyterLab",
+  "description": "FitsViewer document viewer for JupyterLab",
   "license": "MIT",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -23,7 +23,7 @@
   },
   "jupyterlab": {
     "extension": true,
-    "outputDir": "fitsview_jupyter/labextension",
+    "outputDir": "fitsviewer/labextension",
     "sharedPackages": {
       "@jupyterlab/application": {"bundled": false, "singleton": true, "requiredVersion": "^4.4.0"},
       "@jupyterlab/docregistry": {"bundled": false, "singleton": true, "requiredVersion": "^4.4.0"},

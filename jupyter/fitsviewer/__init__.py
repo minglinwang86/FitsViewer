@@ -32,8 +32,8 @@ def show(path, hdu=None, height=650, base_url=None):
         if not isinstance(hdu, int) or hdu < 0:
             raise ValueError("hdu must be a non-negative integer")
         query["hdu"] = hdu
-    prefix = base_url if base_url is not None else os.environ.get("FITSVIEW_JUPYTER_BASE_URL", "/")
-    url = prefix.rstrip("/") + "/fitsview/?" + urlencode(query)
+    prefix = base_url if base_url is not None else os.environ.get("FITSVIEWER_JUPYTER_BASE_URL", "/")
+    url = prefix.rstrip("/") + "/fitsviewer/?" + urlencode(query)
     return IFrame(src=url, width="100%", height=height)
 
 

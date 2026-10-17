@@ -28,7 +28,7 @@ try:
     runtime.chmod(0o700)
     env["XDG_RUNTIME_DIR"] = str(runtime)
     with (root / "logs/native.log").open("wb") as log:
-        app = subprocess.Popen([str(root / "target/release/fitsview"), "--native", str(root / "examples/starfield.fits")], env=env, stdout=log, stderr=subprocess.STDOUT)
+        app = subprocess.Popen([str(root / "target/release/fitsviewer"), "--native", str(root / "examples/starfield.fits")], env=env, stdout=log, stderr=subprocess.STDOUT)
     children.append(app)
     time.sleep(5)
     assert app.poll() is None, (root / "logs/native.log").read_text()
@@ -40,7 +40,7 @@ try:
     windows = ""
     if shutil.which("xwininfo"):
         windows = subprocess.check_output(["xwininfo", "-root", "-tree"], env=env, text=True)
-        assert "FITSView" in windows
+        assert "FitsViewer" in windows
     report = {"passed": True, "native_window_alive": True, "screenshot_nonblank": True, "display": "isolated Xvfb", "forwarding_tested": False, "window_tree": windows}
     (root / "reports/native_validation.json").write_text(json.dumps(report, indent=2))
     print(json.dumps({"passed": True, "native_window": True}))

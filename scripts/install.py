@@ -8,6 +8,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+import types
 
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(add_help=False)
@@ -18,7 +19,13 @@ if args.from_source and not any(a in {"--check", "--help", "-h"} for a in instal
     if "--wheel" in installation: raise SystemExit("Choose --from-source or --wheel")
     subprocess.run(["bash", str(root / "scripts/bootstrap.sh"), args.build_python, "--no-qa"], cwd=root, check=True)
     subprocess.run(["bash", str(root / "scripts/build.sh"), "--portable", "--repair"], cwd=root, check=True)
-spec = importlib.util.spec_from_file_location("fitsview_installer", root / "jupyter/fitsview_jupyter/install.py")
+# Supply a package context for the installer's relative standard-library helpers.
+# 提供包上下文以加载相对辅助模块，无需在启动安装器的环境预装 Jupyter。
+package = types.ModuleType('fitsviewer')
+package.__path__ = [str(root / 'jupyter/fitsviewer')]
+sys.modules['fitsviewer'] = package
+spec = importlib.util.spec_from_file_location("fitsviewer.install", root / "jupyter/fitsviewer/install.py")
 module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 raise SystemExit(module.install(installation))

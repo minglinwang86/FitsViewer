@@ -1,6 +1,6 @@
 # Build and validate / 构建与验证
 
-Runtime wheel users need Python 3.10+. Building uses Python 3.11+ with `venv`, Rust 1.99.1 and Node.js 24.22.0. The bootstrap installs development tools under `.tools/` in the checkout; it does not install FITSView into your science environment.
+Runtime wheel users need Python 3.10+. Building uses Python 3.11+ with `venv`, Rust 1.99.1 and Node.js 24.22.0. The bootstrap installs development tools under `.tools/` in the checkout; it does not install FitsViewer into your science environment.
 
 On Ubuntu 22.04, install system prerequisites in a development machine/container:
 
@@ -22,9 +22,9 @@ The bootstrap pins Rust/Node and installs `requirements-build.txt` in `.tools/bu
 Use `bash scripts/bootstrap.sh /path/to/python3.11 --no-qa` to omit Playwright/Chromium downloads when only building. `scripts/install.py --from-source` selects this option automatically. Browser regression tests need the QA dependencies prepared separately.
 
 ```bash
-python -m twine check --strict dist/fitsview_jupyter-0.1.4rc1-py3-none-manylinux_2_28_x86_64.whl
-cargo test --locked -p fitsview-core
-python scripts/verify_wheel.py dist/fitsview_jupyter-0.1.4rc1-py3-none-manylinux_2_28_x86_64.whl
+python -m twine check --strict dist/fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl
+cargo test --locked -p fitsviewer-core
+python scripts/verify_wheel.py dist/fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl
 ```
 
 The wheel check creates temporary Python environments and its own authenticated Jupyter server, exercises default double-click opening, stretches, right-drag, CLI, Notebook embedding, binding and uninstall, then removes those environments. It writes reports and screenshots under `reports/`; existing Jupyter servers are not restarted.
@@ -32,7 +32,7 @@ The wheel check creates temporary Python environments and its own authenticated 
 To test the support floor, use a Python 3.10+ interpreter with venv and the prepared QA tools:
 
 ```bash
-python scripts/verify_wheel.py dist/fitsview_jupyter-0.1.4rc1-py3-none-manylinux_2_28_x86_64.whl --jupyterlab '==4.4.0'
+python scripts/verify_wheel.py dist/fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl --jupyterlab '==4.4.0'
 ```
 
 The CI workflow builds on Ubuntu 22.04 and runs isolated wheel checks. A workflow file in the local candidate is not evidence that hosted CI has already run; consult the actual GitHub run after the source is pushed.
@@ -43,8 +43,8 @@ For multi-document memory diagnostics, install the candidate in a separate test 
 
 ```bash
 python -m venv .tools/memory-env
-.tools/memory-env/bin/python -m pip install dist/fitsview_jupyter-0.1.4rc1-py3-none-manylinux_2_28_x86_64.whl
-python scripts/verify_memory.py --python "$PWD/.tools/memory-env/bin/python" --wheel dist/fitsview_jupyter-0.1.4rc1-py3-none-manylinux_2_28_x86_64.whl --label candidate --cycles 8
+.tools/memory-env/bin/python -m pip install dist/fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl
+python scripts/verify_memory.py --python "$PWD/.tools/memory-env/bin/python" --wheel dist/fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl --label candidate --cycles 8
 ```
 
 The test creates synthetic 2048x2048 float32 gzip FITS files; add `--uncompressed` to test ordinary `.fits` independently. It uses its own Jupyter/browser processes and records PSS/RSS, JS heap, frame counts, explicit renderer releases and weak-reference survival. `--control` exercises ordinary text editors; `--probe` inspects the loaded frontend. Browser memory-pressure notifications target only the isolated test browser. Raw process memory also includes caches and allocator reserves, so it is reported separately from live viewer/WASM objects.

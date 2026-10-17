@@ -10,7 +10,7 @@ def status():
 
 
 def command(arguments):
-    parser = argparse.ArgumentParser(prog="fitsview defaults")
+    parser = argparse.ArgumentParser(prog="fitsviewer defaults")
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("status")
     setter = sub.add_parser("set")

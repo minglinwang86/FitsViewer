@@ -7,16 +7,23 @@ import shutil
 import subprocess
 import sys
 
-IDENTIFIER = "fitsview.desktop"
+IDENTIFIER = "fitsviewer.desktop"
 MIMES = ["image/fits", "application/fits", "application/x-fits-gzip"]
+
+def _windows(action):
+    from .runtime import resources
+    _, binary, _ = resources()
+    result=subprocess.run([str(binary),'--desktop-default',action],check=True,capture_output=True,
+                          text=True,timeout=15,creationflags=subprocess.CREATE_NO_WINDOW)
+    return json.loads(result.stdout)
 
 
 def _paths():
     data = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
     return {"desktop": data / "applications" / IDENTIFIER,
-            "state": data / "applications/fitsview-desktop.json",
-            "mime": data / "mime/packages/fitsview.xml",
-            "icon": data / "icons/hicolor/scalable/apps/fitsview.svg"}
+            "state": data / "applications/fitsviewer-desktop.json",
+            "mime": data / "mime/packages/fitsviewer.xml",
+            "icon": data / "icons/hicolor/scalable/apps/fitsviewer.svg"}
 
 
 def _default(mime):
@@ -29,6 +36,7 @@ def _default(mime):
 
 
 def details():
+    if os.name=='nt': return _windows('status')
     paths = _paths()
     return {"registered": paths["desktop"].is_file(), "desktop_file": str(paths["desktop"]),
             "defaults": {mime: _default(mime) for mime in MIMES},
@@ -47,6 +55,7 @@ def disable_default():
 
     恢复安装前默认值，保留已注册的“打开方式”入口。
     """
+    if os.name=='nt': return _windows('no')
     paths = _paths()
     previous = json.loads(paths["state"].read_text()).get("previous", {}) if paths["state"].exists() else {}
     for mime, value in previous.items():
@@ -69,18 +78,19 @@ def disable_default():
 
 
 def install(default=True):
+    if os.name=='nt': return _windows('yes' if default else 'register')
     from .runtime import resources
     resources()
     paths = _paths()
     missing = [name for name in ["xdg-mime", "update-mime-database"] if not shutil.which(name)]
     if missing: raise ValueError("Desktop integration needs xdg-utils and shared-mime-info (missing " + ", ".join(missing) + ")")
-    cli = Path(sys.executable).parent / "fitsview"
+    cli = Path(sys.executable).parent / "fitsviewer"
     if not cli.is_file():
-        source = Path(__file__).resolve().parents[2] / "bin/fitsview"
+        source = Path(__file__).resolve().parents[2] / "bin/fitsviewer"
         if not source.is_file(): raise FileNotFoundError("Install the complete wheel before desktop registration")
         cli = source
-    if paths["desktop"].exists() and "X-FITSView-Managed=true" not in paths["desktop"].read_text():
-        raise ValueError("An unmanaged fitsview.desktop already exists")
+    if paths["desktop"].exists() and "X-FitsViewer-Managed=true" not in paths["desktop"].read_text():
+        raise ValueError("An unmanaged fitsviewer.desktop already exists")
     for path in paths.values(): path.parent.mkdir(parents=True, exist_ok=True)
     if not paths["state"].exists():
         paths["state"].write_text(json.dumps({"previous": {mime: _default(mime) for mime in MIMES}}, indent=2))
@@ -92,9 +102,9 @@ def install(default=True):
     executable = str(cli.absolute()).replace("%", "%%")
     for character in ["\\", '"', "`", "$"]: executable = executable.replace(character, "\\" + character)
     executable = executable.replace("\\", "\\\\")
-    paths["desktop"].write_text("[Desktop Entry]\nType=Application\nName=FITSView\nName[zh_CN]=FITSView 图像查看器\n"
-        "Comment=View FITS images with the native Rust interface\nTerminal=false\nIcon=fitsview\n"
-        'Exec="' + executable + '" --native %f\nCategories=Science;Astronomy;\nMimeType=' + ";".join(MIMES) + ";\nX-FITSView-Managed=true\n")
+    paths["desktop"].write_text("[Desktop Entry]\nType=Application\nName=FitsViewer\nName[zh_CN]=FitsViewer 图像查看器\n"
+        "Comment=View FITS images with the native Rust interface\nTerminal=false\nIcon=fitsviewer\n"
+        'Exec="' + executable + '" --native %f\nCategories=Science;Astronomy;\nMimeType=' + ";".join(MIMES) + ";\nX-FitsViewer-Managed=true\n")
     globs = "".join('<glob pattern="' + pattern + '"/>' for pattern in ["*.fits", "*.fit", "*.fts"])
     gzip = "".join('<glob pattern="' + pattern + '"/>' for pattern in ["*.fits.gz", "*.fit.gz", "*.fts.gz"])
     paths["mime"].write_text('<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -112,8 +122,9 @@ def install(default=True):
 
 
 def remove():
+    if os.name=='nt': return _windows('remove')
     paths = _paths()
-    if paths["desktop"].exists() and "X-FITSView-Managed=true" not in paths["desktop"].read_text():
+    if paths["desktop"].exists() and "X-FitsViewer-Managed=true" not in paths["desktop"].read_text():
         raise ValueError("Refusing to remove an unmanaged desktop entry")
     disable_default()
     for path in paths.values(): path.unlink(missing_ok=True)
@@ -122,7 +133,7 @@ def remove():
 
 
 def command(arguments):
-    parser = argparse.ArgumentParser(prog="fitsview desktop")
+    parser = argparse.ArgumentParser(prog="fitsviewer desktop")
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("status")
     sub.add_parser("remove")

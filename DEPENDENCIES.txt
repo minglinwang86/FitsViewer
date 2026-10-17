@@ -1,4 +1,4 @@
-FITSView 0.1.4rc1 - environment dependencies / 环境依赖清单
+FitsViewer 0.1.4rc2 - Linux / Windows - environment dependencies / 环境依赖清单
 Repository / 仓库: https://github.com/minglinwang86/FitsViewer
 
 This is an environment checklist, not a pip requirements file.
@@ -14,8 +14,8 @@ This is an environment checklist, not a pip requirements file.
 
    Python dependencies / Python 依赖安装:
      python -m pip install -r requirements.txt
-   Install the FITSView wheel separately; pip also installs its declared dependencies.
-   FITSView 自身需要安装 wheel；直接安装 wheel 时 pip 会自动处理上述 Python 依赖。
+   Install the FitsViewer wheel separately; pip also installs its declared dependencies.
+   FitsViewer 自身需要安装 wheel；直接安装 wheel 时 pip 会自动处理上述 Python 依赖。
    Use the JupyterLab server's environment. A separate Notebook kernel needs the
    importable package for show(). / 服务与内核分属两个环境时，按 README 分别安装。
 
@@ -79,3 +79,19 @@ This is an environment checklist, not a pip requirements file.
    - Alpine/musl and ARM wheels, Safari and real X2Go forwarding remain unvalidated.
    - Wheel users do not need the source build or validation toolchains.
      安装预编译 wheel 无需源码构建或验证工具链。
+
+7. Windows desktop and wheel / Windows 桌面与 wheel
+   - Windows 10/11 x86_64 and usable OpenGL; ARM is not validated.
+   - Desktop EXE / portable ZIP: Python, Conda and Jupyter are optional.
+     独立桌面无需 Python、Conda 或 Jupyter，也无需服务端口。
+   - Optional Jupyter integration: Python >=3.10; JupyterLab >=4.4,<5;
+     jupyter-server-proxy >=4.4,<5; IPython >=8, as declared in requirements.txt.
+   - JupyterLab 5.x is not validated and is excluded by current package ranges.
+     5.x 尚未验证，当前安装约束暂未接纳；独立桌面不受此约束。
+   - Native executable includes its Rust/MinGW runtime; DLL imports are Windows
+     system libraries. No separately installed Rust or MinGW is required.
+   - Windows build: x86_64-w64-mingw32-gcc (POSIX), binutils-mingw-w64-x86-64,
+     Rust target x86_64-pc-windows-gnu, the web tools listed above.
+   - Windows packaging: Python >=3.11 and Inno Setup 6.7.3 (compiler only).
+     Icons are included; regenerating them with windows/make_icon.py needs Pillow.
+   - Detailed setup and uninstall behavior: docs/WINDOWS.md.

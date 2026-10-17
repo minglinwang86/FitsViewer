@@ -1,3 +1,8 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
+#[cfg(windows)]
+mod desktop_windows;
+
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
@@ -17,12 +22,20 @@ use std::{
 #[derive(Parser, Debug)]
 #[command(
     version,
-    about = "FITSView: fitsrs-powered FITS viewer for Linux, JupyterLab and notebooks"
+    about = "FitsViewer: fitsrs-powered desktop and JupyterLab FITS viewer"
 )]
 struct Args {
     file: Option<PathBuf>,
     #[arg(long)]
     native: bool,
+    #[arg(
+        long,
+        help = "Use the browser viewer instead of the Windows desktop window"
+    )]
+    browser: bool,
+    #[cfg(windows)]
+    #[arg(long, value_parser = ["yes", "no", "status", "register", "remove", "settings"])]
+    desktop_default: Option<String>,
     #[arg(long)]
     serve: bool,
     #[arg(long, default_value_t = 8765)]
@@ -89,7 +102,7 @@ struct Requests {
 }
 
 fn project() -> PathBuf {
-    if let Some(home) = std::env::var_os("FITSVIEW_HOME") {
+    if let Some(home) = std::env::var_os("FITSVIEWER_HOME") {
         return PathBuf::from(home);
     }
     // Discover installed or source resources without embedding the build machine's path.
@@ -104,7 +117,7 @@ fn project() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 fn runtime_path() -> PathBuf {
-    if let Some(directory) = std::env::var_os("FITSVIEW_RUNTIME_DIR") {
+    if let Some(directory) = std::env::var_os("FITSVIEWER_RUNTIME_DIR") {
         return PathBuf::from(directory).join("server.json");
     }
     project().join(".runtime/server.json")
@@ -117,7 +130,7 @@ fn authorize(
     if state.runtime.token.is_empty()
         || token == Some(state.runtime.token.as_str())
         || headers
-            .get("x-fitsview-token")
+            .get("x-fitsviewer-token")
             .and_then(|v| v.to_str().ok())
             == Some(state.runtime.token.as_str())
     {
@@ -125,7 +138,7 @@ fn authorize(
     } else {
         Err((
             StatusCode::UNAUTHORIZED,
-            "FITSView session token required".into(),
+            "FitsViewer session token required".into(),
         ))
     }
 }
@@ -166,7 +179,7 @@ async fn image(
         Err(error) => return error.into_response(),
     };
     let result = tokio::task::spawn_blocking(move || {
-        let mut image = fitsview_core::load_file(&path, q.hdu)?;
+        let mut image = fitsviewer_core::load_file(&path, q.hdu)?;
         image.info.path = q.path;
         image.to_packet()
     })
@@ -240,6 +253,7 @@ async fn open(
     } else {
         q.path
     };
+    let virtual_path = virtual_path.replace(std::path::MAIN_SEPARATOR, "/");
     let mut queue = state.queue.lock().unwrap();
     queue.seq += 1;
     let request = OpenRequest {
@@ -266,30 +280,64 @@ async fn open(
 }
 async fn health() -> Json<serde_json::Value> {
     Json(
-        serde_json::json!({"ok":true,"viewer":"fitsview","version":env!("CARGO_PKG_VERSION"),"fits_backend":"fitsrs 0.4.1"}),
+        serde_json::json!({"ok":true,"viewer":"fitsviewer","version":env!("CARGO_PKG_VERSION"),"fits_backend":"fitsrs 0.4.1"}),
     )
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
+    if let Err(error) = run() {
+        #[cfg(windows)]
+        if !std::env::args().any(|a| a == "--serve" || a == "--browser" || a == "--desktop-default")
+        {
+            desktop_windows::message("FitsViewer", &error.to_string());
+        }
+        eprintln!("FitsViewer: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    if args.native {
-        let path = args.file.ok_or("Pass a FITS file to --native")?;
+    #[cfg(windows)]
+    if let Some(action) = &args.desktop_default {
+        println!("{}", desktop_windows::defaults(action)?);
+        return Ok(());
+    }
+    if args.native || (cfg!(windows) && !args.serve && !args.browser) {
+        #[cfg(windows)]
+        desktop_windows::set_app_id();
+        #[cfg(not(windows))]
         if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
             return Err("No display is available. Use the default SSH/browser mode, or start an X11/X2Go session before --native.".into());
         }
-        let image = fitsview_core::load_file(&path, args.hdu).map_err(std::io::Error::other)?;
+        let app = if let Some(path) = args.file {
+            let image =
+                fitsviewer_core::load_file(&path, args.hdu).map_err(std::io::Error::other)?;
+            fitsviewer_web::FitsApp::from_image(image)
+        } else if cfg!(windows) {
+            fitsviewer_web::FitsApp::new(String::new(), None, String::new(), None)
+        } else {
+            return Err("Pass a FITS file to --native".into());
+        };
+        #[cfg(windows)]
+        let app = app.with_file_picker(desktop_windows::pick_file);
+        let viewport = eframe::egui::ViewportBuilder::default()
+            .with_inner_size([1150.0, 820.0])
+            .with_title("FitsViewer");
+        #[cfg(windows)]
+        let viewport = viewport.with_icon(eframe::icon_data::from_png_bytes(include_bytes!(
+            "../../../windows/app.png"
+        ))?);
         let options = eframe::NativeOptions {
-            viewport: eframe::egui::ViewportBuilder::default()
-                .with_inner_size([1150.0, 820.0])
-                .with_title("FITSView"),
+            viewport,
             ..Default::default()
         };
         eframe::run_native(
-            "FITSView",
+            "FitsViewer",
             options,
             Box::new(move |cc| {
                 cc.egui_ctx.set_visuals(eframe::egui::Visuals::dark());
-                Ok(Box::new(fitsview_web::FitsApp::from_image(image)))
+                Ok(Box::new(app))
             }),
         )?;
         return Ok(());
@@ -313,7 +361,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     if active.is_none() {
         // Installed resources may be read-only. / 安装目录可为只读，运行记录放用户缓存。
-        let logs = if std::env::var_os("FITSVIEW_RUNTIME_DIR").is_some() {
+        let logs = if std::env::var_os("FITSVIEWER_RUNTIME_DIR").is_some() {
             runtime_path().parent().unwrap().join("logs")
         } else {
             project().join("logs")
@@ -368,7 +416,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let active = active.ok_or("Viewer server did not become ready")?;
     let reply: serde_json::Value =
         ureq::post(&format!("http://127.0.0.1:{}/api/open", active.port))
-            .set("X-Fitsview-Token", &active.token)
+            .set("X-Fitsviewer-Token", &active.token)
             .send_json(serde_json::json!({"path":path,"hdu":args.hdu}))?
             .into_json()?;
     let url = reply["url"].as_str().ok_or("Invalid open response")?;
@@ -441,7 +489,7 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/requests", get(requests))
         .fallback_service(tower_http::services::ServeDir::new(web))
         .with_state(state);
-    println!("FITSView listening on loopback port {port}");
+    println!("FitsViewer listening on loopback port {port}");
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

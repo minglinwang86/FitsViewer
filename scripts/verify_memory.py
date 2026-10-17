@@ -32,7 +32,7 @@ assert 1 <= args.count <= 8 and 256 <= args.size <= 2048 and 1 <= args.cycles <=
 assert args.label.replace('-', '').replace('_', '').isalnum()
 for name in ['logs', 'reports']: (root / name).mkdir(exist_ok=True)
 server, runtime = None, None
-with tempfile.TemporaryDirectory(prefix='fitsview-memory-') as temporary:
+with tempfile.TemporaryDirectory(prefix='fitsviewer-memory-') as temporary:
     scratch = Path(temporary)
     data = scratch / 'data'; data.mkdir()
     files = []
@@ -54,16 +54,16 @@ with tempfile.TemporaryDirectory(prefix='fitsview-memory-') as temporary:
             path = data / f'control_{number+1:02}.txt'
             path.write_text('Memory control: ordinary Jupyter editor.\n' * 3)
         files.append(path.name)
-    env = {k: v for k, v in os.environ.items() if not k.startswith(('FITSVIEW_', 'JUPYTER_', 'PYTHON'))}
+    env = {k: v for k, v in os.environ.items() if not k.startswith(('FITSVIEWER_', 'JUPYTER_', 'PYTHON'))}
     env.update(PATH=str(Path(args.python).absolute().parent) + os.pathsep + os.environ['PATH'],
                XDG_CACHE_HOME=str(scratch / 'cache'), XDG_CONFIG_HOME=str(scratch / 'settings'), XDG_DATA_HOME=str(scratch / 'desktop'),
                JUPYTER_CONFIG_DIR=str(scratch / 'config'), JUPYTER_DATA_DIR=str(scratch / 'jupyter'),
                JUPYTER_RUNTIME_DIR=str(scratch / 'runtime'), JUPYTER_PREFER_ENV_PATH='1')
-    runtime_dir = subprocess.check_output([args.python, '-c', 'from fitsview_jupyter.runtime import runtime_dir; print(runtime_dir())'], env=env, text=True).strip()
+    runtime_dir = subprocess.check_output([args.python, '-c', 'from fitsviewer.runtime import runtime_dir; print(runtime_dir())'], env=env, text=True).strip()
     with socket.socket() as probe: probe.bind(('127.0.0.1', 0)); port = probe.getsockname()[1]
     command = [args.python, '-m', 'jupyterlab', '--no-browser', '--allow-root', '--ip=127.0.0.1', f'--port={port}',
                '--ServerApp.port_retries=0', '--ServerApp.base_url=/memory-test/', '--LabApp.expose_app_in_browser=True',
-               "--ServerApp.jpserver_extensions={'fitsview_jupyter':True,'jupyter_server_proxy':True}", f'--ServerApp.root_dir={data}']
+               "--ServerApp.jpserver_extensions={'fitsviewer':True,'jupyter_server_proxy':True}", f'--ServerApp.root_dir={data}']
     try:
         with (root / 'logs' / ('memory-' + args.label + '-jupyter.log')).open('wb') as log:
             server = subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -85,7 +85,7 @@ with tempfile.TemporaryDirectory(prefix='fitsview-memory-') as temporary:
         if state.exists():
             runtime = json.loads(state.read_text())
             exe = Path(f"/proc/{runtime['pid']}/exe")
-            if exe.exists() and '_vendor/bin/fitsview' in str(exe.resolve()):
+            if exe.exists() and '_vendor/bin/fitsviewer' in str(exe.resolve()):
                 os.kill(runtime['pid'], signal.SIGTERM)
         if server and server.poll() is None:
             server.terminate()

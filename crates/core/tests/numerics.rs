@@ -1,4 +1,4 @@
-use fitsview_core::*;
+use fitsviewer_core::*;
 use std::io::Write;
 
 fn fixture(pixels: RawPixels, bitpix: i32) -> FitsImage {

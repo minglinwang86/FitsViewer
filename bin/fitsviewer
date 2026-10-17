@@ -2,8 +2,8 @@
 set -euo pipefail
 script="$(readlink -f "${BASH_SOURCE[0]}")"
 project="$(cd "$(dirname "$script")/.." && pwd)"
-export FITSVIEW_HOME="$project"
+export FITSVIEWER_HOME="$project"
 export PYTHONPATH="$project/jupyter${PYTHONPATH:+:$PYTHONPATH}"
 export JUPYTER_CONFIG_PATH="$project/jupyter/jupyter-config${JUPYTER_CONFIG_PATH:+:$JUPYTER_CONFIG_PATH}"
-interpreter="${FITSVIEW_PYTHON:-python3}"
-exec "$interpreter" -m fitsview_jupyter.cli "$@"
+interpreter="${FITSVIEWER_PYTHON:-python3}"
+exec "$interpreter" -m fitsviewer.cli "$@"

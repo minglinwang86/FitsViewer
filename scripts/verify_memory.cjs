@@ -38,62 +38,62 @@ function memory(pid) {
       documents: dom.documents, nodes: dom.nodes, listeners: dom.jsEventListeners,
       js_heap_MiB: +(perf.find(m => m.name === 'JSHeapUsedSize').value / 2**20).toFixed(2),
       backing_storage_MiB: heap.backingStorageSize === undefined ? null : +(heap.backingStorageSize / 2**20).toFixed(2),
-      viewer_iframes: await page.locator('iframe[data-testid="fitsview-frame"]').count()};
+      viewer_iframes: await page.locator('iframe[data-testid="fitsviewer-frame"]').count()};
     samples.push(sample); console.log(JSON.stringify(sample)); return sample;
   }
   async function open(name) {
-    await page.evaluate(async ({name,control}) => {await window.jupyterapp.commands.execute('docmanager:open', {path: name, factory: control?'Editor':'FITSView'});}, {name,control:config.control});
+    await page.evaluate(async ({name,control}) => {await window.jupyterapp.commands.execute('docmanager:open', {path: name, factory: control?'Editor':'FitsViewer'});}, {name,control:config.control});
     await page.evaluate(name=>{
       const w=Array.from(window.jupyterapp.shell.widgets('main')).find(w=>w.context?.path===name);
-      window.__fitsviewWeakRefs.push({widget:new WeakRef(w),content:new WeakRef(w.content),frame:w.content.iframe?new WeakRef(w.content.iframe):null});
+      window.__fitsviewerWeakRefs.push({widget:new WeakRef(w),content:new WeakRef(w.content),frame:w.content.iframe?new WeakRef(w.content.iframe):null});
     },name);
     if(config.control){await page.waitForFunction(name=>window.jupyterapp.shell.currentWidget?.context?.path===name,name);return null;}
-    const selector = 'iframe[data-testid="fitsview-frame"][src*="' + name + '"]';
+    const selector = 'iframe[data-testid="fitsviewer-frame"][src*="' + name + '"]';
     await page.locator(selector).waitFor({state:'visible', timeout:60000});
     const handle = await page.locator(selector).elementHandle();
     const frame = await handle.contentFrame();
     await handle.dispose();
-    await frame.waitForFunction(() => window.__fitsviewState?.loaded, {timeout:60000});
-    assert.equal(await frame.evaluate(() => window.__fitsviewState.width), config.size);
+    await frame.waitForFunction(() => window.__fitsviewerState?.loaded, {timeout:60000});
+    assert.equal(await frame.evaluate(() => window.__fitsviewerState.width), config.size);
     await frame.evaluate(async () => {
-      const module = await import(new URL('./pkg/fitsview_web.js', location.href));
+      const module = await import(new URL('./pkg/fitsviewer_web.js', location.href));
       const wasm = await module.default();
-      window.top.__fitsviewWasmRefs.push(new window.top.WeakRef(wasm.memory));
-      window.addEventListener('fitsview-dispose', () => {
-        const canvas = document.getElementById('fitsview-canvas');
+      window.top.__fitsviewerWasmRefs.push(new window.top.WeakRef(wasm.memory));
+      window.addEventListener('fitsviewer-dispose', () => {
+        const canvas = document.getElementById('fitsviewer-canvas');
         const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
-        window.top.postMessage({type:'fitsview-release-check',disposed:window.__fitsviewDisposed === true,context_lost:gl?.isContextLost() ?? false},location.origin);
+        window.top.postMessage({type:'fitsviewer-release-check',disposed:window.__fitsviewerDisposed === true,context_lost:gl?.isContextLost() ?? false},location.origin);
       }, {once:true});
     });
     return frame;
   }
   async function closeAll() {
     await page.evaluate(() => {for (const widget of Array.from(window.jupyterapp.shell.widgets('main'))) widget.close();});
-    await page.waitForFunction(() => document.querySelectorAll('iframe[data-testid="fitsview-frame"]').length === 0);
+    await page.waitForFunction(() => document.querySelectorAll('iframe[data-testid="fitsviewer-frame"]').length === 0);
     await page.waitForTimeout(750);
   }
   try {
     await page.goto(server.url + 'lab?token=' + server.token, {waitUntil:'domcontentloaded'});
-    await page.waitForFunction(() => window.jupyterapp?.docRegistry.getWidgetFactory('FITSView'), {timeout:60000});
+    await page.waitForFunction(() => window.jupyterapp?.docRegistry.getWidgetFactory('FitsViewer'), {timeout:60000});
     await page.evaluate(() => {
-      window.__fitsviewReleases = [];
-      window.__fitsviewWeakRefs = [];
-      window.__fitsviewWasmRefs = [];
+      window.__fitsviewerReleases = [];
+      window.__fitsviewerWeakRefs = [];
+      window.__fitsviewerWasmRefs = [];
       window.addEventListener('message', event => {
-        if(event.origin === location.origin && event.data?.type === 'fitsview-release-check') window.__fitsviewReleases.push(event.data);
+        if(event.origin === location.origin && event.data?.type === 'fitsviewer-release-check') window.__fitsviewerReleases.push(event.data);
       });
     });
     await open(config.files[0]);
     const frontend = await page.evaluate(() => Array.from(window.jupyterapp.shell.widgets('main')).filter(w=>w.content?.iframe).map(w=>({methods:Object.getOwnPropertyNames(Object.getPrototypeOf(w.content)),dispose:w.content.dispose.toString().slice(0,500)})));
     if(config.probe){
-      const frame = page.frames().find(f=>f.url().includes('/fitsview/'));
-      const html = await frame.evaluate(()=>({cleanup_script:Array.from(document.scripts).some(s=>s.textContent.includes('fitsview-dispose')),disposed:window.__fitsviewDisposed??null}));
+      const frame = page.frames().find(f=>f.url().includes('/fitsviewer/'));
+      const html = await frame.evaluate(()=>({cleanup_script:Array.from(document.scripts).some(s=>s.textContent.includes('fitsviewer-dispose')),disposed:window.__fitsviewerDisposed??null}));
       const parent = await page.evaluate(()=>{
         const widget=Array.from(window.jupyterapp.shell.widgets('main')).find(w=>w.content?.iframe);
         window.__disposeProbe={widget:false,content:false,event:false};
         widget.disposed.connect(()=>window.__disposeProbe.widget=true);
         widget.content.disposed.connect(()=>window.__disposeProbe.content=true);
-        try {widget.content.iframe.contentWindow.addEventListener('fitsview-dispose',()=>window.__disposeProbe.event=true);widget.content.release();return {disposed:widget.content.iframe.contentWindow.__fitsviewDisposed??null,event:window.__disposeProbe.event};}
+        try {widget.content.iframe.contentWindow.addEventListener('fitsviewer-dispose',()=>window.__disposeProbe.event=true);widget.content.release();return {disposed:widget.content.iframe.contentWindow.__fitsviewerDisposed??null,event:window.__disposeProbe.event};}
         catch(error){return {error:String(error)};}
       });
       await closeAll();
@@ -105,7 +105,7 @@ function memory(pid) {
       let wasm = 0;
       for (const name of config.files) {
         const frame = await open(name);
-        if(frame)wasm += await frame.evaluate(async () => {const m = await import(new URL('./pkg/fitsview_web.js', location.href)); return (await m.default()).memory.buffer.byteLength;});
+        if(frame)wasm += await frame.evaluate(async () => {const m = await import(new URL('./pkg/fitsviewer_web.js', location.href)); return (await m.default()).memory.buffer.byteLength;});
       }
       const peak = await snapshot('cycle_' + cycle + '_open'); peak.wasm_linear_memory_MiB = wasm / 2**20;
       await closeAll();
@@ -115,15 +115,15 @@ function memory(pid) {
     for (let n = 0; n < 12; n++) {await open(config.files[n % config.files.length]); await closeAll();}
     await snapshot('twelve_single_open_close_gc', true);
     for (let n = 0; n < 8; n++) {
-      await page.evaluate(async ({name,control}) => {await window.jupyterapp.commands.execute('docmanager:open',{path:name,factory:control?'Editor':'FITSView'});},{name:config.files[n % config.files.length],control:config.control});
+      await page.evaluate(async ({name,control}) => {await window.jupyterapp.commands.execute('docmanager:open',{path:name,factory:control?'Editor':'FitsViewer'});},{name:config.files[n % config.files.length],control:config.control});
       await closeAll();
     }
     await snapshot('eight_early_close_gc',true);
     const popups = [];
     for (const name of (config.control?[]:config.files.slice(0, 3))) {
       const popup = await context.newPage(); popups.push(popup);
-      await popup.goto(server.url + 'fitsview/?window=1&path=' + encodeURIComponent(name));
-      await popup.waitForFunction(() => window.__fitsviewState?.loaded, {timeout:60000});
+      await popup.goto(server.url + 'fitsviewer/?window=1&path=' + encodeURIComponent(name));
+      await popup.waitForFunction(() => window.__fitsviewerState?.loaded, {timeout:60000});
     }
     await snapshot('three_standalone_pages_open');
     for (const popup of popups) await popup.close();
@@ -141,8 +141,8 @@ function memory(pid) {
     const warm = samples[0], final = samples.at(-1);
     const growth = closed.at(-1).browser_pss_MiB - closed[0].browser_pss_MiB;
     const documentGrowth = closed.at(-1).documents - warm.documents;
-    const objects = await page.evaluate(()=>({widgets:window.__fitsviewWeakRefs.filter(r=>r.widget.deref()).length,contents:window.__fitsviewWeakRefs.filter(r=>r.content.deref()).length,iframes:window.__fitsviewWeakRefs.filter(r=>r.frame?.deref()).length,wasm_memories:window.__fitsviewWasmRefs.filter(r=>r.deref()).length}));
-    const releases = await page.evaluate(() => window.__fitsviewReleases);
+    const objects = await page.evaluate(()=>({widgets:window.__fitsviewerWeakRefs.filter(r=>r.widget.deref()).length,contents:window.__fitsviewerWeakRefs.filter(r=>r.content.deref()).length,iframes:window.__fitsviewerWeakRefs.filter(r=>r.frame?.deref()).length,wasm_memories:window.__fitsviewerWasmRefs.filter(r=>r.deref()).length}));
+    const releases = await page.evaluate(() => window.__fitsviewerReleases);
     const releaseExpected = 1 + config.files.length * config.cycles + 12;
     const report = {wheel:config.wheel, sha256:config.sha256, label:config.label, image_dimensions:[config.size,config.size],
       pixel_type:config.control?null:'float32', file_type:config.control?'text':'fits.gz', control:config.control, frontend, simultaneous_documents:config.files.length, cycles:config.cycles,

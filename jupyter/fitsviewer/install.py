@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from .platform_support import python_at, script_at, shell_command
 
 
 def _target_python(args):
@@ -37,8 +38,7 @@ def _target_python(args):
                 if len(matches) != 1: raise ValueError("Conda name is missing or ambiguous; use --prefix with its full path")
                 prefix = matches[0]
         directory = Path(prefix).expanduser().absolute()
-        path = directory / "bin/python"
-        if not path.is_file(): path = directory / "bin/python3"
+        path = python_at(directory)
     # Do not resolve this symlink: venv Python needs its original executable path.
     # 不解析 python 的软链接，否则可能误用基础环境。
     if not path.is_file(): raise FileNotFoundError("Target Python not found: " + str(path))
@@ -65,16 +65,20 @@ def _choice(prompt, default):
     raise ValueError("Answer yes or no")
 
 
-def _target_environment():
+def _target_environment(python=None):
     # Inspect the selected environment, not this launcher's development overrides.
     # 检查目标环境，避免继承启动器的开发路径和端口配置。
     environment = {k: v for k, v in os.environ.items()
-                   if not k.startswith("FITSVIEW_") and k not in {"PYTHONPATH", "PYTHONHOME"}}
+                   if not k.startswith("FITSVIEWER_") and k not in {"PYTHONPATH", "PYTHONHOME"}}
     source_config = str(Path(__file__).resolve().parents[2] / "jupyter/jupyter-config")
     paths = environment.get("JUPYTER_CONFIG_PATH", "").split(os.pathsep)
     paths = [p for p in paths if p and str(Path(p).resolve()) != source_config]
     if paths: environment["JUPYTER_CONFIG_PATH"] = os.pathsep.join(paths)
     else: environment.pop("JUPYTER_CONFIG_PATH", None)
+    if os.name=='nt' and python:
+        executable=Path(python)
+        prefix=executable.parent.parent if executable.parent.name.lower()=='scripts' else executable.parent
+        environment['PATH']=os.pathsep.join([str(prefix/p) for p in ['', 'Scripts', 'Library/bin']]+[environment.get('PATH','')])
     return environment
 
 
@@ -83,10 +87,10 @@ def _inspect(python):
 def version(name):
     try:return m.version(name)
     except m.PackageNotFoundError:return None
-print(json.dumps({'python':sys.executable,'prefix':sys.prefix,'python_version':list(sys.version_info[:3]),'jupyterlab':version('jupyterlab'),'fitsview':version('fitsview-jupyter')}))
+print(json.dumps({'python':sys.executable,'prefix':sys.prefix,'python_version':list(sys.version_info[:3]),'jupyterlab':version('jupyterlab'),'fitsviewer':version('fitsviewer')}))
 """
     return json.loads(subprocess.check_output([str(python), "-c", code], text=True,
-                                             env=_target_environment()))
+                                             env=_target_environment(python)))
 
 
 def installation_details():
@@ -106,15 +110,15 @@ def installation_details():
     extensions.update(app.jpserver_extensions)
     page = get_page_config(jupyter_path("labextensions"), str(Path(get_app_dir()) / "settings"))
     reasons = []
-    for name in ["fitsview_jupyter", "jupyter_server_proxy"]:
+    for name in ["fitsviewer", "jupyter_server_proxy"]:
         if not extensions.get(name): reasons.append(name + " server extension is not enabled")
-    if not any(item["name"] == "fitsview-jupyter" for item in page.get("federated_extensions", [])):
-        reasons.append("FITSView JupyterLab extension is missing")
+    if not any(item["name"] == "fitsviewer" for item in page.get("federated_extensions", [])):
+        reasons.append("FitsViewer JupyterLab extension is missing")
     for pattern in page.get("disabledExtensions", []):
-        try: disabled = any(re.search(pattern, name) for name in ["fitsview-jupyter", "fitsview-jupyter:viewer"])
-        except re.error: disabled = pattern in {"fitsview-jupyter", "fitsview-jupyter:viewer"}
+        try: disabled = any(re.search(pattern, name) for name in ["fitsviewer", "fitsviewer:viewer"])
+        except re.error: disabled = pattern in {"fitsviewer", "fitsviewer:viewer"}
         if disabled:
-            reasons.append("FITSView JupyterLab extension is disabled")
+            reasons.append("FitsViewer JupyterLab extension is disabled")
             break
     from .desktop import details
     return {"state": snapshot(), "binding": {"enabled": not reasons, "reasons": reasons}, "desktop": details()}
@@ -125,7 +129,7 @@ def _print_success(installed, details):
     settings = state["configured"]
     port = settings["jupyter_port"] or "auto"
     browser = settings["browser_port"] or port
-    print("\nFITSView installation successful (version " + installed["fitsview"] + ").")
+    print("\nFitsViewer installation successful (version " + installed["fitsviewer"] + ").")
     print("Installation environment:", installed["prefix"])
     print("Python executable:", installed["python"])
     print("JupyterLab port:", port, "(configured)")
@@ -137,15 +141,18 @@ def _print_success(installed, details):
     print("JupyterLab binding:", "Yes (extensions enabled in configuration)" if binding["enabled"] else "No (" + "; ".join(binding["reasons"]) + ")")
     print("Default FITS viewer in JupyterLab:", "Yes" if settings.get("default_viewer", True) else "No (Open With remains available)")
     desktop = details.get("desktop", {})
-    print("Linux desktop registration:", "Yes" if desktop.get("registered") else "No")
-    print("Linux desktop default FITS viewer:", "Yes" if desktop.get("defaults", {}).get("image/fits") == "fitsview.desktop" else "No")
+    platform_name = "Windows" if os.name=='nt' else "Linux"
+    print(platform_name + " desktop registration:", "Yes" if desktop.get("registered") else "No")
+    is_default = desktop.get('default',False) if os.name=='nt' else desktop.get("defaults", {}).get("image/fits") == "fitsviewer.desktop"
+    print(platform_name + " desktop default FITS viewer:", "Yes" if is_default else "No")
+    if desktop.get('needs_windows_confirmation'): print('Confirm the default in Windows Settings > Apps > Default apps.')
     print("Bind or re-enable JupyterLab with:")
     python = [installed["python"], "-m", "jupyter"]
-    for name in ["fitsview_jupyter", "jupyter_server_proxy"]:
-        print("  " + shlex.join([*python, "server", "extension", "enable", "--py", name, "--sys-prefix"]))
-    print("  " + shlex.join([*python, "labextension", "enable", "fitsview-jupyter", "fitsview-jupyter:viewer", "--level=sys_prefix"]))
+    for name in ["fitsviewer", "jupyter_server_proxy"]:
+        print("  " + shell_command([*python, "server", "extension", "enable", "--py", name, "--sys-prefix"]))
+    print("  " + shell_command([*python, "labextension", "enable", "fitsviewer", "fitsviewer:viewer", "--level=sys_prefix"]))
     print("Restart JupyterLab from this environment and refresh your browser to apply the binding.")
-    print("Inspect ports:", shlex.join([str(Path(installed["prefix"]) / "bin/fitsview"), "ports"]))
+    print("Inspect ports:", shell_command([script_at(installed["prefix"],"fitsviewer"), "ports"]))
 
 
 def _supported(info):
@@ -162,17 +169,18 @@ def _wheel(directory, explicit):
         return path
     source = Path(__file__).resolve().parents[2]
     if (source / "Cargo.toml").is_file():
-        candidates = list((source / "dist").glob("fitsview_jupyter-*.whl"))
+        candidates = list((source / "dist").glob("fitsviewer-*.whl"))
         if candidates: return max(candidates, key=lambda p: p.stat().st_mtime)
         raise FileNotFoundError("Build a wheel first, or specify --wheel")
-    distribution = importlib.metadata.distribution("fitsview-jupyter")
+    distribution = importlib.metadata.distribution("fitsviewer")
     package = Path(__file__).resolve().parent
-    if not (package / "_vendor/bin/fitsview").is_file(): raise ValueError("This installation does not contain the complete Rust runtime")
+    binary = "_vendor/bin/fitsviewer.exe" if os.name=='nt' else "_vendor/bin/fitsviewer"
+    if not (package / binary).is_file(): raise ValueError("This installation does not contain the complete Rust runtime")
     wheel_info = distribution.read_text("WHEEL")
     tags = [line[5:] for line in wheel_info.splitlines() if line.startswith("Tag: ")]
-    if not tags or "linux" not in tags[0]: raise ValueError("Cannot reconstruct a Linux wheel from this installation")
+    if not tags or not any(platform in tags[0] for platform in ['linux','win_amd64']): raise ValueError("Cannot reconstruct this platform's wheel")
     version = distribution.version
-    name = "fitsview_jupyter-" + version
+    name = "fitsviewer-" + version
     path = directory / (name + "-" + tags[0] + ".whl")
     records = []
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -185,12 +193,12 @@ def _wheel(directory, explicit):
             records.append([destination, "sha256=" + digest, str(len(data))])
         for file in sorted(package.rglob("*")):
             if file.is_file() and not file.is_symlink() and "__pycache__" not in file.parts:
-                add("fitsview_jupyter/" + file.relative_to(package).as_posix(), file.read_bytes(), file.stat().st_mode & 0o777)
+                add("fitsviewer/" + file.relative_to(package).as_posix(), file.read_bytes(), file.stat().st_mode & 0o777)
         for file in sorted((package / "labextension").rglob("*")):
             if file.is_file():
-                add(name + ".data/data/share/jupyter/labextensions/fitsview-jupyter/" + file.relative_to(package / "labextension").as_posix(), file.read_bytes())
-        config = {"ServerApp": {"jpserver_extensions": {"fitsview_jupyter": True}}}
-        add(name + ".data/data/etc/jupyter/jupyter_server_config.d/fitsview-jupyter.json", json.dumps(config).encode())
+                add(name + ".data/data/share/jupyter/labextensions/fitsviewer/" + file.relative_to(package / "labextension").as_posix(), file.read_bytes())
+        config = {"ServerApp": {"jpserver_extensions": {"fitsviewer": True}}}
+        add(name + ".data/data/etc/jupyter/jupyter_server_config.d/fitsviewer.json", json.dumps(config).encode())
         for file in ["METADATA", "WHEEL", "entry_points.txt"]:
             text = distribution.read_text(file)
             if text is not None: add(name + ".dist-info/" + file, text.encode())
@@ -206,7 +214,7 @@ def _wheel(directory, explicit):
 
 
 def install(arguments):
-    parser = argparse.ArgumentParser(prog="fitsview install", description="Install FITSView into a selected JupyterLab Python environment")
+    parser = argparse.ArgumentParser(prog="fitsviewer install", description="Install FitsViewer into a selected JupyterLab Python environment")
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--python", help="Target Python executable; venv symlinks are preserved")
     target.add_argument("--prefix", help="Conda/venv environment directory")
@@ -227,25 +235,27 @@ def install(arguments):
         info["supported_jupyterlab"] = _supported(info)
         print(json.dumps(info, indent=2))
         return 0 if info["supported_jupyterlab"] else 1
+    if info['jupyterlab'] and int(info['jupyterlab'].split('.')[0]) >= 5:
+        raise ValueError('JupyterLab 5.x is not supported yet. Select a separate JupyterLab 4 environment; no downgrade was performed.')
     if not _supported(info) and not args.with_jupyter:
         raise ValueError("Target needs JupyterLab 4.4+ (<5). Use --with-jupyter to install or upgrade it.")
     if sys.stdin.isatty():
-        if args.default_viewer is None: args.default_viewer = _choice("Make FITSView the default FITS viewer in JupyterLab?", True)
-        if args.desktop_default is None: args.desktop_default = _choice("Make FITSView the default FITS viewer on this Linux desktop?", False)
-    with tempfile.TemporaryDirectory(prefix="fitsview-install-") as temporary:
+        if args.default_viewer is None: args.default_viewer = _choice("Make FitsViewer the default FITS viewer in JupyterLab?", True)
+        if args.desktop_default is None: args.desktop_default = _choice("Make FitsViewer the default FITS viewer on this Linux desktop?", False)
+    with tempfile.TemporaryDirectory(prefix="fitsviewer-install-") as temporary:
         wheel = _wheel(Path(temporary), args.wheel)
         command = [str(python), "-m", "pip", "install", "--upgrade"]
         if args.no_deps: command.append("--no-deps")
-        subprocess.run([*command, str(wheel)], check=True, env=_target_environment())
+        subprocess.run([*command, str(wheel)], check=True, env=_target_environment(python))
     installed = _inspect(python)
     if args.default_viewer is not None:
-        code = "from fitsview_jupyter.settings import save_settings; save_settings({'default_viewer': " + str(args.default_viewer == "yes") + "})"
-        subprocess.run([str(python), "-c", code], env=_target_environment(), check=True)
+        code = "from fitsviewer.settings import save_settings; save_settings({'default_viewer': " + str(args.default_viewer == "yes") + "})"
+        subprocess.run([str(python), "-c", code], env=_target_environment(python), check=True)
     if args.desktop_default is not None:
         action = "install()" if args.desktop_default == "yes" else "disable_default()"
-        subprocess.run([str(python), "-c", "from fitsview_jupyter import desktop; desktop." + action], env=_target_environment(), check=True)
-    code = "import json; from fitsview_jupyter.install import installation_details; print(json.dumps(installation_details()))"
+        subprocess.run([str(python), "-c", "from fitsviewer import desktop; desktop." + action], env=_target_environment(python), check=True)
+    code = "import json; from fitsviewer.install import installation_details; print(json.dumps(installation_details()))"
     details = json.loads(subprocess.check_output([str(python), "-c", code], text=True,
-                                                env=_target_environment()))
+                                                env=_target_environment(python)))
     _print_success(installed, details)
     return 0

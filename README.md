@@ -1,14 +1,16 @@
-# FITSView — fitsrs edition
+# FitsViewer — fitsrs edition
 
 [中文说明](README.zh-CN.md) · [Commands](docs/COMMANDS.md) · [Build](docs/BUILDING.md) · [Releases](docs/RELEASING.md)
 
 A read-only FITS image viewer with a Rust/fitsrs backend and a shared Rust/egui native and WebAssembly interface. Double-click a FITS file in JupyterLab, open it from a Linux terminal, or embed it in a Notebook.
 
-**Release candidate: 0.1.4rc1.** The Python distribution is `fitsview-jupyter`; the terminal command is `fitsview`. This is a separate project from the existing PyPI distribution named `fitsview`. Download the wheel from [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases); this package is not yet published on PyPI.
+**Release candidates: Linux / Windows 0.1.4rc2.** The Python distribution is `fitsviewer`; the terminal command is `fitsviewer`. Download the appropriate platform's assets from [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases); this package is not yet published on PyPI.
+
+Upgrading from rc1? Follow the [migration instructions](docs/releases/v0.1.4-rc.2.md) to remove the previous distribution before installing the renamed package.
 
 ## Interface preview
 
-![FITSView showing a synthetic FITS star field, scale and zoom controls](docs/images/viewer-interface.png)
+![FitsViewer showing a synthetic FITS star field, scale and zoom controls](docs/images/viewer-interface.png)
 
 Actual running interface with the bundled synthetic `starfield.fits`. Use the mouse wheel to zoom, left-drag to pan, and right-drag to adjust brightness/contrast. The same viewer is available in JupyterLab and the native window.
 
@@ -17,66 +19,71 @@ Actual running interface with the bundled synthetic `starfield.fits`. Use the mo
 | Component | Requirement |
 |---|---|
 | Server / wheel | Linux x86_64, glibc 2.28 or newer |
-| Python | 3.10 or newer |
+| Windows desktop / wheel | Windows 10/11 x86_64, usable OpenGL; [Windows guide](docs/WINDOWS.md) |
+| Python | 3.10 or newer for Jupyter integration; optional for the Windows desktop |
 | JupyterLab | 4.4 or newer, below 5; install into the environment running the server |
 | Browser | WebAssembly and WebGL; Linux Chromium is tested |
 | Native window | Optional X11/OpenGL display, including a separately configured forwarding session |
 
-The JupyterLab range means `4.4 <= version < 5`. JupyterLab 5.x has not been validated and is currently excluded by the Python and frontend dependency ranges. The native desktop window operates independently of JupyterLab. See the [official extension compatibility guidance](https://jupyterlab.readthedocs.io/en/stable/extension/extension_dev.html#overview-of-extensions).
+The JupyterLab range means `4.4 <= version < 5`. JupyterLab 5.x has not been validated and is currently excluded by the Python and frontend dependency ranges. A major-version update needs an extension compatibility test before this bound can change. The native desktop window operates independently of JupyterLab.
 
-Windows and macOS can use a browser connected to the Linux server through SSH. They do not need the Linux wheel installed locally. Safari and actual X2Go/X11 forwarding have not been validated. Wheel users do not need Rust, Node.js or `jupyter lab build`.
+Windows and macOS can also use a browser connected to the Linux server through SSH. They do not need the Linux wheel installed locally. Safari and actual X2Go/X11 forwarding have not been validated. Wheel users do not need Rust, Node.js or `jupyter lab build`.
 
 See [DEPENDENCIES.txt](DEPENDENCIES.txt) for the full environment checklist, [requirements.txt](requirements.txt) for pip runtime dependencies, and [requirements-build.txt](requirements-build.txt) for pinned build tools.
 
 The prebuilt wheel requires GNU/Linux with glibc; it does not cover Alpine/musl or ARM. The source build selects the host's x86_64/aarch64 target, but ARM has not been validated. A manylinux tag specifies a library compatibility baseline, not certification of every distribution or desktop.
 
-## Install and double-click a FITS file
+## Windows desktop installation
 
-Download the candidate wheel from the project's GitHub Release once published. Activate the Conda or virtual environment that runs JupyterLab, then install the local file:
+Download `FitsViewer-0.1.4rc2-windows-x86_64-setup.exe` from the [Windows candidate](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.4-rc.2). Setup offers an optional existing Python/Conda environment for JupyterLab/Notebook and a separate default FITS file association checkbox. The desktop viewer needs no Python or server port. A portable ZIP and Windows wheel are also provided. See the [Windows installation, defaults and build guide](docs/WINDOWS.md).
+
+## Linux: install and double-click a FITS file
+
+Download the wheel from the [Linux candidate](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.4-rc.2). Activate the Conda or virtual environment that runs JupyterLab, then install the local file:
 
 ```bash
-python -m pip install --upgrade ./fitsview_jupyter-0.1.4rc1-py3-none-manylinux_2_28_x86_64.whl
-fitsview jupyter start --root "$HOME/data" --port 8082
+python -m pip install --upgrade ./fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl
+fitsviewer jupyter start --root "$HOME/data" --port 8082
 ```
 
-The data directory must already exist. Open the printed login URL. In JupyterLab's file browser, double-click a `.fits`, `.fit`, `.fts`, or corresponding gzip file. FITSView registers as the default viewer. Restart an already running JupyterLab server after installation, then refresh the browser.
+The data directory must already exist. Open the printed login URL. In JupyterLab's file browser, double-click a `.fits`, `.fit`, `.fts`, or corresponding gzip file. FitsViewer registers as the default viewer. Restart an already running JupyterLab server after installation, then refresh the browser.
 
 Verify registration:
 
 ```bash
 jupyter server extension list
 jupyter labextension list
-fitsview status
+fitsviewer status
 ```
 
-The server extensions `fitsview_jupyter` and `jupyter_server_proxy`, and the Lab extension `fitsview-jupyter`, should be enabled. If another default was chosen, use **Open With → FITSView** or update JupyterLab's default viewer setting. Binding commands are in [the command guide](docs/COMMANDS.md).
+The server extensions `fitsviewer` and `jupyter_server_proxy`, and the Lab extension `fitsviewer`, should be enabled. If another default was chosen, use **Open With → FitsViewer** or update JupyterLab's default viewer setting. Binding commands are in [the command guide](docs/COMMANDS.md).
 
 To copy a complete installation into another environment:
 
 ```bash
-fitsview install --python /path/to/env/bin/python --check
-fitsview install --python /path/to/env/bin/python
+fitsviewer install --python /path/to/env/bin/python --check
+fitsviewer install --python /path/to/env/bin/python
 ```
 
 Alternatively select `--prefix /path/to/env` or `--conda-env astro`. Add `--with-jupyter` if the target needs JupyterLab installed or upgraded. Success output is in English and reports the target environment, ports, binding status and binding commands. Direct `pip install` uses pip's standard output.
 
 ### Environment and default-viewer choices
 
-Running `fitsview install` without a target in a terminal asks for the current Python, another Python path, or a Conda environment, then asks about Jupyter and desktop defaults. For unattended SSH installation, pass the choices explicitly:
+Running `fitsviewer install` without a target in a terminal asks for the current Python, another Python path, or a Conda environment, then asks about Jupyter and desktop defaults. For unattended SSH installation, pass the choices explicitly:
 
 ```bash
-fitsview install --conda-env astro --default-viewer yes --desktop-default no
-fitsview install --python /path/to/env/bin/python --default-viewer no --desktop-default no
+fitsviewer install --conda-env astro --default-viewer yes --desktop-default no
+fitsviewer install --python /path/to/env/bin/python --default-viewer no --desktop-default no
 ```
 
 For a first pip installation into an existing Conda environment:
 
 ```bash
-conda run -n astro python -m pip install ./fitsview_jupyter-0.1.4rc1-py3-none-manylinux_2_28_x86_64.whl
-conda run -n astro fitsview defaults set --jupyter yes --desktop no
+conda run -n astro python -m pip install ./fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl
+conda run -n astro fitsviewer defaults set --jupyter yes --desktop no
 ```
 
-For a Python/venv target, run its `bin/python -m pip install ...` and then its `bin/fitsview defaults set ...`. Replace `yes` with `no` to keep FITSView available through Open With without making it JupyterLab's default. No desktop is required for this route.
+For a Python/venv target, run its `bin/python -m pip install ...` and then its `bin/fitsviewer defaults set ...`. Replace `yes` with `no` to keep FitsViewer available through Open With without making it JupyterLab's default. No desktop is required for this route.
 
 For Git source installation, after the repository is published:
 
@@ -93,8 +100,8 @@ The same source installer accepts `--python` or `--prefix`, and `--wheel ./file.
 Run on the Linux server:
 
 ```bash
-fitsview jupyter start --root "$HOME/data" --port 8082 --browser-port 18082
-fitsview tunnel --ssh-host user@server.example.com --ssh-port 22 --local-port 18082 --remote-port 8082
+fitsviewer jupyter start --root "$HOME/data" --port 8082 --browser-port 18082
+fitsviewer tunnel --ssh-host user@server.example.com --ssh-port 22 --local-port 18082 --remote-port 8082
 ```
 
 The second command prints an SSH command. Run it on the computer with your browser and keep its terminal open. For the example above:
@@ -108,12 +115,12 @@ Use the printed Jupyter login URL with local browser port `18082`. Replace the e
 ## Terminal and Notebook
 
 ```bash
-fitsview /path/to/image.fits
-fitsview /path/to/image.fits --hdu 1
-fitsview /path/to/image.fits --no-browser
-fitsview --native /path/to/image.fits
-fitsview ports
-fitsview ports set --jupyter 8084 --browser 18084
+fitsviewer /path/to/image.fits
+fitsviewer /path/to/image.fits --hdu 1
+fitsviewer /path/to/image.fits --no-browser
+fitsviewer --native /path/to/image.fits
+fitsviewer ports
+fitsviewer ports set --jupyter 8084 --browser 18084
 ```
 
 The ordinary command uses the linked Jupyter server in the same environment, or starts a standalone browser viewer if none is available. **Open in window** creates a popup after a user click; later terminal requests can switch its file. Native mode needs an existing display connection. Port changes apply to future starts and do not alter running SSH tunnels.
@@ -121,19 +128,19 @@ The ordinary command uses the linked Jupyter server in the same environment, or 
 ### Double-click on a Linux desktop or X2Go session
 
 ```bash
-fitsview desktop install
-fitsview defaults status
-fitsview defaults set --jupyter yes --desktop no
+fitsviewer desktop install
+fitsviewer defaults status
+fitsviewer defaults set --jupyter yes --desktop no
 ```
 
 `desktop install` registers a user-level file association and native launcher for FITS/FITS.gz. It requires `xdg-utils`, `shared-mime-info`, X11/XWayland and usable OpenGL; desktop-file-utils can refresh the launcher cache. X2Go needs the same display/GLX capability. Keep the Python/Conda environment used for registration. Desktop preferences are per user; Jupyter preferences are per environment.
 
-`--no-default` registers only an Open With entry. `defaults set --desktop no` restores the previously recorded default; when none existed, selection is left to the desktop. Run `fitsview desktop remove` before uninstalling the package/environment. Refresh JupyterLab after `defaults set --jupyter yes|no`.
+`--no-default` registers only an Open With entry. `defaults set --desktop no` restores the previously recorded default; when none existed, selection is left to the desktop. Run `fitsviewer desktop remove` before uninstalling the package/environment. Refresh JupyterLab after `defaults set --jupyter yes|no`.
 
 In a Notebook:
 
 ```python
-from fitsview_jupyter import show
+from fitsviewer import show
 show("image.fits", height=650)
 ```
 
@@ -170,8 +177,8 @@ Tile-compressed `.fz`, cube slicing, FITS tables, WCS sky coordinates, regions a
 
 [BUILDING.md](docs/BUILDING.md) provides a setup independent of any particular container path. Dependencies use Cargo/npm lockfiles, pinned build tools and a separate QA lockfile. Building produces artifacts; installation is explicit.
 
-See the [candidate release notes](docs/releases/v0.1.4-rc.1.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [public API](docs/API.md).
+See the [candidate release notes](docs/releases/v0.1.4-rc.2.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [public API](docs/API.md).
 
 ## License
 
-Project source: [MIT](LICENSE), copyright FITSView contributors. Redistributed dependencies retain their own terms; [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `licenses/` accompany the wheel and source release. Python license metadata describes the combined distribution, including bundled fonts.
+Project source: [MIT](LICENSE), copyright FitsViewer contributors. Redistributed dependencies retain their own terms; [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `licenses/` accompany the wheel and source release. Python license metadata describes the combined distribution, including bundled fonts.

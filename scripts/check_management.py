@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 
 def check_management(venv, environment, data):
-    cli = str(venv / "bin/fitsview")
+    cli = str(venv / "bin/fitsviewer")
     def run(*arguments, check=True):
         return subprocess.run([cli, *arguments], env=environment, text=True, capture_output=True, check=check)
     run("ports", "set", "--jupyter", "auto", "--browser", "19182", "--viewer", "auto",
@@ -63,7 +63,7 @@ def check_management(venv, environment, data):
 
 
 def check_standalone(venv, environment, image):
-    cli = str(venv / "bin/fitsview")
+    cli = str(venv / "bin/fitsviewer")
     subprocess.run([cli, "ports", "set", "--viewer", "auto"], env=environment, check=True, capture_output=True)
     state = None
     try:

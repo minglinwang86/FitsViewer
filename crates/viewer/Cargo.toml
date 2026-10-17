@@ -1,5 +1,5 @@
 [package]
-name = "fitsview-web"
+name = "fitsviewer-web"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-fitsview-core = { path = "../core" }
+fitsviewer-core = { path = "../core" }
 eframe = { version = "=0.32.3", default-features = false, features = ["default_fonts", "glow"] }
 ehttp = "0.5"
 serde_json = "1"

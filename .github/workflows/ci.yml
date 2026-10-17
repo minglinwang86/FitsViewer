@@ -23,7 +23,7 @@ jobs:
         run: |
           source scripts/env.sh
           bash scripts/build.sh --portable --repair
-          cargo test --locked -p fitsview-core
+          cargo test --locked -p fitsviewer-core
           python -m twine check --strict dist/*.whl
       - uses: actions/upload-artifact@v5
         with:

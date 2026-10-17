@@ -28,8 +28,8 @@ def check_interactive_install(cli, target, environment):
         assert "Installation target:" in text and "Conda environment" in text
         assert "Installation environment: " + str(target) in text
         assert "Default FITS viewer in JupyterLab: No" in text
-        clean = {k: v for k, v in environment.items() if not k.startswith("FITSVIEW_")}
-        subprocess.run([str(target / "bin/fitsview"), "defaults", "set", "--jupyter", "yes"], env=clean, check=True, capture_output=True)
+        clean = {k: v for k, v in environment.items() if not k.startswith("FITSVIEWER_")}
+        subprocess.run([str(target / "bin/fitsviewer"), "defaults", "set", "--jupyter", "yes"], env=clean, check=True, capture_output=True)
         return {"terminal_target_selection": True, "python_path_with_spaces": True,
                 "jupyter_default_question": True, "desktop_default_question": True}
     finally:

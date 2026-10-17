@@ -19,36 +19,36 @@ class ViewerSettingsHandler(APIHandler):
 
 
 def _jupyter_server_extension_points():
-    return [{"module": "fitsview_jupyter"}]
+    return [{"module": "fitsviewer"}]
 
 
 def _load_jupyter_server_extension(serverapp):
     global _serverapp
     _serverapp = serverapp
-    serverapp.web_app.add_handlers(".*$", [(url_path_join(serverapp.base_url, "fitsview-settings"), ViewerSettingsHandler)])
+    serverapp.web_app.add_handlers(".*$", [(url_path_join(serverapp.base_url, "fitsviewer-settings"), ViewerSettingsHandler)])
     # Keep only a pointer to Jupyter's own private runtime record, never copy its token.
     # 仅记录 Jupyter 运行信息的位置，不复制认证 token。
-    origin = os.environ.get("FITSVIEW_BROWSER_ORIGIN")
+    origin = os.environ.get("FITSVIEWER_BROWSER_ORIGIN")
     browser_port = urlsplit(origin).port if origin else load_settings()["browser_port"]
     state = {"pid": os.getpid(), "runtime_dir": str(serverapp.runtime_dir), "browser_port": browser_port}
     (runtime_dir() / "jupyter.json").write_text(json.dumps(state))
-    os.environ["FITSVIEW_JUPYTER_BASE_URL"] = serverapp.base_url
-    serverapp.log.info("FITSView: default FITS viewer available in JupyterLab")
+    os.environ["FITSVIEWER_JUPYTER_BASE_URL"] = serverapp.base_url
+    serverapp.log.info("FitsViewer: default FITS viewer available in JupyterLab")
 
 
 def _command(port, base_url):
     _, binary, web = resources()
-    root = os.environ.get("FITSVIEW_ROOT") or (_serverapp.root_dir if _serverapp else str(Path.cwd()))
-    origin = os.environ.get("FITSVIEW_BROWSER_ORIGIN")
+    root = os.environ.get("FITSVIEWER_ROOT") or (_serverapp.root_dir if _serverapp else str(Path.cwd()))
+    origin = os.environ.get("FITSVIEWER_BROWSER_ORIGIN")
     if not origin and load_settings()["browser_port"]:
         origin = "http://127.0.0.1:" + str(load_settings()["browser_port"])
     if origin:
-        public_url = origin.rstrip("/") + base_url.rstrip("/") + "/fitsview/"
+        public_url = origin.rstrip("/") + base_url.rstrip("/") + "/fitsviewer/"
     elif _serverapp:
         address = urlsplit(_serverapp.connection_url)
-        public_url = urlunsplit((address.scheme, address.netloc, base_url.rstrip("/") + "/fitsview/", "", ""))
+        public_url = urlunsplit((address.scheme, address.netloc, base_url.rstrip("/") + "/fitsviewer/", "", ""))
     else:
-        public_url = base_url.rstrip("/") + "/fitsview/"
+        public_url = base_url.rstrip("/") + "/fitsviewer/"
     return [str(binary), "--serve", "--port", str(port), "--root", str(root),
             "--web-dir", str(web), "--jupyter", "--public-url", public_url]
 
@@ -56,7 +56,7 @@ def _command(port, base_url):
 def setup_server():
     """Jupyter Server Proxy starts the packaged viewer on demand with matching roots."""
     config = {"command": _command, "environment": process_environment, "timeout": 30,
-              "launcher_entry": {"title": "FITSView", "category": "Other"}}
+              "launcher_entry": {"title": "FitsViewer", "category": "Other"}}
     if load_settings()["proxy_port"]:
         config["port"] = load_settings()["proxy_port"]
     return config

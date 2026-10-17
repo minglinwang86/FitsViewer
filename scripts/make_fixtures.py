@@ -46,8 +46,8 @@ notebook = {
     "nbformat": 4, "nbformat_minor": 5,
     "metadata": {"kernelspec": {"display_name": "Python 3 (ipykernel)", "language": "python", "name": "python3"}},
     "cells": [
-        {"cell_type": "markdown", "id": "description", "metadata": {}, "source": ["# FITSView notebook example\n", "Synthetic data. The viewer supports wheel zoom, drag pan, and independent limits/stretch controls."]},
-        {"cell_type": "code", "id": "viewer", "metadata": {}, "execution_count": None, "outputs": [], "source": ["from fitsview_jupyter import show\n", "show('fitsview/examples/starfield.fits', height=650)"]},
+        {"cell_type": "markdown", "id": "description", "metadata": {}, "source": ["# FitsViewer notebook example\n", "Synthetic data. The viewer supports wheel zoom, drag pan, and independent limits/stretch controls."]},
+        {"cell_type": "code", "id": "viewer", "metadata": {}, "execution_count": None, "outputs": [], "source": ["from fitsviewer import show\n", "show('fitsviewer/examples/starfield.fits', height=650)"]},
     ],
 }
 (dest / "Notebook_demo.ipynb").write_text(json.dumps(notebook, ensure_ascii=False, indent=2))

@@ -16,7 +16,7 @@ args = parser.parse_args()
 (root / "reports").mkdir(exist_ok=True)
 runtime = json.loads((root / ".runtime/server.json").read_text())
 base = f"http://127.0.0.1:{runtime['port']}"
-headers = {"X-Fitsview-Token": runtime["token"]}
+headers = {"X-Fitsviewer-Token": runtime["token"]}
 results = []
 
 

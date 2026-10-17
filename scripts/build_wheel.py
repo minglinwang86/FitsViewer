@@ -11,11 +11,24 @@ import sys
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--repair", action="store_true", help="Use auditwheel to produce a manylinux wheel")
+parser.add_argument('--windows',action='store_true',help='Package the prebuilt Windows x86_64 executable')
 args = parser.parse_args()
-package = root / "jupyter/fitsview_jupyter"
+if args.windows and args.repair: parser.error('--repair is for Linux wheels')
+package = root / "jupyter/fitsviewer"
 vendor = package / "_vendor"
 (vendor / "bin").mkdir(parents=True, exist_ok=True)
-shutil.copy2(root / "target/release/fitsview", vendor / "bin/fitsview")
+executable = 'fitsviewer.exe' if args.windows else 'fitsviewer'
+(vendor/'bin'/('fitsviewer' if args.windows else 'fitsviewer.exe')).unlink(missing_ok=True)
+source_binary = root/('target/x86_64-pc-windows-gnu/release/fitsviewer.exe' if args.windows else 'target/release/fitsviewer')
+shutil.copy2(source_binary, vendor/'bin'/executable)
+if args.windows:
+    os.environ['FITSVIEWER_PACKAGE_TARGET']='windows'
+    shutil.copy2(root/'windows/app.ico',vendor/'bin/app.ico')
+    project=root/'jupyter/pyproject.toml'
+    text=project.read_text()
+    if 'LicenseRef-MinGW-w64-CRT' not in text:
+        text=re.sub(r'^license = "(.*)"$',lambda m:'license = "'+m.group(1)+' AND (LicenseRef-MinGW-w64-CRT) AND (GPL-3.0-or-later WITH GCC-exception-3.1)"',text,flags=re.MULTILINE)
+        project.write_text(text)
 shutil.copytree(root / "web", vendor / "web", dirs_exist_ok=True)
 shutil.copy2(root / "NOTICE.md", vendor / "NOTICE.md")
 for name in ["DEPENDENCIES.txt", "requirements.txt"]:
@@ -32,18 +45,18 @@ license_files = ["LICENSE", "THIRD_PARTY_NOTICES.md"] + [p.relative_to(root / "j
 project = root / "jupyter/pyproject.toml"
 license_setting = "license-files = [\n" + "".join("  " + json.dumps(p) + ",\n" for p in license_files) + "]"
 project.write_text(re.sub(r"license-files\s*=\s*\[[\s\S]*?\]", lambda _: license_setting, project.read_text(), count=1))
-install = {"packageManager": "python", "packageName": "fitsview-jupyter",
-           "uninstallInstructions": "python -m pip uninstall fitsview-jupyter"}
+install = {"packageManager": "python", "packageName": "fitsviewer",
+           "uninstallInstructions": "python -m pip uninstall fitsviewer"}
 (package / "labextension/install.json").write_text(json.dumps(install, indent=2))
 raw = root / "dist/raw"
 raw.mkdir(parents=True, exist_ok=True)
 subprocess.run([sys.executable, "-m", "hatchling", "build", "-t", "wheel", "-d", str(raw)],
                cwd=root / "jupyter", check=True)
-wheels = sorted(raw.glob("fitsview_jupyter-*.whl"), key=lambda p: p.stat().st_mtime)
+wheels = sorted(raw.glob("fitsviewer-*.whl"), key=lambda p: p.stat().st_mtime)
 wheel = wheels[-1]
 if args.repair:
     repair = [sys.executable, "-m", "auditwheel", "repair", str(wheel), "-w", str(root / "dist")]
-    if os.environ.get("FITSVIEW_WHEEL_PLATFORM"): repair += ["--plat", os.environ["FITSVIEW_WHEEL_PLATFORM"]]
+    if os.environ.get("FITSVIEWER_WHEEL_PLATFORM"): repair += ["--plat", os.environ["FITSVIEWER_WHEEL_PLATFORM"]]
     subprocess.run(repair, check=True)
 else:
     shutil.copy2(wheel, root / "dist" / wheel.name)

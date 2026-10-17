@@ -1,6 +1,6 @@
 # Python runtime dependencies / Python 运行依赖
 # Install in the Python/Conda environment that starts JupyterLab.
-# 安装到实际启动 JupyterLab 的环境；FITSView wheel 会自动安装这些依赖。
+# 安装到实际启动 JupyterLab 的环境；FitsViewer wheel 会自动安装这些依赖。
 jupyterlab>=4.4,<5
 jupyter-server-proxy>=4.4,<5
 ipython>=8

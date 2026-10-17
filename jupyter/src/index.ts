@@ -5,17 +5,17 @@ import { PageConfig, URLExt } from '@jupyterlab/coreutils';
 import { ContentsManager, Drive, IContentProvider, ServerConnection } from '@jupyterlab/services';
 import { Widget } from '@lumino/widgets';
 
-const PROVIDER = 'fitsview-metadata';
-const FACTORY = 'FITSView';
+const PROVIDER = 'fitsviewer-metadata';
+const FACTORY = 'FitsViewer';
 
 class FitsContent extends Widget {
   readonly iframe: HTMLIFrameElement;
   constructor(readonly context: DocumentRegistry.Context) {
     super();
-    this.addClass('fitsview-document');
+    this.addClass('fitsviewer-document');
     this.node.style.position = 'relative';
     this.iframe = document.createElement('iframe');
-    this.iframe.dataset.testid = 'fitsview-frame';
+    this.iframe.dataset.testid = 'fitsviewer-frame';
     Object.assign(this.iframe.style, {position: 'absolute', inset: '0', width: '100%', height: '100%', border: '0'});
     this.node.appendChild(this.iframe);
     this.load();
@@ -25,7 +25,7 @@ class FitsContent extends Widget {
   release(): void {
     // Synchronous same-origin cleanup before the iframe is detached.
     // 在 iframe 移除之前同步销毁内部渲染器。
-    try { this.iframe.contentWindow?.dispatchEvent(new Event('fitsview-dispose')); }
+    try { this.iframe.contentWindow?.dispatchEvent(new Event('fitsviewer-dispose')); }
     catch { /* An already unloaded frame needs no message. / 已卸载的页无需通知。 */ }
   }
   dispose(): void {
@@ -41,8 +41,8 @@ class FitsContent extends Widget {
     this.release();
     const query = new URLSearchParams({path: this.context.path});
     if (hdu !== undefined) { query.set('hdu', String(hdu)); }
-    this.iframe.title = `FITSView · ${this.context.path}`;
-    this.iframe.src = URLExt.join(PageConfig.getBaseUrl(), 'fitsview/') + '?' + query;
+    this.iframe.title = `FitsViewer · ${this.context.path}`;
+    this.iframe.src = URLExt.join(PageConfig.getBaseUrl(), 'fitsviewer/') + '?' + query;
   }
 }
 
@@ -54,19 +54,19 @@ class FitsFactory extends ABCWidgetFactory<DocumentWidget<FitsContent>> {
     // The parent's disposed signal precedes DOM detachment; child disposal is later.
     // 父窗口先发 disposed 信号再移除 DOM，必须在这里释放 iframe 内部资源。
     widget.disposed.connect(content.release, content);
-    widget.title.caption = 'FITSView';
+    widget.title.caption = 'FitsViewer';
     return widget;
   }
 }
 
 const plugin: JupyterFrontEndPlugin<void> = {
-  id: 'fitsview-jupyter:viewer',
+  id: 'fitsviewer:viewer',
   autoStart: true,
   requires: [IDocumentManager],
   activate: async (app: JupyterFrontEnd, documents: IDocumentManager) => {
     const settings = ServerConnection.makeSettings();
-    const response = await ServerConnection.makeRequest(URLExt.join(settings.baseUrl, 'fitsview-settings'), {method: 'GET'}, settings);
-    if (!response.ok && response.status !== 404) { throw new Error('FITSView settings could not be loaded'); }
+    const response = await ServerConnection.makeRequest(URLExt.join(settings.baseUrl, 'fitsviewer-settings'), {method: 'GET'}, settings);
+    if (!response.ok && response.status !== 404) { throw new Error('FitsViewer settings could not be loaded'); }
     const preferences = response.ok ? await response.json() as {default_viewer: boolean} : {default_viewer: true};
     // Fetch only file metadata through Contents; FITS bytes go directly to Rust.
     // Contents 只读取元数据，FITS 字节直接交给 Rust 后端。
@@ -75,16 +75,16 @@ const plugin: JupyterFrontEndPlugin<void> = {
         const metadata = await app.serviceManager.contents.get(path, {content: false});
         return {...metadata, content: '', format: 'text', mimetype: 'text/plain', writable: false};
       },
-      save: async () => { throw new Error('FITSView is a read-only viewer'); }
+      save: async () => { throw new Error('FitsViewer is a read-only viewer'); }
     };
     ((app.serviceManager.contents as ContentsManager).defaultDrive as Drive).contentProviderRegistry.register(PROVIDER, provider);
     app.docRegistry.addFileType({
-      name: 'fitsview-fits', displayName: 'FITS image',
+      name: 'fitsviewer-fits', displayName: 'FITS image',
       extensions: ['.fits', '.fit', '.fts', '.fits.gz', '.fit.gz', '.fts.gz', '.FITS', '.FIT', '.FTS', '.FITS.GZ', '.fz', '.fits.fz'],
       mimeTypes: ['application/fits', 'image/fits'], contentType: 'file', fileFormat: 'text'
     });
     app.docRegistry.addWidgetFactory(new FitsFactory({
-      name: FACTORY, label: FACTORY, fileTypes: ['fitsview-fits'], defaultFor: preferences.default_viewer ? ['fitsview-fits'] : [],
+      name: FACTORY, label: FACTORY, fileTypes: ['fitsviewer-fits'], defaultFor: preferences.default_viewer ? ['fitsviewer-fits'] : [],
       modelName: 'text', readOnly: true, contentProviderId: PROVIDER
     }));
 
@@ -98,13 +98,13 @@ const plugin: JupyterFrontEndPlugin<void> = {
       const poll = async (): Promise<void> => {
         try {
           if (document.visibilityState === 'visible') {
-            const url = URLExt.join(settings.baseUrl, 'fitsview/api/requests') + '?after=' + after;
+            const url = URLExt.join(settings.baseUrl, 'fitsviewer/api/requests') + '?after=' + after;
             const response = await ServerConnection.makeRequest(url, {method: 'GET'}, settings);
             if (response.ok) {
               const data = await response.json() as {epoch: string; latest: number; requests: {seq: number; path: string; hdu?: number}[]};
               if (epoch !== data.epoch) {
                 epoch = data.epoch;
-                after = Number(sessionStorage.getItem('fitsview-seq:' + epoch) ?? data.latest);
+                after = Number(sessionStorage.getItem('fitsviewer-seq:' + epoch) ?? data.latest);
               }
               for (const request of data.requests.slice(-1)) {
                 if (request.seq <= after) { continue; }
@@ -115,7 +115,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
                 after = request.seq;
               }
               after = Math.max(after, data.latest);
-              sessionStorage.setItem('fitsview-seq:' + epoch, String(after));
+              sessionStorage.setItem('fitsviewer-seq:' + epoch, String(after));
             }
           }
         } catch { /* A stopped viewer is retried on the next poll. / 下一轮重试。 */ }

@@ -12,6 +12,7 @@ import urllib.request
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from .runtime import resources, runtime_dir
 from .settings import config_path, load_settings, port_value, save_settings
+from .platform_support import alive
 
 
 def jupyter_info():
@@ -28,9 +29,9 @@ def jupyter_info():
             pid = int((directory / "jupyter.pid").read_text())
             info = Path(jupyter_runtime_dir()) / f"jpserver-{pid}.json"
         else: return None
-        os.kill(pid, 0)
+        if not alive(pid): return None
         server = json.loads(info.read_text())
-        server["fitsview_browser_port"] = browser_port
+        server["fitsviewer_browser_port"] = browser_port
         return server
     except (OSError, ValueError, KeyError): return None
 
@@ -47,7 +48,7 @@ def snapshot():
             address = urlsplit(viewer["public_url"])
             viewer["public_url"] = urlunsplit((address.scheme, address.netloc, address.path, "", ""))
             with urllib.request.urlopen(f"http://127.0.0.1:{viewer['port']}/api/health", timeout=1) as reply:
-                viewer["running"] = json.load(reply).get("viewer") == "fitsview"
+                viewer["running"] = json.load(reply).get("viewer") == "fitsviewer"
         except (OSError, ValueError, KeyError):
             if viewer: viewer["running"] = False
     active = None
@@ -62,7 +63,7 @@ def snapshot():
 
 
 def status(arguments):
-    parser = argparse.ArgumentParser(prog="fitsview status", description="Show active services and configured ports; never starts a service.")
+    parser = argparse.ArgumentParser(prog="fitsviewer status", description="Show active services and configured ports; never starts a service.")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(arguments)
     data = snapshot()
@@ -85,7 +86,7 @@ def status(arguments):
 def ports(arguments):
     if not arguments or arguments == ["--json"]:
         return status(arguments)
-    parser = argparse.ArgumentParser(prog="fitsview ports")
+    parser = argparse.ArgumentParser(prog="fitsviewer ports")
     sub = parser.add_subparsers(dest="action", required=True)
     setter = sub.add_parser("set", help="Save ports for future starts; existing listeners and SSH tunnels stay active")
     for flag in ["jupyter", "browser", "viewer", "proxy", "ssh-port"]:
@@ -100,11 +101,11 @@ def ports(arguments):
     settings = save_settings(changes)
     print("Saved:", config_path())
     print(json.dumps(settings, indent=2))
-    print("Settings apply to future starts. Run fitsview tunnel for the client SSH command.")
+    print("Settings apply to future starts. Run fitsviewer tunnel for the client SSH command.")
 
 
 def tunnel(arguments):
-    parser = argparse.ArgumentParser(prog="fitsview tunnel", description="Print an SSH forwarding command to run on the computer with your browser.")
+    parser = argparse.ArgumentParser(prog="fitsviewer tunnel", description="Print an SSH forwarding command to run on the computer with your browser.")
     parser.add_argument("--ssh-host")
     parser.add_argument("--ssh-port", type=port_value)
     parser.add_argument("--local-port", type=port_value)
@@ -113,7 +114,7 @@ def tunnel(arguments):
     data = snapshot()
     settings = data["configured"]
     host = args.ssh_host or settings["ssh_host"]
-    if not host: parser.error("Specify --ssh-host user@server, or save it with fitsview ports set")
+    if not host: parser.error("Specify --ssh-host user@server, or save it with fitsviewer ports set")
     from .settings import validate
     validate({"ssh_host": host})
     remote = args.remote_port or (data["jupyter"] or {}).get("port") or settings["jupyter_port"]
@@ -141,7 +142,7 @@ def _login_url(server, browser_port):
 
 
 def jupyter_command(arguments):
-    parser = argparse.ArgumentParser(prog="fitsview jupyter")
+    parser = argparse.ArgumentParser(prog="fitsviewer jupyter")
     sub = parser.add_subparsers(dest="action", required=True)
     starter = sub.add_parser("start", help="Start or reuse Jupyter in this Python environment")
     starter.add_argument("--port", type=port_value)
@@ -153,7 +154,7 @@ def jupyter_command(arguments):
     server = jupyter_info()
     if args.action == "url":
         if not server: parser.error("No linked running Jupyter")
-        print(_login_url(server, server.get("fitsview_browser_port") or snapshot()["active_browser_port"])); return
+        print(_login_url(server, server.get("fitsviewer_browser_port") or snapshot()["active_browser_port"])); return
     explicit_port = any(a == "--port" or a.startswith("--port=") for a in arguments)
     explicit_browser = any(a == "--browser-port" or a.startswith("--browser-port=") for a in arguments)
     desired = args.port if explicit_port else settings["jupyter_port"]
@@ -169,19 +170,20 @@ def jupyter_command(arguments):
         except OSError: parser.error(f"Port {port} is busy; choose another port or --port auto")
     browser = browser or port
     environment = os.environ.copy()
-    environment["FITSVIEW_BROWSER_ORIGIN"] = f"http://127.0.0.1:{browser}"
-    environment["FITSVIEW_ROOT"] = str(root)
-    executable = Path(sys.executable).parent / "jupyter-lab"
-    if not executable.is_file(): parser.error("JupyterLab is not installed in this Python environment")
+    environment["FITSVIEWER_BROWSER_ORIGIN"] = f"http://127.0.0.1:{browser}"
+    environment["FITSVIEWER_ROOT"] = str(root)
+    import importlib.util
+    if importlib.util.find_spec('jupyterlab') is None: parser.error("JupyterLab is not installed in this Python environment")
     directory = runtime_dir()
     logs = directory / "logs"
     logs.mkdir(exist_ok=True)
     from jupyter_core.paths import jupyter_runtime_dir
-    command = [str(executable), "--no-browser", "--ip=127.0.0.1", f"--port={port}",
+    command = [sys.executable, "-m", "jupyterlab", "--no-browser", "--ip=127.0.0.1", f"--port={port}",
                "--ServerApp.port_retries=0", "--ServerApp.root_dir=" + str(root)]
-    if os.geteuid() == 0: command.append("--allow-root")
+    if getattr(os,'geteuid',lambda:-1)() == 0: command.append("--allow-root")
     with (logs / "jupyter.log").open("ab") as log:
-        process = subprocess.Popen(command, env=environment, cwd=root, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        options = {'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {'start_new_session':True}
+        process = subprocess.Popen(command, env=environment, cwd=root, stdout=log, stderr=subprocess.STDOUT, **options)
     info = Path(jupyter_runtime_dir()) / f"jpserver-{process.pid}.json"
     for _ in range(120):
         if info.is_file():
@@ -189,7 +191,7 @@ def jupyter_command(arguments):
             (directory / "jupyter.json").write_text(json.dumps({"pid": process.pid, "runtime_dir": str(info.parent), "browser_port": browser}))
             print("Started Jupyter PID", process.pid, "port", port)
             print(_login_url(server, browser))
-            print("Use fitsview tunnel to generate an SSH command for your browser computer.")
+            print("Use fitsviewer tunnel to generate an SSH command for your browser computer.")
             return
         if process.poll() is not None: raise RuntimeError("Jupyter failed to start; see " + str(logs / "jupyter.log"))
         time.sleep(0.25)

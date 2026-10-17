@@ -1,9 +1,9 @@
 use eframe::egui::{self, Color32, Pos2, Rect, Vec2};
-use fitsview_core::{DisplayTone, FitsImage, Limits, Statistics, Stretch};
+use fitsviewer_core::{DisplayTone, FitsImage, Limits, Statistics, Stretch};
 use std::sync::{Arc, Mutex};
 
 type Pending = Arc<Mutex<Option<Result<FitsImage, String>>>>;
-/// The egui viewer shared by Linux and browser builds.
+/// The egui viewer shared by desktop and browser builds.
 pub struct FitsApp {
     image: Option<FitsImage>,
     stats: Statistics,
@@ -27,6 +27,10 @@ pub struct FitsApp {
     header_open: bool,
     cursor: String,
     requested_hdu: Option<usize>,
+    #[cfg(windows)]
+    file_picker: Option<fn() -> Option<std::path::PathBuf>>,
+    #[cfg(windows)]
+    started: std::time::Instant,
 }
 impl FitsApp {
     pub fn new(path: String, api: Option<String>, token: String, hdu: Option<usize>) -> Self {
@@ -53,6 +57,10 @@ impl FitsApp {
             header_open: false,
             cursor: String::new(),
             requested_hdu: hdu,
+            #[cfg(windows)]
+            file_picker: None,
+            #[cfg(windows)]
+            started: std::time::Instant::now(),
         }
     }
     pub fn from_image(image: FitsImage) -> Self {
@@ -64,6 +72,21 @@ impl FitsApp {
         );
         app.accept(image);
         app
+    }
+    #[cfg(windows)]
+    pub fn with_file_picker(mut self, picker: fn() -> Option<std::path::PathBuf>) -> Self {
+        self.file_picker = Some(picker);
+        self
+    }
+    #[cfg(windows)]
+    fn browse(&mut self, ctx: &egui::Context) {
+        if self.loading {
+            return;
+        }
+        if let Some(path) = self.file_picker.and_then(|picker| picker()) {
+            self.path = path.to_string_lossy().into_owned();
+            self.request(ctx, None);
+        }
     }
     fn accept(&mut self, image: FitsImage) {
         self.stats = Statistics::new(&image);
@@ -92,7 +115,7 @@ impl FitsApp {
             }
             let mut request = ehttp::Request::get(url);
             if !self.token.is_empty() {
-                request.headers.insert("X-Fitsview-Token", &self.token);
+                request.headers.insert("X-Fitsviewer-Token", &self.token);
             }
             ehttp::fetch(request, move |response| {
                 let result = response.map_err(|e| e.to_string()).and_then(|r| {
@@ -110,7 +133,7 @@ impl FitsApp {
             {
                 let path = self.path.clone();
                 std::thread::spawn(move || {
-                    let result = fitsview_core::load_file(std::path::Path::new(&path), hdu);
+                    let result = fitsviewer_core::load_file(std::path::Path::new(&path), hdu);
                     *pending.lock().unwrap() = Some(result);
                     ctx.request_repaint();
                 });
@@ -192,9 +215,31 @@ impl FitsApp {
         {
             let _ = js_sys::Reflect::set(
                 &window,
-                &wasm_bindgen::JsValue::from_str("__fitsviewState"),
+                &wasm_bindgen::JsValue::from_str("__fitsviewerState"),
                 &value,
             );
+        }
+    }
+    #[cfg(windows)]
+    fn native_diagnostics(&self, ctx: &egui::Context) {
+        // Opt-in functional diagnostics for local testing; never sent over the network.
+        // 可选的本地状态输出用于功能测试，不发送到网络。
+        if let Some(path) = std::env::var_os("FITSVIEWER_DIAGNOSTICS") {
+            let state = serde_json::json!({"loaded":self.image.is_some(),"loading":self.loading,
+                "texture":self.texture.is_some(),"error":self.error,"path":self.path,
+                "width":self.image.as_ref().map(|m|m.info.width),"height":self.image.as_ref().map(|m|m.info.height),
+                "stretch":self.stretch.name(),"low":self.low,"high":self.high,"zoom":self.zoom,
+                "bias":self.tone.bias,"contrast":self.tone.contrast});
+            let _ = std::fs::write(path, state.to_string());
+        }
+        if let Ok(seconds) = std::env::var("FITSVIEWER_EXIT_AFTER")
+            .unwrap_or_default()
+            .parse::<f64>()
+        {
+            if seconds > 0.0 && self.started.elapsed().as_secs_f64() >= seconds {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }
 }
@@ -219,19 +264,39 @@ impl eframe::App for FitsApp {
             self.request(ctx, self.requested_hdu);
         }
         self.shortcuts(ctx);
+        #[cfg(windows)]
+        {
+            let dropped = ctx.input(|i| {
+                i.raw
+                    .dropped_files
+                    .iter()
+                    .find_map(|file| file.path.clone())
+            });
+            if let Some(path) = dropped.filter(|_| !self.loading) {
+                self.path = path.to_string_lossy().into_owned();
+                self.request(ctx, None);
+            }
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::O)) {
+                self.browse(ctx);
+            }
+        }
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             ui.add_space(5.0);
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new("FITSView")
+                    egui::RichText::new("FitsViewer")
                         .size(21.0)
                         .strong()
                         .color(Color32::from_rgb(100, 210, 225)),
                 );
                 ui.separator();
+                #[cfg(windows)]
+                if ui.add_enabled(!self.loading, egui::Button::new("Browse…")).clicked() {
+                    self.browse(ctx);
+                }
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.path)
-                        .desired_width((ui.available_width() - 190.0).max(100.0))
+                        .desired_width((ui.available_width() - if cfg!(windows) { 380.0 } else { 190.0 }).max(100.0))
                         .hint_text("FITS file path"),
                 );
                 if ui
@@ -243,6 +308,15 @@ impl eframe::App for FitsApp {
                 }
                 if ui.button("Header").clicked() {
                     self.header_open = !self.header_open;
+                }
+                #[cfg(windows)]
+                if ui.add_enabled(!self.loading && self.image.is_some(), egui::Button::new("Close image")).clicked() {
+                    self.image = None;
+                    self.texture = None;
+                    self.path.clear();
+                    self.stats = Statistics::default();
+                    self.cursor.clear();
+                    self.error.clear();
                 }
                 if self.loading {
                     ui.spinner();
@@ -406,7 +480,7 @@ impl eframe::App for FitsApp {
         }
         if self.dirty && self.low.is_finite() && self.high.is_finite() && self.low < self.high {
             if let Some(image) = &self.image {
-                let rgba = fitsview_core::render_rgba_with_tone(
+                let rgba = fitsviewer_core::render_rgba_with_tone(
                     image,
                     self.low,
                     self.high,
@@ -520,6 +594,8 @@ impl eframe::App for FitsApp {
             });
         #[cfg(target_arch = "wasm32")]
         self.export_state();
+        #[cfg(windows)]
+        self.native_diagnostics(ctx);
     }
 }
 

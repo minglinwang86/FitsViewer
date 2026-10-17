@@ -1,0 +1,7 @@
+* text=auto
+*.sh text eol=lf
+bin/* text eol=lf
+*.png binary
+*.ico binary
+*.fits binary
+*.gz binary
