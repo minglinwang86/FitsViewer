@@ -1,11 +1,11 @@
 {
   "schema": 1,
   "repository": "minglinwang86/FitsViewer",
-  "release_tag": "v0.1.5-rc.1",
-  "release_id": 416396892,
-  "asset_id": 653266422,
-  "wheel_asset": "fitsviewer-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl",
-  "wheel_bytes": 9892777,
-  "wheel_sha256": "70000ccce3637156836f477368b37cdc52e61fefb37de24ccfe5d83e6c6b252c",
-  "wasm_sha256": "d0db196e6112950efd272e125b9651b6f752fdbbf040e7711cd2c3e21f3475d5"
+  "release_tag": "v0.1.6",
+  "release_id": 416779449,
+  "asset_id": 654770911,
+  "wheel_asset": "fitsviewer-0.1.6-py3-none-manylinux_2_28_x86_64.whl",
+  "wheel_bytes": 10523725,
+  "wheel_sha256": "14ad3e8d96df498abf47f734841386af3094d2c9ad2b5cd4d2d874715534253b",
+  "wasm_sha256": "f6595b6198a1931a5aa52e50de04d33229f7f74735fc60ce9d9ddb4d5bdfe707"
 }

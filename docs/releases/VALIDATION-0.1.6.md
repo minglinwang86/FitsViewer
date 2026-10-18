@@ -110,8 +110,17 @@ source-candidate detection, photometry, selected-aperture Delete and deletion
 after a 37° display rotation. The remaining aperture retained its original pixel
 coordinates. A real SDSS fit was triggered from its primary button and completed.
 Per-page captures cover English/Chinese, narrow/wide interfaces, image/spectrum
-and expanded PRO tools; final capture review and stale-heartbeat diagnosis remain
-part of final assembly.
+and expanded PRO tools: 78 selected/open/task cases produced 140 PNGs. A separate
+repeat retained response bodies and had zero network errors. Visual review is
+independently recorded for all 39 English wide-window pages and six Chinese
+narrow-window examples (45 images linked by SHA-256). These counts establish
+rendering/inspection, not 78 successful scientific calculations.
+
+Controlled reproduction distinguished a correctly rejected old-role heartbeat
+from a real fresh-epoch race when PRO was first entered in an iframe older than
+45 seconds. Source-9 delays the first heartbeat and initializes the Gaia restore
+timer. Its real delayed-enter/reacquire acceptance is recorded with the final GUI
+results rather than reclassifying the original lost response bodies as successful.
 
 For a 4800×4800 image with a 92.16 MB original array, the tested browser transferred
 1,530,000 numeric preview bytes initially. Tone changes issued no new image
