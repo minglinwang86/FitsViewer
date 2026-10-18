@@ -9,8 +9,35 @@ permissions:
   contents: read
 
 jobs:
+  fetch-resources:
+    name: Fetch reviewed draft resources
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    # Draft releases are visible only with push access. No release mutation occurs.
+    # 草稿下载需要 push 权限；写权限仅限此资源获取 job，不传入原生构建。
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Download and verify exact locked draft asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/build_macos_full.py --fetch-assets "$RUNNER_TEMP/full-assets.whl"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: reviewed-macos-full-resources-${{ github.run_id }}
+          path: ${{ runner.temp }}/full-assets.whl
+          if-no-files-found: error
+          retention-days: 3
+
   native-full:
     name: Full / ${{ matrix.arch }}
+    needs: fetch-resources
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -32,10 +59,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-      - name: Fetch locked Full resources from this repository
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/build_macos_full.py --fetch-assets "$RUNNER_TEMP/full-assets.whl"
+      - name: Receive this run's verified resources
+        uses: actions/download-artifact@v6
+        with:
+          name: reviewed-macos-full-resources-${{ github.run_id }}
+          path: ${{ runner.temp }}
       - name: Prepare pinned native Rust toolchain
         run: rustup toolchain install 1.99.1 --profile minimal
       - name: Build native Full app and portable archive

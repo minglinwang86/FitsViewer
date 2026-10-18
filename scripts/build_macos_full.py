@@ -33,6 +33,9 @@ def lock():
         raise ValueError("Unexpected shared-assets lock")
     if Path(value["wheel_asset"]).name != value["wheel_asset"]:
         raise ValueError("Invalid asset name")
+    for name in ["release_id", "asset_id"]:
+        if not isinstance(value[name], int) or value[name] <= 0:
+            raise ValueError("Invalid locked GitHub release/asset ID")
     for name in ["wheel_sha256", "wasm_sha256"]:
         if not re.fullmatch(r"[0-9a-f]{64}", value[name]):
             raise ValueError("Invalid locked SHA256")
@@ -109,8 +112,20 @@ def main():
         if target.exists():
             raise ValueError("Refusing to replace an existing asset download")
         target.parent.mkdir(parents=True, exist_ok=True)
-        command(["gh", "release", "download", expected["release_tag"], "--repo", expected["repository"],
-                 "--pattern", expected["wheel_asset"], "--output", target])
+        endpoint = "repos/" + expected["repository"] + "/releases/" + str(expected["release_id"])
+        release = json.loads(subprocess.check_output(["gh", "api", endpoint], text=True, cwd=ROOT))
+        if release["tag_name"] != expected["release_tag"]:
+            raise ValueError("Locked release ID no longer matches the reviewed tag")
+        asset = next((entry for entry in release["assets"] if entry["id"] == expected["asset_id"]), None)
+        if asset is None or asset["name"] != expected["wheel_asset"] or asset["size"] != expected["wheel_bytes"]:
+            raise ValueError("Locked release asset metadata differs")
+        if asset.get("digest") not in {None, "sha256:" + expected["wheel_sha256"]}:
+            raise ValueError("GitHub asset digest differs from the reviewed lock")
+        endpoint = "repos/" + expected["repository"] + "/releases/assets/" + str(expected["asset_id"])
+        print("+ Download locked GitHub release asset " + str(expected["asset_id"]), flush=True)
+        with target.open("xb") as stream:
+            subprocess.run(["gh", "api", endpoint, "-H", "Accept: application/octet-stream"],
+                           cwd=ROOT, stdout=stream, check=True)
         validate_wheel(target, expected)
         print(json.dumps({"assets_verified": True, "sha256": expected["wheel_sha256"]}))
         return
