@@ -8,13 +8,50 @@ import json
 import re
 import shutil
 import subprocess
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
 
 TARGETS = {"arm64": "aarch64-apple-darwin", "x86_64": "x86_64-apple-darwin"}
 LEGAL_NAMES = ["LICENSE", "LICENSE.txt", "LICENSE.md", "LICENSE-MIT", "LICENSE-APACHE",
-               "LICENSE.MIT", "LICENSE.APACHE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE"]
+               "LICENSE-ZLIB", "LICENSE.MIT", "LICENSE.APACHE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE"]
+UPSTREAM_CACHE = {}
+
+
+def dispatch_supplement(package, source, root, folder, resources):
+    """One audited exception: upstream declares MIT but publishes no license text.
+    仅限已审核的 dispatch 0.2.0；其他缺原始许可的 crate 仍须拒绝。
+    """
+    if (package["name"], package["version"]) != ("dispatch", "0.2.0"):
+        return [], None
+    checksum = "bd0c93bb4b0c6d9b77f4435b0ae98c24d17f1c45b2ff844c6151a07256ca923b"
+    locked = [p for p in tomllib.loads((root / "Cargo.lock").read_text())["package"]
+              if (p["name"], p["version"]) == ("dispatch", "0.2.0")]
+    if len(locked) != 1 or locked[0].get("checksum") != checksum:
+        raise ValueError("Dispatch legal supplement is not bound to the audited crate")
+    expected = {"Cargo.toml.orig": "05c60b829931ef7f1f130735843c11f5cf9cc69546eca5fc941d014781c68e31",
+                "cargo-vcs-info.json": "313a7abcf98d6834fdf27109ae9bf62f318efe8e4c6ac27b41fbeb2e4ff6a1f8",
+                "MIT-standard.txt": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"}
+    supplement = root / "licenses/macos/dispatch-0.2.0"
+    proof = json.loads((supplement / "PROVENANCE.json").read_text())
+    if package.get("license") != "MIT" or package.get("authors") != ["Steven Sheldon"] or proof["crate_sha256"] != checksum:
+        raise ValueError("Dispatch original license/author declaration differs")
+    for name, record in proof["original_files"].items():
+        if sha256(source / record["crate_path"]) != expected[name]:
+            raise ValueError("Dispatch original declaration differs from the audited crate")
+    files = []
+    for name in [*expected, "PROVENANCE.json"]:
+        original = supplement / name
+        if name in expected and sha256(original) != expected[name]:
+            raise ValueError("Dispatch audited legal supplement has changed")
+        output = folder / name
+        shutil.copy2(original, output)
+        origin = (proof["standard_text"]["url"] if name == "MIT-standard.txt"
+                  else proof["crate_url"] + "#" + proof["original_files"].get(name, {}).get("crate_path", "audited-provenance"))
+        files.append({"path": output.relative_to(resources).as_posix(), "bytes": output.stat().st_size,
+                      "sha256": sha256(output), "origin": origin})
+    return files, proof["copyright_boundary"]
 
 
 def sha256(path):
@@ -57,12 +94,17 @@ def upstream_texts(package, source):
     """Only exact crate-recorded upstream commits may supplement omitted root licenses."""
     vcs = source / ".cargo_vcs_info.json"
     repository = (package.get("repository") or "").removesuffix(".git").rstrip("/")
+    if repository.startswith("http://github.com/"):
+        repository = "https://" + repository[len("http://"):]
     if not vcs.is_file() or not repository.startswith("https://github.com/"):
         return {}
     commit = json.loads(vcs.read_text())["git"]["sha1"]
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("Invalid crate upstream commit")
     owner_repo = "/".join(urllib.parse.urlsplit(repository).path.strip("/").split("/")[:2])
+    cache_key = (owner_repo, commit)
+    if cache_key in UPSTREAM_CACHE:
+        return UPSTREAM_CACHE[cache_key]
     result = {}
     for name in LEGAL_NAMES:
         url = "https://raw.githubusercontent.com/" + owner_repo + "/" + commit + "/" + name
@@ -73,6 +115,7 @@ def upstream_texts(package, source):
                 result["upstream-" + name] = (content, url)
         except (urllib.error.URLError, TimeoutError):
             continue
+    UPSTREAM_CACHE[cache_key] = result
     return result
 
 
@@ -86,7 +129,7 @@ def collect_from_metadata(metadata, root, resources, target, *, fetch_missing=Tr
             raise ValueError("Invalid crate legal output name")
         folder = resources / "licenses/rust" / key
         folder.mkdir(parents=True, exist_ok=True)
-        files, primary = [], []
+        files, primary, legal_note = [], [], None
         candidates = legal_files(source)
         declared = source / package["license_file"] if package.get("license_file") else None
         if declared and declared.resolve().is_relative_to(source) and declared.is_file() and declared not in candidates:
@@ -101,6 +144,10 @@ def collect_from_metadata(metadata, root, resources, target, *, fetch_missing=Tr
             files.append(record)
             if path.parent == source or path == declared or relative.parts[0].lower() in {"licenses", "licences"}:
                 primary.append(record["path"])
+        if not primary:
+            supplement_files, legal_note = dispatch_supplement(package, source, root, folder, resources)
+            files.extend(supplement_files)
+            primary.extend(item["path"] for item in supplement_files)
         if not primary and fetch_missing:
             for name, (content, url) in upstream_texts(package, source).items():
                 output = folder / name
@@ -121,6 +168,7 @@ def collect_from_metadata(metadata, root, resources, target, *, fetch_missing=Tr
         records.append({"name": package["name"], "version": package["version"], "license": package.get("license"),
                         "license_file": package.get("license_file"), "authors": package.get("authors", []),
                         "repository": package.get("repository"), "source": package.get("source") or "vendored path dependency",
+                        "legal_note": legal_note,
                         "primary_files": primary, "files": files})
     if not records:
         raise ValueError("Native dependency license inventory is empty")
@@ -138,6 +186,8 @@ def collect_from_metadata(metadata, root, resources, target, *, fetch_missing=Tr
             notices += ["Upstream authors: " + "; ".join(package["authors"]), ""]
         if package["repository"]:
             notices += ["Source: " + package["repository"], ""]
+        if package["legal_note"]:
+            notices += [package["legal_note"], ""]
         notices += ["- [" + item["path"] + "](" + item["path"] + ")" for item in package["files"]]
         notices += [""]
     (resources / "MACOS_THIRD_PARTY_NOTICES.md").write_text("\n".join(notices), encoding="utf-8")

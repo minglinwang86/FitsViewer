@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "package": "dispatch",
+  "version": "0.2.0",
+  "crate_url": "https://static.crates.io/crates/dispatch/dispatch-0.2.0.crate",
+  "crate_sha256": "bd0c93bb4b0c6d9b77f4435b0ae98c24d17f1c45b2ff844c6151a07256ca923b",
+  "upstream_commit": "82d6c7a5b75dc0c71c3f46f87bb6c16a476f7748",
+  "license": "MIT",
+  "authors": [
+    "Steven Sheldon"
+  ],
+  "original_files": {
+    "Cargo.toml.orig": {
+      "crate_path": "Cargo.toml.orig",
+      "sha256": "05c60b829931ef7f1f130735843c11f5cf9cc69546eca5fc941d014781c68e31"
+    },
+    "cargo-vcs-info.json": {
+      "crate_path": ".cargo_vcs_info.json",
+      "sha256": "313a7abcf98d6834fdf27109ae9bf62f318efe8e4c6ac27b41fbeb2e4ff6a1f8"
+    }
+  },
+  "standard_text": {
+    "file": "MIT-standard.txt",
+    "url": "https://raw.githubusercontent.com/spdx/license-list-data/31ba1a50e5397e00a304dbadc76531740e89ee48/text/MIT.txt",
+    "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+  },
+  "copyright_boundary": "The published crate and recorded upstream tree provide an MIT manifest declaration and author name, but no standalone license/copyright text. Original declarations are preserved. The official SPDX MIT standard text is supplied as a reference with its template placeholders unchanged; no copyright year or additional ownership claim is invented."
+}

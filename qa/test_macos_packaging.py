@@ -5,6 +5,7 @@
 from pathlib import Path
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -90,10 +91,34 @@ def main():
             assert str(error) == "Missing original native dependency license: fixture-native-1.0.0"
         else:
             raise AssertionError("An unlicensed active native dependency was accepted")
+        # The exact dispatch exception must not become a generic MIT fallback.
+        shutil.copytree(ROOT / "licenses/macos", legal_root / "licenses/macos")
+        dispatch_source = work / "dispatch-source"
+        dispatch_source.mkdir()
+        original_supplement = ROOT / "licenses/macos/dispatch-0.2.0"
+        shutil.copy2(original_supplement / "Cargo.toml.orig", dispatch_source / "Cargo.toml.orig")
+        shutil.copy2(original_supplement / "cargo-vcs-info.json", dispatch_source / ".cargo_vcs_info.json")
+        dispatch_package = {**package, "name": "dispatch", "version": "0.2.0", "authors": ["Steven Sheldon"],
+                            "manifest_path": str(dispatch_source / "Cargo.toml")}
+        dispatch_metadata = json.loads(json.dumps(metadata))
+        dispatch_metadata["packages"][1] = dispatch_package
+        dispatch_inventory = collect_from_metadata(dispatch_metadata, legal_root, work / "dispatch-accepted",
+                                                   "aarch64-apple-darwin", fetch_missing=False)
+        assert dispatch_inventory["packages"][0]["legal_note"]
+        (dispatch_source / "Cargo.toml.orig").write_bytes(b"changed declaration")
+        try:
+            collect_from_metadata(dispatch_metadata, legal_root, work / "dispatch-rejected",
+                                  "aarch64-apple-darwin", fetch_missing=False)
+        except ValueError as error:
+            assert "original declaration differs" in str(error)
+        else:
+            raise AssertionError("A changed dispatch original declaration was accepted")
     print(json.dumps({"passed": True, "git_lf_vs_wheel_crlf_accepted": True,
                       "changed_scientific_limit_rejected": True, "original_native_license_and_authors_preserved": True,
                       "dev_only_dependency_excluded": True, "changed_license_rejected": True,
-                      "missing_active_dependency_license_rejected": True}))
+                      "missing_active_dependency_license_rejected": True,
+                      "exact_dispatch_declaration_and_standard_text_accepted": True,
+                      "changed_dispatch_declaration_rejected": True}))
 
 
 if __name__ == "__main__":

@@ -12,3 +12,6 @@ bin/* text eol=lf
 *.icns binary
 *.jpg binary
 *.gz binary
+licenses/macos/dispatch-0.2.0/Cargo.toml.orig -text
+licenses/macos/dispatch-0.2.0/cargo-vcs-info.json -text
+licenses/macos/dispatch-0.2.0/MIT-standard.txt -text
