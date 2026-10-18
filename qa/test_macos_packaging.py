@@ -12,6 +12,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import build_macos_full as mac
+from macos_licenses import collect_from_metadata, verify_inventory, sha256
 
 
 def main():
@@ -48,8 +49,51 @@ def main():
                 raise AssertionError("A non-line-ending source change was accepted")
         finally:
             mac.ROOT = original_root
+        # License coverage follows normal/build edges and preserves original text.
+        # 真实依赖必须有原始许可；缺失、篡改许可均应阻断打包。
+        legal_root = work / "legal-source"
+        legal_root.mkdir()
+        (legal_root / "Cargo.lock").write_bytes((ROOT / "Cargo.lock").read_bytes())
+        dependency = work / "native-binding"
+        dependency.mkdir()
+        original_license = (ROOT / "LICENSE").read_bytes()
+        (dependency / "LICENSE-MIT").write_bytes(original_license)
+        package = {"id": "native", "name": "fixture-native", "version": "1.0.0",
+                   "manifest_path": str(dependency / "Cargo.toml"), "license": "MIT", "license_file": None,
+                   "authors": ["Fixture native maintainer"], "repository": "https://example.invalid/native", "source": "fixture"}
+        metadata = {"workspace_members": ["host"],
+                    "packages": [{"id": "host", "name": "fitsviewer"}, package,
+                                 {"id": "dev", "name": "unused-dev", "version": "1.0.0"}],
+                    "resolve": {"nodes": [
+                        {"id": "host", "deps": [{"pkg": "native", "dep_kinds": [{"kind": None}]},
+                                                   {"pkg": "dev", "dep_kinds": [{"kind": "dev"}]}]},
+                        {"id": "native", "deps": []}, {"id": "dev", "deps": []}]}}
+        resources = work / "legal-package"
+        resources.mkdir()
+        inventory = collect_from_metadata(metadata, legal_root, resources, "aarch64-apple-darwin", fetch_missing=False)
+        assert len(inventory["packages"]) == 1
+        assert inventory["packages"][0]["authors"] == package["authors"]
+        copied = resources / inventory["packages"][0]["primary_files"][0]
+        assert copied.read_bytes() == original_license
+        assert verify_inventory(resources, "aarch64-apple-darwin", sha256(legal_root / "Cargo.lock")) == 1
+        copied.write_bytes(original_license + b"changed")
+        try:
+            verify_inventory(resources, "aarch64-apple-darwin", sha256(legal_root / "Cargo.lock"))
+        except ValueError as error:
+            assert "absent or changed" in str(error)
+        else:
+            raise AssertionError("Changed native license text was accepted")
+        (dependency / "LICENSE-MIT").unlink()
+        try:
+            collect_from_metadata(metadata, legal_root, work / "unlicensed", "aarch64-apple-darwin", fetch_missing=False)
+        except ValueError as error:
+            assert str(error) == "Missing original native dependency license: fixture-native-1.0.0"
+        else:
+            raise AssertionError("An unlicensed active native dependency was accepted")
     print(json.dumps({"passed": True, "git_lf_vs_wheel_crlf_accepted": True,
-                      "changed_scientific_limit_rejected": True}))
+                      "changed_scientific_limit_rejected": True, "original_native_license_and_authors_preserved": True,
+                      "dev_only_dependency_excluded": True, "changed_license_rejected": True,
+                      "missing_active_dependency_license_rejected": True}))
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 
 from build_macos_full import ROOT, digest, lock
+from macos_licenses import TARGETS, verify_inventory
 
 REAL_FITS_URL = ("https://raw.githubusercontent.com/astropy/astropy-data/"
                  "1b964d39b378390b24c58fb5633cef238d22a35a/tutorials/FITS-images/HorseHead.fits")
@@ -126,6 +127,11 @@ def main():
             assert info["CFBundleIconFile"] == "FitsViewer.icns"
             assert (resources / info["CFBundleIconFile"]).read_bytes()[:4] == b"icns"
             assert "CFBundleTypeIconFile" not in json.dumps(info)
+            assert digest(resources / "licenses/macos-native-inventory.json") == package["native_license_inventory_sha256"]
+            legal_count = verify_inventory(resources, TARGETS[package["architecture"]], digest(ROOT / "Cargo.lock"))
+            assert legal_count == package["native_license_packages"]
+            assert "macOS native dependency supplement" in (resources / "THIRD_PARTY_NOTICES.md").read_text()
+            report["checks"]["native_dependency_license_inventory_and_texts"] = True
             execute(["codesign", "--verify", "--deep", "--strict", "--verbose=2", app], environment)
             dependencies = execute(["otool", "-L", binary], environment)
             for dependency in dependencies.splitlines()[1:]:

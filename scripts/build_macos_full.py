@@ -18,6 +18,7 @@ import tomllib
 import zipfile
 
 from build_profiles import ROOT, python_files, select
+from macos_licenses import collect_native_licenses
 
 LOCK_PATH = ROOT / "config/macos-full-assets.json"
 
@@ -189,6 +190,7 @@ def main():
                  "requirements.txt", "requirements-spectra.txt"]:
         shutil.copy2(ROOT / name, resources / name)
     shutil.copytree(ROOT / "licenses", resources / "licenses")
+    native_legal = collect_native_licenses(ROOT, resources, architecture, environment)
     shutil.copy2(resources / "web/icons/fitsviewer.icns", resources / "FitsViewer.icns")
     (app / "Contents/MacOS").mkdir()
     launcher = app / "Contents/MacOS/FitsViewer"
@@ -230,6 +232,8 @@ def main():
                "portable": archive.name, "portable_sha256": archive_hash, "portable_bytes": archive.stat().st_size,
                "native_binary_sha256": digest(binary), "native_launcher_sha256": digest(launcher),
                "wasm_sha256": digest(resources / "web/pkg/fitsviewer_web_bg.wasm"),
+               "native_license_packages": len(native_legal["packages"]),
+               "native_license_inventory_sha256": digest(resources / "licenses/macos-native-inventory.json"),
                "signature": "ad-hoc; no Developer ID or notarization"}
     (output / "package.json").write_text(json.dumps(package, indent=2) + "\n")
     print(json.dumps({"packaged": True, "portable": archive.name, "sha256": archive_hash}))
