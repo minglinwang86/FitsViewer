@@ -14,6 +14,7 @@ not a claim that every new profile has completed release or platform validation.
 | Python entry/integration | `jupyter/fitsviewer/` | CLI, target environments, settings, server proxy, Notebook URL/IFrame |
 | JupyterLab frontend | `jupyter/src/index.ts` | document factory, file extensions and lifecycle; embeds the shared viewer |
 | Packaging selection | `config/build-modules.json`, `scripts/build_profiles.py` | source features and selected resources from one checkout |
+| macOS bundle | `macos/launcher.c`, `scripts/build_macos_full.py` | native app entry, locked shared resources, target-specific license collection and portable signing |
 
 The main data flow is file → Rust core → shared image/spectrum data → UI texture or
 plot. Scientific jobs pass a bounded JSON request through `science_client.rs` and

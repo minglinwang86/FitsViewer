@@ -25,6 +25,7 @@
 | Jupyter 退出与子进程回收 | `server/src/supervisor.rs` | `server.py` supervisor PID, HTTP shutdown, science process tree |
 | 环境/端口/默认查看器 | `jupyter/fitsviewer/` | `install.py`, `management.py`, `defaults.py`, platform helpers |
 | 模块与打包 | `config/build-modules.json` | both Cargo manifests, `build_profiles.py`, `build_wheel.py`, `hatch_build.py` |
+| macOS 原生便携包 | `scripts/build_macos_full.py`, `macos/launcher.c` | `config/macos-full-assets.json`, `macos_licenses.py`, `verify_macos_full.py`; keep resource locks and native license coverage |
 | 翻译、中文字库 | `viewer/src/i18n.rs` | `scripts/prepare_cjk_font.py`, font license/subset coverage |
 
 上表的 viewer 文件位于 `crates/viewer/src/`，Python 科学适配器位于 `web/python/`。

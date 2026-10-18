@@ -17,8 +17,9 @@ Still outside this release / 本版尚未包含：
   多谱相减、合并与物理流量单位换算。
 - PSF photometry, absolute photometric zeropoints, flux-conserving reprojection and
   all-sky blind astrometry / PSF 测光、绝对零点、通量守恒重投影与全天盲解。
-- JupyterLab 5, ARM/musl packages and a validated macOS native installer /
-  相应环境兼容与安装包。
+- JupyterLab 5, Linux/Windows ARM and Linux musl packages / 相应环境兼容与安装包。
+- A notarized macOS installer, local Mac Jupyter wheel and complete Mac GUI acceptance /
+  公证 Mac 安装器、本机 Jupyter wheel 与完整交互验收；当前提供两种架构的原生 portable ZIP。
 
 Future work should retain the shared module registry, external science dependencies,
 explicit uncertainty conventions and bounded document/worker/artifact ownership.

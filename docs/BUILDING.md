@@ -89,11 +89,14 @@ optional fontTools. Neither fontTools nor Astropy is a runtime dependency.
 
 ## Native macOS Full / macOS 原生全功能版
 
-On an Apple Silicon or Intel Mac with Xcode Command Line Tools, Python 3.11+ and
-Rust 1.99.1, download the exact Linux Full wheel named in
+From a Git checkout on an Apple Silicon or Intel Mac with Xcode Command Line Tools,
+Python 3.11+ and Rust 1.99.1, download the exact Linux Full wheel named in
 `config/macos-full-assets.json`. It supplies only reviewed web/Lab resources;
 its Linux executable is never copied. The script verifies hashes and adapter
 sources before packaging a newly compiled native Mach-O application.
+The Mac packager also collects original legal texts from the resolved native
+normal/build dependency graph, records each file's hash and verifies the inventory
+before release. This supplements the shared Linux/Windows/WASM license inventory.
 
 ```bash
 python scripts/build_macos_full.py --wheel /path/to/reviewed-full.whl --execute

@@ -48,6 +48,11 @@ selected external Python/Conda environment. NumPy, Astropy, Specutils, scientifi
 catalogues and TeX are not bundled. After moving only the `.app`, its equivalent
 terminal entry is `FitsViewer.app/Contents/MacOS/FitsViewer`.
 
+The app's `Contents/Resources` includes the shared notices plus
+`MACOS_THIRD_PARTY_NOTICES.md` and a target-specific license inventory under
+`licenses/`. These retain the original license texts and upstream attribution for
+the native Mac dependencies.
+
 基础桌面查看不要求 Python。科学功能调用指定的 Python/Conda 环境，依赖需在该环境
 安装；包内不包含上述科学包、星表或 TeX。若只移动了 `.app`，终端入口为
 `FitsViewer.app/Contents/MacOS/FitsViewer`。

@@ -59,6 +59,44 @@ limitations. It does not certify every operating system, graphics driver or rese
 - `.fz`-only protected defaults were checked with the actual Pascal decision
   function in an isolated test fixture; the test did not write real UserChoice keys.
 
+## macOS Full portable apps
+
+- [Native macOS acceptance run](https://github.com/minglinwang86/FitsViewer/actions/runs/39124204993)
+  passed on both `macos-15` (Apple Silicon/arm64) and `macos-15-intel` (x86_64),
+  using source commit `29e9140d67bc1ae30f5e79f4885d3ba16d770dcd` and Rust 1.99.1.
+  Each architecture passed 33 core tests and compiled its own native Full binary.
+- The exact released ZIP was extracted into a directory containing Chinese characters
+  and spaces. Executable permissions, three entry points, Full feature metadata,
+  Mach-O architecture, bundled icon, resource hashes and ad-hoc signatures passed.
+  Native dynamic dependencies were limited to macOS system libraries/frameworks.
+- The app contains a target-specific inventory for the normal/build dependencies
+  reachable from its native host. Their bundled legal texts are checked individually
+  by SHA256, including Mac-only Objective-C bindings. The exact `dispatch 0.2.0`
+  manifest declares MIT but omits a standalone license text: its original declaration
+  and authorship metadata are retained alongside the official SPDX standard text,
+  with that provenance and limitation explicitly recorded. No copyright year is invented.
+- A real public Astropy HorseHead FITS file was fetched from an immutable official
+  repository commit and checked by size/hash. Raw pixels, BSCALE/BZERO/BLANK physical
+  values and statistics matched an independent Astropy calculation. Header and view
+  configuration commands also passed.
+- The relocated app served its locked WASM and real image packet correctly through
+  an authenticated loopback API. Unauthenticated data access was rejected. The selected
+  external Python worker advertised lazy imports; SIGTERM reaped the worker and host.
+- Native GUI startup was probed separately for five seconds with screenshot capture
+  attempted; probe processes were cleaned up. This is startup evidence, **not complete
+  interactive GUI/scientific-workflow acceptance**.
+- There is no Developer ID signature, Apple notarization, Gatekeeper/quarantine
+  acceptance, Finder file-association validation or Mac Python-wheel/Jupyter-session
+  test. The compile target is macOS 11.0; execution was on macOS 15 only.
+- Shared web/Lab resources came from the SHA256-locked, reviewed Linux Full wheel;
+  the Linux executable was excluded. Packaging allows only CRLF/LF normalization
+  in the scientific-adapter comparison; an intentional source change is rejected
+  by the dedicated regression. NumPy/Astropy were test dependencies, not app contents.
+
+中文：Apple Silicon 与 Intel 均在 GitHub 的原生 macOS 15 环境完成构建、33 项核心测试、
+解压包中文路径／签名／数据／API／进程退出检查。窗口启动探测与完整交互验收分别记录；
+不宣称已验证旧 macOS、首次下载的 Gatekeeper 流程或本机 Jupyter 集成。
+
 ## Packaging and documentation
 
 Checksums are published separately in SHA256SUMS to avoid self-referential package
@@ -86,8 +124,9 @@ its package metadata/checksums change.
   assumptions. Continuum choice, calibration, redshift and LSF systematics remain.
 - Current UI screenshots of online configuration do not demonstrate a successful
   live Gaia/CDS/VO service response. Remote SAMP needs an actual external Hub/client.
-- No claim is made for all Linux distributions, ARM/musl, Safari, macOS native
-  packaging, actual X2Go forwarding, all clipboard sources or JupyterLab 5.
+- No claim is made for all Linux distributions, Linux/Windows ARM, Linux musl,
+  Safari, older macOS or complete Mac GUI interaction, actual X2Go forwarding,
+  all clipboard sources or JupyterLab 5.
 
 中文：验收区分共享源码、实际平台运行与科学解释。模式／布局、真实图像／光谱、资源回收
 和独立数值参考检查不能代替特定观测的科学验证；不把编译成功、配置截图或进程 RSS
