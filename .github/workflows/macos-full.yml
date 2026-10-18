@@ -30,6 +30,8 @@ jobs:
         run: python scripts/build_macos_full.py --fetch-assets "$RUNNER_TEMP/full-assets.whl"
       - name: Check line-ending and stale-source packaging regression
         run: python -B qa/test_macos_packaging.py --wheel "$RUNNER_TEMP/full-assets.whl"
+      - name: Check relocated helper source and external Python boundary
+        run: python -B qa/test_remote_bundle_entry.py
       - uses: actions/upload-artifact@v5
         with:
           name: reviewed-macos-full-resources-${{ github.run_id }}
@@ -77,6 +79,8 @@ jobs:
             ~/.cargo/git
             target/macos-full
           key: macos-full-v1-${{ matrix.runner }}-rust1.99.1-macos11-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**', 'vendor/**', 'windows/app.png') }}
+          restore-keys: |
+            macos-full-v1-${{ matrix.runner }}-rust1.99.1-macos11-
       - name: Build native Full app and portable archive
         run: python scripts/build_macos_full.py --wheel "$RUNNER_TEMP/full-assets.whl" --execute
       - name: Save successful native build for acceptance reruns

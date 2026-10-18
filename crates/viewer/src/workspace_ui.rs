@@ -105,14 +105,20 @@ enum Action {Float(Page,Option<Pos2>,bool),Dock(u64),DockPage(Page),Fold(Page),C
 
 pub(crate) struct Dock {
     panels:BTreeMap<Page,Panel>,order:Vec<Page>,groups:Vec<Group>,next:u64,drag:Option<Drag>,press:Option<Press>,focus:Option<Page>,operation:String,initialized:bool,
+    tool_heights:BTreeMap<String,f32>,
 }
-impl Default for Dock {fn default()->Self{Self{panels:BTreeMap::new(),order:Page::ALL.to_vec(),groups:vec![],next:1,drag:None,press:None,focus:None,operation:String::new(),initialized:false}}}
+impl Default for Dock {fn default()->Self{Self{panels:BTreeMap::new(),order:Page::ALL.to_vec(),groups:vec![],next:1,drag:None,press:None,focus:None,operation:String::new(),initialized:false,tool_heights:BTreeMap::new()}}}
 pub(crate) struct Output {pub width:f32,pub collapsed:bool,pub closed:Vec<Page>}
 
 impl Dock {
     pub fn restore(value:&serde_json::Value)->Self {
         let mut dock=Self::default();if value["schema"]!=1{return dock;}
         dock.operation=value["operation"].as_str().unwrap_or("").chars().take(64).collect();
+        if let Some(heights)=value["tool_heights"].as_object(){for (operation,height) in heights.iter().take(64){
+            if !operation.is_empty() && operation.len()<=64{if let Some(height)=height.as_f64().filter(|height|height.is_finite()){
+                dock.tool_heights.insert(operation.clone(),height.clamp(96.,1200.) as f32);
+            }}
+        }}
         if let Some(order)=value["order"].as_array(){let order=order.iter().filter_map(|v|v.as_str().and_then(Page::from_id)).collect::<Vec<_>>();if order.len()==Page::ALL.len() && order.iter().copied().collect::<BTreeSet<_>>().len()==Page::ALL.len(){dock.order=order;}}
         if let Some(panels)=value["panels"].as_array(){for panel in panels.iter().take(Page::ALL.len()) {let Some(page)=panel["page"].as_str().and_then(Page::from_id)else{continue;};let state=dock.panels.entry(page).or_default();state.open=panel["open"].as_bool().unwrap_or(false);state.folded=panel["folded"].as_bool().unwrap_or(false);state.height=panel["height"].as_f64().filter(|v|v.is_finite()).unwrap_or(300.).clamp(96.,1200.) as f32;state.last_rect=saved_rect(&panel["last_rect"]);state.last_size=saved_size(&panel["last_size"]);}}
         let mut grouped=BTreeSet::new();
@@ -140,7 +146,16 @@ impl Dock {
         }
         for group in &mut self.groups {group.pages.retain(|page|self.panels.get(page).is_some_and(|state|state.floating==Some(group.id)));if self.focus.is_some_and(|page|group.pages.contains(&page)){group.active=self.focus.unwrap();if group.folded{group.folded=false;group.fresh=true;group.position=Some(group.rect.min);}}if !group.pages.contains(&group.active){if let Some(page)=group.pages.first(){group.active=*page;}}}
         self.groups.retain(|group|!group.pages.is_empty());
-        if self.operation!=operation {self.operation=operation.into();self.focus=Some(Page::Tool);self.panels.entry(Page::Tool).or_default().folded=false;reveal=true;}
+        if self.operation!=operation {
+            if !self.operation.is_empty(){if let Some(state)=self.panels.get(&Page::Tool){self.tool_heights.insert(self.operation.clone(),state.height);}}
+            self.operation=operation.into();self.focus=Some(Page::Tool);
+            let state=self.panels.entry(Page::Tool).or_default();state.folded=false;
+            state.height=self.tool_heights.get(operation).copied().unwrap_or(if operation=="archive_search"{600.}else{300.});reveal=true;
+        }else if first && operation=="archive_search" && !self.tool_heights.contains_key(operation){
+            // Migrate the old 300px default once; keep explicitly resized layouts.
+            // 旧默认高度仅迁移一次；用户主动调整过的高度仍按原状态恢复。
+            if let Some(state)=self.panels.get_mut(&Page::Tool){if (state.height-300.).abs()<0.01{state.height=600.;}}
+        }
         reveal && !first
     }
     fn float(&mut self,page:Page,position:Option<Pos2>,manual:bool) {
@@ -172,7 +187,8 @@ impl Dock {
         }
     }
     pub fn summary(&self)->serde_json::Value {
-        serde_json::json!({"schema":1,"operation":self.operation,"order":self.order.iter().map(|page|format!("{page:?}")).collect::<Vec<_>>(),"panels":self.order.iter().filter_map(|page|self.panels.get(page).map(|state|serde_json::json!({"page":format!("{page:?}"),"open":state.open,"floating_group":state.floating,"folded":state.folded,"height":state.height,"last_rect":state.last_rect.map(|r|[r.min.x,r.min.y,r.max.x,r.max.y]),"last_size":state.last_size.map(|size|[size.x,size.y])}))).collect::<Vec<_>>(),"floating_groups":self.groups.iter().map(|group|serde_json::json!({"id":group.id,"pages":group.pages.iter().map(|page|format!("{page:?}")).collect::<Vec<_>>(),"active":format!("{:?}",group.active),"rect":[group.rect.min.x,group.rect.min.y,group.rect.max.x,group.rect.max.y],"folded":group.folded,"size":[group.size.x,group.size.y]})).collect::<Vec<_>>()})
+        let mut heights=self.tool_heights.clone();if !self.operation.is_empty(){if let Some(state)=self.panels.get(&Page::Tool){heights.insert(self.operation.clone(),state.height);}}
+        serde_json::json!({"schema":1,"operation":self.operation,"tool_heights":heights,"order":self.order.iter().map(|page|format!("{page:?}")).collect::<Vec<_>>(),"panels":self.order.iter().filter_map(|page|self.panels.get(page).map(|state|serde_json::json!({"page":format!("{page:?}"),"open":state.open,"floating_group":state.floating,"folded":state.folded,"height":state.height,"last_rect":state.last_rect.map(|r|[r.min.x,r.min.y,r.max.x,r.max.y]),"last_size":state.last_size.map(|size|[size.x,size.y])}))).collect::<Vec<_>>(),"floating_groups":self.groups.iter().map(|group|serde_json::json!({"id":group.id,"pages":group.pages.iter().map(|page|format!("{page:?}")).collect::<Vec<_>>(),"active":format!("{:?}",group.active),"rect":[group.rect.min.x,group.rect.min.y,group.rect.max.x,group.rect.max.y],"folded":group.folded,"size":[group.size.x,group.size.y]})).collect::<Vec<_>>()})
     }
     pub fn show(&mut self,ctx:&egui::Context,spectrum:bool,requested:&[Page],operation:&str,width:f32,mut collapsed:bool,mut body:impl FnMut(&mut egui::Ui,Page))->Output {
         if ctx.input(|input|input.key_pressed(egui::Key::Escape)){
@@ -328,6 +344,22 @@ mod tests {
     #[test]fn restored_layout_keeps_geometry_group_tab_fold_and_closed_pages(){
         let mut dock=Dock::default();dock.sync(&[Page::Tool,Page::Coordinates,Page::Photometry],"detect_stars:");dock.float(Page::Coordinates,Some(egui::pos2(123.,87.)),false);let first=dock.groups[0].id;dock.float(Page::Photometry,None,false);let second=dock.groups[1].id;dock.attach(second,Target::Group(first));dock.groups[0].folded=true;dock.panels.get_mut(&Page::Tool).unwrap().folded=true;
         let restored=Dock::restore(&dock.summary());assert_eq!(restored.groups.len(),1);assert_eq!(restored.groups[0].active,Page::Photometry);assert_eq!(restored.groups[0].rect.min,egui::pos2(123.,87.));assert!(restored.groups[0].folded);assert!(restored.panels[&Page::Tool].folded);assert!(!restored.was_open(Page::Header));
+    }
+    #[test]fn archive_height_is_larger_and_each_tool_remembers_user_resizing(){
+        let mut dock=Dock::default();dock.sync(&[Page::Tool],"detect_stars");
+        dock.panels.get_mut(&Page::Tool).unwrap().height=340.;
+        dock.sync(&[Page::Tool],"archive_search");assert_eq!(dock.panels[&Page::Tool].height,600.);
+        dock.panels.get_mut(&Page::Tool).unwrap().height=480.;
+        dock.sync(&[Page::Tool],"detect_stars");assert_eq!(dock.panels[&Page::Tool].height,340.);
+        let mut restored=Dock::restore(&dock.summary());restored.sync(&[Page::Tool],"archive_search");
+        assert_eq!(restored.panels[&Page::Tool].height,480.);
+        restored.sync(&[Page::Tool],"detect_stars");assert_eq!(restored.panels[&Page::Tool].height,340.);
+        let legacy=serde_json::json!({"schema":1,"operation":"archive_search","panels":[{"page":"Tool","open":true,"height":300.}]});
+        let mut migrated=Dock::restore(&legacy);migrated.sync(&[Page::Tool],"archive_search");
+        assert_eq!(migrated.panels[&Page::Tool].height,600.);
+        migrated.panels.get_mut(&Page::Tool).unwrap().height=300.;
+        let mut explicit=Dock::restore(&migrated.summary());explicit.sync(&[Page::Tool],"archive_search");
+        assert_eq!(explicit.panels[&Page::Tool].height,300.);
     }
 }
 

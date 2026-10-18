@@ -8,26 +8,26 @@ use std::collections::{BTreeMap,BTreeSet};
 pub enum Key {Settings,Histogram,Coordinates,Photometry,Growth,Header}
 impl Key {pub const ALL:[Self;6]=[Self::Settings,Self::Histogram,Self::Coordinates,Self::Photometry,Self::Growth,Self::Header];}
 #[derive(Clone,Copy,Debug,Eq,PartialEq,Hash)]
-pub enum Context {Empty,Image,Spectrum}
+pub enum Context {Empty,Image,Spectrum,ProImage,ProSpectrum}
 #[derive(Clone,Debug,Default,PartialEq,Serialize,Deserialize)]
 #[serde(default)]
 pub struct State {pub open:bool,pub collapsed:bool,pub rect:Option<[f32;4]>,pub size:Option<[f32;2]>}
 #[derive(Clone,Debug,Default,PartialEq,Serialize,Deserialize)]
 #[serde(default)]
-pub struct Layouts {pub empty:BTreeMap<Key,State>,pub image:BTreeMap<Key,State>,pub spectrum:BTreeMap<Key,State>}
+pub struct Layouts {pub empty:BTreeMap<Key,State>,pub image:BTreeMap<Key,State>,pub spectrum:BTreeMap<Key,State>,pub pro_image:BTreeMap<Key,State>,pub pro_spectrum:BTreeMap<Key,State>}
 impl Layouts {
-    fn get(&self,context:Context)->&BTreeMap<Key,State>{match context{Context::Empty=>&self.empty,Context::Image=>&self.image,Context::Spectrum=>&self.spectrum}}
-    fn get_mut(&mut self,context:Context)->&mut BTreeMap<Key,State>{match context{Context::Empty=>&mut self.empty,Context::Image=>&mut self.image,Context::Spectrum=>&mut self.spectrum}}
+    fn get(&self,context:Context)->&BTreeMap<Key,State>{match context{Context::Empty=>&self.empty,Context::Image=>&self.image,Context::Spectrum=>&self.spectrum,Context::ProImage=>&self.pro_image,Context::ProSpectrum=>&self.pro_spectrum}}
+    fn get_mut(&mut self,context:Context)->&mut BTreeMap<Key,State>{match context{Context::Empty=>&mut self.empty,Context::Image=>&mut self.image,Context::Spectrum=>&mut self.spectrum,Context::ProImage=>&mut self.pro_image,Context::ProSpectrum=>&mut self.pro_spectrum}}
     pub fn validate(&self)->Result<(),String>{
-        for state in [&self.empty,&self.image,&self.spectrum].into_iter().flat_map(|map|map.values()) {
+        for state in [&self.empty,&self.image,&self.spectrum,&self.pro_image,&self.pro_spectrum].into_iter().flat_map(|map|map.values()) {
             if state.rect.is_some_and(|r|r.iter().any(|v|!v.is_finite() || v.abs()>1e6) || r[2]<r[0] || r[3]<r[1]) || state.size.is_some_and(|s|s.iter().any(|v|!v.is_finite() || *v<=0. || *v>10000.)){return Err("Invalid popup window geometry".into());}
         }Ok(())
     }
 }
 
 /// Session bookkeeping stays outside serialized preferences. A changed import wins
-/// over observations from the old frame; PRO never writes the popup maps.
-/// 会话状态不序列化；导入的新布局优先于旧帧采样，PRO 不写入弹窗布局。
+/// over observations from the old frame; PRO independent windows use separate maps.
+/// 会话状态不序列化；导入布局优先于旧帧采样，PRO 独立窗与极简弹窗分开记忆。
 #[derive(Default)]
 pub struct Runtime {context:Option<Context>,source:Layouts,current:Layouts,applied:BTreeSet<Key>,initialized:bool}
 impl Runtime {
@@ -94,6 +94,14 @@ fn fit(saved:&State,bounds:Rect,default_size:Vec2)->(Option<Pos2>,Vec2){
 
 #[cfg(test)]mod tests {
     use super::*;
+    #[test]fn pro_independent_windows_do_not_overwrite_minimal_popups(){
+        let mut prefs=Layouts::default();prefs.image.insert(Key::Coordinates,State{open:true,..Default::default()});
+        let mut runtime=Runtime::default();let open=runtime.begin(&prefs,Some(Context::ProImage)).unwrap();assert_eq!(open,[false;6]);
+        runtime.finish(&mut prefs,Some(Context::ProImage),[true,false,false,false,false,true]);
+        assert!(prefs.image[&Key::Coordinates].open);assert!(!prefs.image.contains_key(&Key::Settings));
+        assert!(prefs.pro_image[&Key::Settings].open);assert!(prefs.pro_image[&Key::Header].open);
+        let open=runtime.begin(&prefs,Some(Context::Image)).unwrap();assert!(open[2]);assert!(!open[0] && !open[5]);
+    }
     #[test]fn popup_padding_stays_stable_across_repaints_reopen_and_restore(){
         for (key,title,expected) in [(Key::Coordinates,"Coordinates",egui::vec2(460.,250.)),(Key::Photometry,"Aperture photometry",egui::vec2(430.,300.))] {
             let mut ctx=egui::Context::default();let mut prefs=Layouts::default();let mut runtime=Runtime::default();

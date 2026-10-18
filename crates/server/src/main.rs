@@ -5,10 +5,18 @@ mod desktop_windows;
 #[cfg(all(not(windows),feature="desktop"))]
 mod desktop_unix;
 mod science;
+#[cfg(feature="pro")]
+mod download_save;
 mod science_sessions;
 mod science_process;
 mod supervisor;
 mod measurement;
+mod remote_data;
+mod environment;
+mod remote_broker;
+mod remote_sources;
+#[cfg(feature="desktop")]
+mod remote_native;
 use measurement::{measure_json,header_json};
 
 use axum::{
@@ -23,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex,atomic::{AtomicUsize,Ordering}},
     time::{Duration, SystemTime},
 };
 
@@ -71,6 +79,11 @@ struct Args {
     desktop_default: Option<String>,
     #[arg(long)]
     serve: bool,
+    #[arg(long,requires="serve",conflicts_with="jupyter",help="Use the isolated explicit-file fver broker")]
+    fver_broker:bool,
+    #[cfg(feature="desktop")]
+    #[arg(long,requires="native",conflicts_with_all=["file","serve","session"],help="Read a bounded remote connection capability from stdin")]
+    connect_stdin:bool,
     #[arg(long, default_value_t = 8765)]
     port: u16,
     #[arg(long)]
@@ -100,6 +113,7 @@ struct Runtime {
     token: String,
     public_url: String,
     epoch: String,
+    #[serde(default)]fver:bool,
 }
 #[derive(Clone, Serialize)]
 struct OpenRequest {
@@ -118,6 +132,8 @@ struct AppState {
     roots: Vec<PathBuf>,
     queue: Arc<Mutex<Queue>>,
     science: Arc<science::Bridge>,
+    images: Arc<remote_data::Store>,
+    broker:Arc<Mutex<remote_broker::Broker>>,
 }
 #[derive(Deserialize)]
 struct ScienceInput {operation:String,#[serde(default)]params:serde_json::Value}
@@ -134,6 +150,54 @@ struct ImageQuery {
     no_error:Option<bool>,
     session:Option<String>,
     generation:Option<u64>,
+}
+impl ImageQuery {
+    fn options(&self)->Result<fitsviewer_core::LoadOptions,String>{
+        let options=fitsviewer_core::LoadOptions{hdu:self.hdu,x_column:self.xcol,y_column:self.ycol,error_column:self.ecol,error_hdu:self.ehdu,error_kind:fitsviewer_core::ErrorKind::parse(self.ekind.as_deref().unwrap_or("auto")).ok_or("Unknown uncertainty convention")?,ignore_errors:self.no_error.unwrap_or(false)};
+        options.validate()?;Ok(options)
+    }
+}
+#[derive(Deserialize)]
+struct TileQuery {
+    version:String,
+    #[serde(default)]level:u8,
+    #[serde(default)]x:usize,
+    #[serde(default)]y:usize,
+}
+// Extract both flat query views directly from the URI. serde(flatten) buffers
+// query values as strings, bypassing serde_urlencoded's numeric conversion.
+// 两个 Query 各自读 URI，避免 flatten 将 HDU 等数值留成字符串而整图/图块均报 400。
+#[cfg(test)]
+mod image_query_tests {
+    use super::*;
+    #[test]
+    fn selected_hdu_and_tile_coordinates_parse_from_real_query_strings() {
+        let uri="/api/image/tile?path=%E6%98%9F%E5%9B%A2.fits&hdu=1&version=revision-1&level=2&x=3&y=4&xcol=0&ecol=2&ehdu=3&ekind=ivar&no_error=false&session=view-a&generation=7".parse().unwrap();
+        let Query(image)=Query::<ImageQuery>::try_from_uri(&uri).unwrap();
+        let Query(tile)=Query::<TileQuery>::try_from_uri(&uri).unwrap();
+        assert_eq!(image.path,"星团.fits");assert_eq!(image.hdu,Some(1));
+        assert_eq!(image.xcol,Some(0));assert_eq!(image.ecol,Some(2));assert_eq!(image.ehdu,Some(3));
+        assert_eq!(image.no_error,Some(false));assert_eq!(image.generation,Some(7));
+        assert_eq!((tile.level,tile.x,tile.y),(2,3,4));assert_eq!(tile.version,"revision-1");
+        // Both uncertainty sources parse, then the scientific option validator
+        // rejects their ambiguous combination rather than the URI extractor.
+        assert!(image.options().is_err());
+    }
+    #[test]
+    fn full_defaults_and_invalid_numeric_queries_have_explicit_outcomes() {
+        let uri="/api/image/full?path=small.fits&hdu=0&version=revision-1".parse().unwrap();
+        let Query(image)=Query::<ImageQuery>::try_from_uri(&uri).unwrap();
+        let Query(tile)=Query::<TileQuery>::try_from_uri(&uri).unwrap();
+        assert_eq!(image.hdu,Some(0));assert_eq!((tile.level,tile.x,tile.y),(0,0,0));assert!(image.options().is_ok());
+        for query in ["hdu=-1","hdu=broken"] {
+            let uri=format!("/api/image/pixel?path=a.fits&version=v&{query}").parse().unwrap();
+            assert!(Query::<ImageQuery>::try_from_uri(&uri).is_err());
+        }
+        for query in ["level=256","x=-1","y=broken"] {
+            let uri=format!("/api/image/tile?path=a.fits&version=v&{query}").parse().unwrap();
+            assert!(Query::<TileQuery>::try_from_uri(&uri).is_err());
+        }
+    }
 }
 #[derive(Deserialize)]
 struct RequestQuery {
@@ -181,6 +245,13 @@ fn authorize(
     headers: &HeaderMap,
     token: Option<&str>,
 ) -> Result<(), (StatusCode, String)> {
+    if state.runtime.fver {
+        remote_broker::verify_transport(state,headers)?;
+        let key=remote_broker::credential(headers).unwrap_or("");
+        if !headers.contains_key("origin") && !key.is_empty() && key==state.runtime.token{return Ok(());}
+        if state.broker.lock().unwrap().scope(key).is_some(){return Ok(());}
+        return Err((StatusCode::UNAUTHORIZED,"A live file capability in the request header is required".into()));
+    }
     if state.runtime.token.is_empty()
         || token == Some(state.runtime.token.as_str())
         || headers
@@ -196,6 +267,33 @@ fn authorize(
         ))
     }
 }
+fn scoped<'a>(state:&AppState,headers:&'a HeaderMap)->Option<&'a str>{
+    remote_broker::credential(headers).filter(|token|state.runtime.fver && *token!=state.runtime.token)
+}
+fn resolve_for(state:&AppState,headers:&HeaderMap,path:&str)->Result<PathBuf,(StatusCode,String)>{
+    if let Some(token)=scoped(state,headers){let checked=state.broker.lock().unwrap().resolve(token,path)?;if !path.starts_with("artifact:"){return Ok(checked);}}
+    resolve(state,path)
+}
+fn private_only(state:&AppState)->Result<(),(StatusCode,String)>{if state.runtime.fver{Err((StatusCode::FORBIDDEN,"Use the isolated fver control and target endpoints".into()))}else{Ok(())}}
+fn claim_image(state:&AppState,headers:&HeaderMap,q:&ImageQuery)->Result<(),(StatusCode,String)>{
+    if let (Some(id),Some(session))=(q.path.strip_prefix("artifact:"),q.session.as_deref()){
+        let owner=if let Some(token)=scoped(state,headers){state.broker.lock().unwrap().owner(token,session,q.generation)?}else{session.into()};
+        state.science.claim(id,&owner,q.generation).map_err(|error|(StatusCode::CONFLICT,error))?;
+    }Ok(())
+}
+fn image_lease(state:&AppState,headers:&HeaderMap,path:&str)->Result<Option<remote_broker::ReadLease>,(StatusCode,String)>{if let Some(token)=scoped(state,headers){state.broker.lock().unwrap().image_lease(token,path)}else{Ok(None)}}
+fn stable_source(lease:&Option<remote_broker::ReadLease>)->Result<Option<Arc<remote_sources::Source>>,String>{lease.as_ref().map(remote_broker::ReadLease::prepare).transpose()}
+fn replace_names(value:&mut serde_json::Value,names:&[(String,String)]){match value{serde_json::Value::String(path)=>{if let Some((_,to))=names.iter().find(|(from,_)|from==path){*path=to.clone();}},serde_json::Value::Object(map)=>for value in map.values_mut(){replace_names(value,names);},serde_json::Value::Array(values)=>for value in values{replace_names(value,names);},_=>{}}}
+async fn compensate_scoped(state:&AppState,lifecycle:&serde_json::Value,starting:bool,value:Option<&serde_json::Value>){
+    let mut tags=serde_json::json!({});for key in ["_viewer_session","_document_generation","_role_epoch","_science_role","_gaia_generation"]{if let Some(value)=lifecycle.get(key){tags[key]=value.clone();}}
+    let job=starting.then(||value.and_then(|v|v["job_id"].as_str()).map(str::to_owned)).flatten();let bridge=state.science.clone();
+    let _=tokio::task::spawn_blocking(move||{if let Some(job)=job{let mut cancel=tags.clone();cancel["job_id"]=job.into();if bridge.call("job_cancel",cancel).is_ok(){return;}}let _=bridge.call("release_document",tags);}).await;
+}
+fn artifact_result(value:&serde_json::Value)->bool{match value{serde_json::Value::Object(map)=>map.contains_key("artifact_id") || map.values().any(artifact_result),serde_json::Value::Array(values)=>values.iter().any(artifact_result),_=>false}}
+static SCOPED_IO:AtomicUsize=AtomicUsize::new(0);
+struct ScopedIo;
+impl Drop for ScopedIo{fn drop(&mut self){SCOPED_IO.fetch_sub(1,Ordering::AcqRel);}}
+fn scoped_io(state:&AppState,headers:&HeaderMap)->Result<Option<ScopedIo>,(StatusCode,String)>{if scoped(state,headers).is_none(){return Ok(None);}SCOPED_IO.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|(n<16).then_some(n+1)).map_err(|_|(StatusCode::TOO_MANY_REQUESTS,"Remote source/image queue has 16 active reads; retry shortly".into()))?;Ok(Some(ScopedIo))}
 fn resolve(state: &AppState, path: &str) -> Result<PathBuf, (StatusCode, String)> {
     if let Some(id)=path.strip_prefix("artifact:"){return state.science.artifact(id).map_err(|e|(StatusCode::NOT_FOUND,e));}
     let p = Path::new(path);
@@ -234,11 +332,12 @@ async fn image(
     if let Err(error) = authorize(&state, &headers, q.token.as_deref()) {
         return error.into_response();
     }
-    let path = match resolve(&state, &q.path) {
+    if scoped(&state,&headers).is_some(){return (StatusCode::FORBIDDEN,"Remote file capabilities use metadata/full/tile/pixel; the legacy unbounded image route is disabled").into_response();}
+    let path = match resolve_for(&state,&headers, &q.path) {
         Ok(path) => path,
         Err(error) => return error.into_response(),
     };
-    if let (Some(id),Some(session))=(q.path.strip_prefix("artifact:"),q.session.as_deref()){if let Err(error)=state.science.claim(id,session,q.generation){return (StatusCode::CONFLICT,error).into_response();}}
+    if let Err(error)=claim_image(&state,&headers,&q){return error.into_response();}
     let result = tokio::task::spawn_blocking(move || {
         let options=fitsviewer_core::LoadOptions {hdu:q.hdu,x_column:q.xcol,y_column:q.ycol,error_column:q.ecol,error_hdu:q.ehdu,error_kind:fitsviewer_core::ErrorKind::parse(q.ekind.as_deref().unwrap_or("auto")).ok_or("Unknown uncertainty convention")?,ignore_errors:q.no_error.unwrap_or(false)};
         let mut image = fitsviewer_core::load_file_with_options(&path, options)?;
@@ -259,47 +358,100 @@ async fn image(
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
 }
+async fn image_manifest(State(state):State<AppState>,headers:HeaderMap,Query(q):Query<ImageQuery>)->Response{
+    if let Err(error)=authorize(&state,&headers,q.token.as_deref()){return error.into_response();}
+    let _permit=match scoped_io(&state,&headers){Ok(permit)=>permit,Err(error)=>return error.into_response()};
+    let path=match resolve_for(&state,&headers,&q.path){Ok(path)=>path,Err(error)=>return error.into_response()};
+    if let Err(error)=claim_image(&state,&headers,&q){return error.into_response();}
+    let options=match q.options(){Ok(options)=>options,Err(error)=>return (StatusCode::BAD_REQUEST,error).into_response()};
+    let lease=match image_lease(&state,&headers,&q.path){Ok(lease)=>lease,Err(error)=>return error.into_response()};
+    let images=state.images.clone();
+    let result=tokio::task::spawn_blocking(move||{let source=stable_source(&lease)?;let path=source.as_ref().map_or(path.as_path(),|s|s.path());let value=images.manifest(path,&q.path,options)?;if let Some(source)=source{source.verify()?;}Ok::<_,String>(value)}).await;
+    if state.runtime.fver{if let Err(error)=authorize(&state,&headers,None){return error.into_response();}}
+    match result{
+        Ok(Ok(value))=>Json(value).into_response(),Ok(Err(error))=>(if error.contains("source_changed"){StatusCode::CONFLICT}else{StatusCode::UNPROCESSABLE_ENTITY},error).into_response(),Err(_)=>(StatusCode::INTERNAL_SERVER_ERROR,"Image metadata task failed").into_response(),
+    }
+}
+async fn image_full(State(state):State<AppState>,headers:HeaderMap,Query(image):Query<ImageQuery>,Query(q):Query<TileQuery>)->Response{
+    image_piece(state,headers,image,q,"full").await
+}
+async fn image_tile(State(state):State<AppState>,headers:HeaderMap,Query(image):Query<ImageQuery>,Query(q):Query<TileQuery>)->Response{
+    image_piece(state,headers,image,q,"tile").await
+}
+async fn image_pixel(State(state):State<AppState>,headers:HeaderMap,Query(image):Query<ImageQuery>,Query(q):Query<TileQuery>)->Response{
+    image_piece(state,headers,image,q,"pixel").await
+}
+async fn image_piece(state:AppState,headers:HeaderMap,image:ImageQuery,q:TileQuery,kind:&'static str)->Response{
+    if let Err(error)=authorize(&state,&headers,image.token.as_deref()){return error.into_response();}
+    let _permit=match scoped_io(&state,&headers){Ok(permit)=>permit,Err(error)=>return error.into_response()};
+    let path=match resolve_for(&state,&headers,&image.path){Ok(path)=>path,Err(error)=>return error.into_response()};
+    if let Err(error)=claim_image(&state,&headers,&image){return error.into_response();}
+    let options=match image.options(){Ok(options)=>options,Err(error)=>return (StatusCode::BAD_REQUEST,error).into_response()};
+    let lease=match image_lease(&state,&headers,&image.path){Ok(lease)=>lease,Err(error)=>return error.into_response()};
+    let images=state.images.clone();
+    let result=tokio::task::spawn_blocking(move||{
+        let source=stable_source(&lease)?;let path=source.as_ref().map_or(path.as_path(),|s|s.path());
+        let value=if kind=="pixel"{images.pixel(path,&image.path,options,&q.version,q.x,q.y).and_then(|v|serde_json::to_vec(&v).map_err(|e|e.to_string()))}
+        else if kind=="full"{images.full(path,&image.path,options,&q.version)}
+        else{images.tile(path,&image.path,options,&q.version,q.level,q.x,q.y)}?;if let Some(source)=source{source.verify()?;}Ok::<_,String>(value)
+    }).await;
+    if state.runtime.fver{if let Err(error)=authorize(&state,&headers,None){return error.into_response();}}
+    match result{
+        Ok(Ok(bytes))=>([("content-type",if kind=="pixel"{"application/json"}else{"application/octet-stream"}),("cache-control","no-store")],bytes).into_response(),
+        Ok(Err(error))=>(if error.contains("changed") || error.contains("revision expired"){StatusCode::CONFLICT}else{StatusCode::UNPROCESSABLE_ENTITY},error).into_response(),
+        Err(_)=>(StatusCode::INTERNAL_SERVER_ERROR,"Image tile task failed").into_response(),
+    }
+}
 async fn scientific(State(state):State<AppState>,headers:HeaderMap,Json(mut input):Json<ScienceInput>)->Response{
     if let Err(error)=authorize(&state,&headers,None){return error.into_response();}
-    fn validate(state:&AppState,value:&mut serde_json::Value)->Result<(),(StatusCode,String)>{
+    fn validate(state:&AppState,headers:&HeaderMap,value:&mut serde_json::Value)->Result<(),(StatusCode,String)>{
         match value {
             serde_json::Value::Object(object)=>{
                 for (key,value) in object {
                     if key=="output"{return Err((StatusCode::BAD_REQUEST,"Browser exports use the private session cache; choose a download destination in the browser".into()));}
                     if key=="uploads" {
                         let uploads=value.as_object_mut().ok_or((StatusCode::BAD_REQUEST,"TAP uploads must be a name-to-path object".into()))?;
-                        for path in uploads.values_mut(){let input=path.as_str().ok_or((StatusCode::BAD_REQUEST,"TAP upload paths must be strings".into()))?;*path=serde_json::Value::String(resolve(state,input)?.to_string_lossy().into_owned());}
-                    }else if ["path","source_path","reference_path","catalogue","error_path","mask_path"].contains(&key.as_str()) {
-                        if let Some(path)=value.as_str(){if key=="mask_path" && path.trim().is_empty(){continue;}*value=serde_json::Value::String(resolve(state,path)?.to_string_lossy().into_owned());}
-                    }else{validate(state,value)?;}
+                        for path in uploads.values_mut(){let input=path.as_str().ok_or((StatusCode::BAD_REQUEST,"TAP upload paths must be strings".into()))?;*path=serde_json::Value::String(resolve_for(state,headers,input)?.to_string_lossy().into_owned());}
+                    }else if key.ends_with("path") || key=="catalogue" {
+                        if let Some(path)=value.as_str(){if key=="mask_path" && path.trim().is_empty(){continue;}*value=serde_json::Value::String(resolve_for(state,headers,path)?.to_string_lossy().into_owned());}else{validate(state,headers,value)?;}
+                    }else{validate(state,headers,value)?;}
                 }
             },
-            serde_json::Value::Array(array)=>for value in array {validate(state,value)?;},
+            serde_json::Value::Array(array)=>for value in array {validate(state,headers,value)?;},
             _=>{},
         }Ok(())
     }
     #[cfg(not(feature="pro"))] if let Err(error)=mini_science(&input.operation,&input.params){return (StatusCode::FORBIDDEN,error).into_response();}
-    if let Err(error)=validate(&state,&mut input.params){return error.into_response();}
-    if input.operation=="measure" {
-        return match tokio::task::spawn_blocking(move||measure_json(&input.params)).await {Ok(Ok(value))=>Json(value).into_response(),Ok(Err(error))=>(StatusCode::UNPROCESSABLE_ENTITY,error).into_response(),Err(_)=>(StatusCode::INTERNAL_SERVER_ERROR,"Measurement task failed").into_response(),};
-    }
-    if input.operation=="header" {
-        return match tokio::task::spawn_blocking(move||header_json(&input.params)).await{Ok(Ok(value))=>Json(value).into_response(),Ok(Err(error))=>(StatusCode::UNPROCESSABLE_ENTITY,error).into_response(),Err(_)=>(StatusCode::INTERNAL_SERVER_ERROR,"Header task failed").into_response(),};
-    }
+    let capability=scoped(&state,&headers).map(str::to_owned);
+    if let Some(token)=&capability{let mut broker=state.broker.lock().unwrap();broker.refresh(token,&state.science);if let Err(error)=broker.science(token,&input.operation,&mut input.params){return error.into_response();}}
+    let lifecycle_only=remote_broker::lifecycle_only(&input.operation);
+    let _permit=if lifecycle_only{None}else{match scoped_io(&state,&headers){Ok(permit)=>permit,Err(error)=>return error.into_response()}};
+    if !(capability.is_some() && lifecycle_only){if let Err(error)=validate(&state,&headers,&mut input.params){return error.into_response();}}
+    let leases=if lifecycle_only{Vec::new()}else{capability.as_ref().map(|token|state.broker.lock().unwrap().leases(token,&input.params)).unwrap_or_default()};
+    let work_leases=leases.clone();let starting=input.operation=="job_start";let lifecycle=capability.as_ref().map(|token|state.broker.lock().unwrap().lifecycle(token,&input.params)).unwrap_or_else(||input.params.clone());
+    let may_artifact=starting || ["job_status","export","rgb","math_preview","reproject","gaia_solve"].contains(&input.operation.as_str());
     let bridge=state.science.clone();
-    match tokio::task::spawn_blocking(move||bridge.call(&input.operation,input.params)).await {
-        Ok(Ok(value))=>Json(value).into_response(),
-        Ok(Err(error))=>(StatusCode::UNPROCESSABLE_ENTITY,error).into_response(),
-        Err(_)=>(StatusCode::INTERNAL_SERVER_ERROR,"Scientific worker failed").into_response(),
+    let result=tokio::task::spawn_blocking(move||{let sources=work_leases.iter().map(remote_broker::ReadLease::prepare).collect::<Result<Vec<_>,_>>().map_err(|e|(e,false))?;let names=sources.iter().map(|s|(s.logical().to_string_lossy().into_owned(),s.path().to_string_lossy().into_owned())).collect::<Vec<_>>();replace_names(&mut input.params,&names);let mut value=match input.operation.as_str(){"measure"=>measure_json(&input.params),"header"=>header_json(&input.params),_=>bridge.call(&input.operation,input.params)}.map_err(|e|(e,true))?;replace_names(&mut value,&names.into_iter().map(|(from,to)|(to,from)).collect::<Vec<_>>());let verification=sources.iter().try_for_each(|source|source.verify());Ok::<_,(String,bool)>((value,verification))}).await;
+    match result {
+        Ok(Ok((mut value,verification)))=>{if let Err(error)=authorize(&state,&headers,None){if capability.is_some() && (may_artifact || artifact_result(&value)){compensate_scoped(&state,&lifecycle,starting,Some(&value)).await;}return error.into_response();}
+          if let Err(error)=verification{if capability.is_some() && (may_artifact || artifact_result(&value)){compensate_scoped(&state,&lifecycle,starting,Some(&value)).await;}return (StatusCode::CONFLICT,error).into_response();}
+          if let Some(token)=&capability{
+            let result=state.broker.lock().unwrap().record(token,&value,&state.science,starting,&leases,&lifecycle);
+            if let Err(error)=result{if may_artifact || artifact_result(&value){compensate_scoped(&state,&lifecycle,starting,Some(&value)).await;}return (StatusCode::TOO_MANY_REQUESTS,error).into_response();}
+            state.broker.lock().unwrap().logicalize(token,&mut value);
+        }Json(value).into_response()},
+        Ok(Err((error,called)))=>{if called && capability.is_some() && may_artifact{compensate_scoped(&state,&lifecycle,starting,None).await;}(if error.contains("source_changed"){StatusCode::CONFLICT}else{StatusCode::UNPROCESSABLE_ENTITY},error).into_response()},
+        Err(_)=>{if capability.is_some() && may_artifact{compensate_scoped(&state,&lifecycle,starting,None).await;}(StatusCode::INTERNAL_SERVER_ERROR,"Scientific worker failed").into_response()},
     }
 }
 #[derive(Deserialize)]
 struct ArtifactQuery {id:String,token:Option<String>}
 async fn artifact(State(state):State<AppState>,headers:HeaderMap,Query(q):Query<ArtifactQuery>)->Response{
     if let Err(error)=authorize(&state,&headers,q.token.as_deref()){return error.into_response();}
+    if let Err(error)=resolve_for(&state,&headers,&format!("artifact:{}",q.id)){return error.into_response();}
     let bridge=state.science.clone();
-    match tokio::task::spawn_blocking(move||bridge.artifact(&q.id).and_then(|path|std::fs::read(path).map_err(|e|e.to_string()))).await{
-        Ok(Ok(bytes))=> ([("content-type","application/octet-stream"),("cache-control","no-store")],bytes).into_response(),
+    match tokio::task::spawn_blocking(move||bridge.artifact(&q.id).and_then(|path|{let extension=path.extension().and_then(|e|e.to_str()).filter(|e|e.len()<=8 && e.bytes().all(|c|c.is_ascii_alphanumeric())).unwrap_or("bin");let id=q.id.chars().filter(|c|c.is_ascii_alphanumeric() || *c=='-').take(64).collect::<String>();let filename=format!("attachment; filename=\"fitsviewer-{id}.{extension}\"");std::fs::read(path).map(|bytes|(bytes,filename)).map_err(|e|e.to_string())})).await{
+        Ok(Ok((bytes,filename)))=> ([("content-type","application/octet-stream"),("cache-control","no-store"),("content-disposition",filename.as_str()),("referrer-policy","no-referrer")],bytes).into_response(),
         _=>(StatusCode::NOT_FOUND,"Session artifact is unavailable").into_response(),
     }
 }
@@ -309,7 +461,8 @@ struct FileQuery{path:String,token:Option<String>}
 #[cfg(feature="pro")]
 async fn bridge_file(State(state):State<AppState>,headers:HeaderMap,Query(q):Query<FileQuery>)->Response{
     if let Err(error)=authorize(&state,&headers,q.token.as_deref()){return error.into_response();}
-    let path=match resolve(&state,&q.path){Ok(path)=>path,Err(error)=>return error.into_response()};
+    if scoped(&state,&headers).is_some(){return (StatusCode::FORBIDDEN,"Raw file transfer needs a separate explicit download capability; use display metadata/full/tile/pixel").into_response();}
+    let path=match resolve_for(&state,&headers,&q.path){Ok(path)=>path,Err(error)=>return error.into_response()};
     if !path.metadata().is_ok_and(|m|m.len()<=64*1024*1024){return (StatusCode::PAYLOAD_TOO_LARGE,"Bridge transfer limit is 64 MiB").into_response();}
     match std::fs::read(path){Ok(bytes)=>([("content-type","application/octet-stream"),("cache-control","no-store")],bytes).into_response(),Err(_)=>(StatusCode::NOT_FOUND,"File unavailable").into_response()}
 }
@@ -319,6 +472,7 @@ struct UploadQuery{#[serde(default)]suffix:String,#[serde(default)]owner:String}
 #[cfg(feature="pro")]
 async fn bridge_upload(State(state):State<AppState>,headers:HeaderMap,Query(q):Query<UploadQuery>,body:axum::body::Bytes)->Response{
     if let Err(error)=authorize(&state,&headers,None){return error.into_response();}
+    if let Err(error)=private_only(&state){return error.into_response();}
     match state.science.import(&body,&q.suffix,&q.owner){Ok(value)=>Json(value).into_response(),Err(error)=>(StatusCode::UNPROCESSABLE_ENTITY,error).into_response()}
 }
 async fn requests(
@@ -326,6 +480,7 @@ async fn requests(
     headers: HeaderMap,
     Query(q): Query<RequestQuery>,
 ) -> Response {
+    if let Err(error)=private_only(&state){return error.into_response();}
     if let Err(error) = authorize(&state, &headers, q.token.as_deref()) {
         return error.into_response();
     }
@@ -347,6 +502,7 @@ async fn open(
     headers: HeaderMap,
     Json(q): Json<OpenInput>,
 ) -> Response {
+    if let Err(error)=private_only(&state){return error.into_response();}
     if let Err(error) = authorize(&state, &headers, None) {
         return error.into_response();
     }
@@ -415,16 +571,16 @@ async fn open(
     Json(serde_json::json!({"url":url,"path":virtual_path,"seq":queue.seq})).into_response()
 }
 async fn session(State(state):State<AppState>,headers:HeaderMap,Query(q):Query<SessionQuery>)->Response{
+    if let Err(error)=private_only(&state){return error.into_response();}
     if let Err(error)=authorize(&state,&headers,q.token.as_deref()){return error.into_response();}
     let value=state.queue.lock().unwrap().items.iter().find(|item|item.seq==q.seq).and_then(|item|item.session.clone());
     match value{
         Some(value)=>Json(value).into_response(),None=>(StatusCode::NOT_FOUND,"Session request expired; apply it again").into_response(),
     }
 }
-async fn health() -> Json<serde_json::Value> {
-    Json(
-        serde_json::json!({"ok":true,"viewer":"fitsviewer","version":env!("CARGO_PKG_VERSION"),"fits_backend":"fitsrs 0.4.1","features":build_features()}),
-    )
+async fn health(State(state):State<AppState>,headers:HeaderMap) -> Json<serde_json::Value> {
+    let mut value=serde_json::json!({"ok":true,"viewer":"fitsviewer","version":env!("CARGO_PKG_VERSION"),"fits_backend":"fitsrs 0.4.1","features":build_features(),"fver":state.runtime.fver,"epoch":state.runtime.epoch,"instance":state.broker.lock().unwrap().instance()});
+    if authorize(&state,&headers,None).is_ok(){value["remote_image_cache"]=state.images.status();value["remote_source_capabilities"]=state.broker.lock().unwrap().source_status();}Json(value)
 }
 
 fn main() {
@@ -441,6 +597,8 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = Args::parse();
+    #[cfg(feature="desktop")]
+    if args.connect_stdin{return remote_native::run(args.web_dir.as_deref());}
     if args.build_info{println!("{}",serde_json::json!({"schema":1,"version":env!("CARGO_PKG_VERSION"),"features":build_features()}));return Ok(());}
     let restored_session=if let Some(path)=&args.session{
         let bytes=std::fs::read(path)?;if bytes.len()>1024*1024{return Err("Session exceeds 1 MiB".into());}
@@ -657,15 +815,20 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 .duration_since(SystemTime::UNIX_EPOCH)?
                 .as_secs()
         ),
+        fver:args.fver_broker,
     };
     let supervisor=args.supervisor_pid.map(supervisor::Parent::observe).transpose().map_err(std::io::Error::other)?;
     std::fs::create_dir_all(runtime_path().parent().unwrap())?;
-    std::fs::write(runtime_path(), serde_json::to_vec_pretty(&runtime)?)?;
+    #[cfg(unix)]{use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(runtime_path().parent().unwrap(),std::fs::Permissions::from_mode(0o700))?;}
+    let mut runtime_file=std::fs::OpenOptions::new();runtime_file.write(true).create(true).truncate(true);
+    #[cfg(unix)]{use std::os::unix::fs::OpenOptionsExt;runtime_file.mode(0o600);}
+    {use std::io::Write;runtime_file.open(runtime_path())?.write_all(&serde_json::to_vec_pretty(&runtime)?)?;}
     let science=Arc::new(science::Bridge::new(args.python.clone(),&project(),runtime_path().parent().unwrap_or(Path::new(".")).join("science")));
     science.ensure_cache().map_err(std::io::Error::other)?;
     roots.push(science.cache_root().canonicalize()?);
     science::Bridge::start_reaper(&science);
     let state = AppState {
+        broker:Arc::new(Mutex::new(remote_broker::Broker::new(args.fver_broker))),
         runtime,
         roots,
         queue: Arc::new(Mutex::new(Queue {
@@ -673,11 +836,27 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             items: VecDeque::new(),
         })),
         science:science.clone(),
+        images:Arc::new(remote_data::Store::new(runtime_path().parent().unwrap_or(Path::new(".")).join("image-cache"))),
     };
     let web = args.web_dir.unwrap_or_else(|| project().join("web"));
+    if args.fver_broker{let broker=state.broker.clone();let bridge=state.science.clone();tokio::spawn(async move{let mut tick=tokio::time::interval(Duration::from_secs(3));loop{tick.tick().await;let owners=broker.lock().unwrap().take_releases();if !owners.is_empty(){let bridge=bridge.clone();let _=tokio::task::spawn_blocking(move||for release in owners{let mut params=serde_json::json!({"_viewer_session":release.owner});let operation=if let Some(generation)=release.generation{params["_document_generation"]=generation.into();"release_document"}else{"release_view"};let _=bridge.call(operation,params);}).await;}}});}
     let app = Router::new()
+        .route("/api/fver/register",post(remote_broker::register))
+        .route("/api/fver/pair",post(remote_broker::pair_ticket))
+        .route("/api/fver/bootstrap",post(remote_broker::bootstrap))
+        .route("/api/fver/browser-link",post(remote_broker::browser_link))
+        .route("/api/fver/artifact-link",post(remote_broker::artifact_link))
+        .route("/api/fver/release-download",post(remote_broker::release_download))
+        .route("/api/fver/events",get(remote_broker::events))
+        .route("/api/fver/ack",post(remote_broker::acknowledge))
+        .route("/api/fver/status",get(remote_broker::status))
+        .route("/api/fver/cancel",post(remote_broker::cancel))
         .route("/api/health", get(health))
         .route("/api/image", get(image))
+        .route("/api/image/metadata",get(image_manifest))
+        .route("/api/image/full",get(image_full))
+        .route("/api/image/tile",get(image_tile))
+        .route("/api/image/pixel",get(image_pixel))
         .route("/api/open", post(open))
         .route("/api/session", get(session))
         .route("/api/requests", get(requests))
@@ -715,8 +894,8 @@ fn mini_measure(params:&serde_json::Value)->Result<(),String>{
 #[cfg(not(feature="pro"))]
 fn mini_science(operation:&str,params:&serde_json::Value)->Result<(),String>{
  if operation=="measure"{return mini_measure(params);}
- if operation=="job_start" && params["operation"]!="gaia_solve"{return Err("Only Gaia jobs are included in this Mini build".into());}
- if !["capabilities","header","wcs","gaia_solve","job_start","job_status","job_cancel","gaia_acquire","gaia_heartbeat","gaia_release","release_view","release_document","view_heartbeat","artifact_refs","release_pro","runtime_status"].contains(&operation){return Err("PRO is not included in this Mini build".into());}Ok(())
+ if operation=="job_start" && !["gaia_solve","dependency_probe","dependency_install"].iter().any(|name|params["operation"]==*name){return Err("This job is not included in this Mini build".into());}
+ if !["capabilities","header","wcs","gaia_solve","job_start","job_status","job_cancel","gaia_acquire","gaia_heartbeat","gaia_release","release_view","release_document","view_heartbeat","artifact_refs","release_pro","runtime_status","environment_info","environment_candidates","environment_select","dependency_probe","dependency_install","environment_busy"].contains(&operation){return Err("PRO is not included in this Mini build".into());}Ok(())
 }
 #[cfg(not(feature="pro"))]
 fn mini_session(value:&serde_json::Value)->Result<(),String>{

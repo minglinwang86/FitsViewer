@@ -158,7 +158,16 @@ fn load_reader<R: Read + Seek + Debug>(mut reader: R, path: &Path, options: Load
     Ok(image)
 }
 
-fn read_selected<R: Read + Seek + Debug>(mut reader: R, path: &Path, options: LoadOptions) -> Result<FitsImage, String> {
+pub(crate) struct Metadata {
+    pub info: ImageInfo,
+    pub summary: HduInfo,
+    pub data_start: u64,
+    pub data_size: u64,
+}
+
+/// Header-only indexing never asks fitsrs to materialize an image array.
+/// 只索引头与数据偏移；gzip 快速路径找到目标即停止，避免为估计大小解完整图。
+pub(crate) fn metadata_from_reader<R: Read + Seek + Debug>(mut reader: R, path: &Path, options: LoadOptions, early: bool) -> Result<Metadata, String> {
     let mut summaries = Vec::new();
     let mut starts = Vec::new();
     let mut end = 0;
@@ -199,6 +208,7 @@ fn read_selected<R: Read + Seek + Debug>(mut reader: R, path: &Path, options: Lo
             end = start.checked_add(size.div_ceil(2880).checked_mul(2880).ok_or("FITS offsets overflow")?).ok_or("FITS offsets overflow")?;
             summaries.push(HduInfo { index, name, axes, bitpix, viewable, kind });
             if summaries.len() > 4096 { return Err("Too many HDUs".into()); }
+            if early && (options.hdu == Some(index) || options.hdu.is_none() && viewable) { break; }
         }
     }
     let selected = options.hdu.or_else(|| summaries.iter().position(|h| h.viewable)).ok_or("No supported 2D image or basic spectrum HDU")?;
@@ -210,10 +220,16 @@ fn read_selected<R: Read + Seek + Debug>(mut reader: R, path: &Path, options: Lo
     let (start, stop, data_size) = starts[selected];
     let header = read_header_range(&mut reader, start, stop)?;
     let info = ImageInfo { path: path.to_string_lossy().into_owned(), hdu: selected,
-        width: summary.axes.first().copied().unwrap_or(1) as usize, height: summary.axes.get(1).copied().unwrap_or(1) as usize,
+        width: usize::try_from(summary.axes.first().copied().unwrap_or(1)).map_err(|_|"Image dimension exceeds this platform")?, height: usize::try_from(summary.axes.get(1).copied().unwrap_or(1)).map_err(|_|"Image dimension exceeds this platform")?,
         bitpix: summary.bitpix, bscale: number(&header,"BSCALE",1.)?, bzero: number(&header,"BZERO",0.)?,
         blank: card(&header,"BLANK").or_else(|| card(&header,"ZBLANK")).and_then(|s| s.parse().ok()), hdus: summaries, header, spectrum: None };
     if !info.bscale.is_finite() || !info.bzero.is_finite() { return Err("Non-finite BSCALE/BZERO".into()); }
+    Ok(Metadata { info, summary, data_start: stop, data_size })
+}
+
+fn read_selected<R: Read + Seek + Debug>(mut reader: R, path: &Path, options: LoadOptions) -> Result<FitsImage, String> {
+    let Metadata { info, summary, data_start:stop, data_size } = metadata_from_reader(&mut reader,path,options,false)?;
+    let selected = info.hdu;
     let expected = checked_pixels(info.width, info.height)?;
     if summary.kind == "Compressed image" { return compressed::read(&mut reader,info,stop,data_size); }
     reader.rewind().map_err(|e| e.to_string())?;

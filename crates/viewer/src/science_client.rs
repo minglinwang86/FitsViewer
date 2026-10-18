@@ -15,7 +15,7 @@ impl Client {
     pub fn request_labeled(&self,ctx:&egui::Context,generation:u64,operation:&str,label:&str,mut params:Value){
         self.bind_document(generation);
         let gaia=label.starts_with("gaia.") || operation.starts_with("gaia_") || operation=="job_start" && params["operation"]=="gaia_solve";
-        let role=if gaia{"gaia"}else if ["wcs","capabilities","artifact_refs","view_heartbeat","release_view","release_document","measure","header"].contains(&operation){"view"}else{"pro"};
+        let role=if gaia{"gaia"}else if label.starts_with("environment.") || ["environment_info","environment_select","environment_candidates","dependency_probe","dependency_install","wcs","capabilities","artifact_refs","view_heartbeat","release_view","release_document","measure","header"].contains(&operation){"view"}else{"pro"};
         let counter=if gaia{self.gaia_epoch.clone()}else{self.pro_epoch.clone()};
         let epoch=if operation=="pro_acquire" || operation=="gaia_acquire" || gaia && operation=="job_start"{counter.fetch_add(1,Ordering::AcqRel)+1}else if operation=="release_pro" || operation=="gaia_release"{counter.fetch_add(1,Ordering::AcqRel)}else{counter.load(Ordering::Acquire)};
         if let Some(object)=params.as_object_mut(){object.insert("_viewer_session".into(),Value::String(self.session.clone()));object.insert("_document_generation".into(),generation.into());object.insert("_role_epoch".into(),epoch.into());object.insert("_science_role".into(),role.into());}

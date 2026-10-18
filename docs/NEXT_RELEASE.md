@@ -1,11 +1,11 @@
 # Scope and remaining work / 当前范围与后续工作
 
-The 0.1.5rc1 Full release implements the former Chinese-path, stable status panel,
+The 0.1.6 Full release implements the former Chinese-path, stable status panel,
 tiled FITS and basic spectrum tasks, plus Minimal/PRO science workspaces.
-See [release notes](releases/v0.1.5-rc.1.md), [validation](releases/VALIDATION-0.1.5rc1.md)
+See [release notes](releases/v0.1.6.md), [validation](releases/VALIDATION-0.1.6.md)
 and the illustrated [English](../README.md) / [Chinese](../README.zh-CN.md) guides.
 
-0.1.5rc1 已实现中文路径、稳定信息栏、分块压缩 FITS、基础光谱，以及极简／PRO
+0.1.6 已实现中文路径、稳定信息栏、分块压缩 FITS、基础光谱，以及极简／PRO
 科学工具。功能与实际测试范围见上述说明；早期调查记录保留在开发工作日志中。
 
 Still outside this release / 本版尚未包含：

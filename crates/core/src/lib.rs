@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 pub mod display;
 pub mod regions;
 pub mod view;
+pub mod remote;
 
 /// Maximum image size accepted by this MVP.
 pub const MAX_PIXELS: usize = 32 * 1024 * 1024;
@@ -114,6 +115,9 @@ impl LoadOptions{
 /// 保留存储类型；只在显示计算时转换为浮点值。
 #[derive(Clone, Debug)]
 pub enum RawPixels {
+    /// Metadata-only remote view: no scientific samples are present on this client.
+    /// 远程视图的显式空数据源；显示图块不能冒充原始科学像素。
+    Unavailable,
     U8(Vec<u8>),
     I16(Vec<i16>),
     I32(Vec<i32>),
@@ -125,6 +129,7 @@ pub enum RawPixels {
 impl RawPixels {
     pub fn len(&self) -> usize {
         match self {
+            Self::Unavailable => 0,
             Self::U8(v) => v.len(),
             Self::I16(v) => v.len(),
             Self::I32(v) => v.len(),
@@ -137,7 +142,9 @@ impl RawPixels {
         self.len() == 0
     }
     pub fn raw_string(&self, i: usize) -> String {
+        if i >= self.len() { return "unavailable".into(); }
         match self {
+            Self::Unavailable => "unavailable".into(),
             Self::U8(v) => v[i].to_string(),
             Self::I16(v) => v[i].to_string(),
             Self::I32(v) => v[i].to_string(),
@@ -147,6 +154,7 @@ impl RawPixels {
         }
     }
     fn numeric(&self, i: usize, blank: Option<i64>) -> Option<f64> {
+        if i >= self.len() { return None; }
         let integer = match self {
             Self::U8(v) => Some(v[i] as i64),
             Self::I16(v) => Some(v[i] as i64),
@@ -158,6 +166,7 @@ impl RawPixels {
             return None;
         }
         let value = match self {
+            Self::Unavailable => return None,
             Self::U8(v) => v[i] as f64,
             Self::I16(v) => v[i] as f64,
             Self::I32(v) => v[i] as f64,
@@ -186,6 +195,12 @@ impl FitsImage {
     /// Binary framing preserves i64/f64 and NaNs across HTTP, without JSON arrays.
     /// 二进制封包保留 i64/f64 和 NaN，避免把像素数组转换成 JSON。
     pub fn to_packet(&self) -> Result<Vec<u8>, String> {
+        if matches!(self.pixels, RawPixels::Unavailable) {
+            return Err("Remote metadata has no original pixels to serialize".into());
+        }
+        if self.pixels.len() != checked_pixels(self.info.width, self.info.height)? {
+            return Err("Image shape does not match the stored pixel count".into());
+        }
         match (&self.spectrum, &self.info.spectrum) {
             (Some(data), Some(meta)) if data.x.len() == self.pixels.len()
                 && data.error.as_ref().map_or(true, |e| e.len() == data.x.len())
@@ -194,7 +209,11 @@ impl FitsImage {
             _ => return Err("Inconsistent spectrum arrays or uncertainty source".into()),
         }
         let header = serde_json::to_vec(&self.info).map_err(|e| e.to_string())?;
-        let mut packet = Vec::with_capacity(4 + header.len() + self.pixels.len() * 8);
+        if header.len() > 1024 * 1024 { return Err("Image metadata exceeds 1 MiB".into()); }
+        let pixel_bytes = self.pixels.len().checked_mul((self.info.bitpix.unsigned_abs() / 8) as usize).ok_or("Packet size overflow")?;
+        let spectrum_bytes = self.spectrum.as_ref().map_or(0, |s| s.x.len() * 8 * if s.error.is_some() { 2 } else { 1 });
+        let capacity = 4usize.checked_add(header.len()).and_then(|n| n.checked_add(pixel_bytes)).and_then(|n| n.checked_add(spectrum_bytes)).ok_or("Packet size overflow")?;
+        let mut packet = Vec::with_capacity(capacity);
         packet.extend_from_slice(&(header.len() as u32).to_le_bytes());
         packet.extend_from_slice(&header);
         macro_rules! write {
@@ -205,6 +224,7 @@ impl FitsImage {
             };
         }
         match &self.pixels {
+            RawPixels::Unavailable => return Err("Original pixels are unavailable".into()),
             RawPixels::U8(v) => packet.extend_from_slice(v),
             RawPixels::I16(v) => write!(v),
             RawPixels::I32(v) => write!(v),
@@ -367,7 +387,7 @@ impl Stretch {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 /// Finite physical-value extrema and a sorted sample of up to 1000 values.
 pub struct Statistics {
     pub min: f64,

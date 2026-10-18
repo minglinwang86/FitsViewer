@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+project=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export FITSVIEWER_HOME="$project"
+export PYTHONPATH="$project/jupyter${PYTHONPATH:+:$PYTHONPATH}"
+exec "${FITSVIEWER_PYTHON:-python3}" -m fitsviewer.remote "$@"

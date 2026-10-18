@@ -102,6 +102,34 @@ def command(arguments, environment=None):
     subprocess.run(list(map(str, arguments)), cwd=ROOT, env=environment, check=True)
 
 
+def stage_remote_entry(resources, payload):
+    """Ship the shared stdlib helper source, never a Python interpreter.
+
+    Mac portable 没有 Python wheel；复用四个原模块提供 fver，不复制改写命令实现。
+    """
+    package = resources / "python/fitsviewer"
+    package.mkdir(parents=True)
+    for name in ["__init__.py", "build_info.py", "runtime.py", "remote.py"]:
+        shutil.copy2(ROOT / "jupyter/fitsviewer" / name, package / name)
+    (package / "build-profile.json").write_text(json.dumps(select("full").metadata(), indent=2) + "\n", encoding="utf-8")
+    (resources / "fver.py").write_text(
+        '"""Launch the bundled shared fver with an external Python 3.10+."""\n'
+        'import os, runpy, sys\nfrom pathlib import Path\n'
+        'if sys.version_info < (3, 10):\n'
+        '    sys.exit("FitsViewer fver requires an external Python 3.10 or later")\n'
+        'root = Path(__file__).resolve().parent\n'
+        'sys.dont_write_bytecode = True\n'
+        'sys.path.insert(0, str(root / "python"))\n'
+        'os.environ["FITSVIEWER_HOME"] = str(root)\n'
+        'runpy.run_module("fitsviewer.remote", run_name="__main__")\n', encoding="utf-8")
+    wrapper = payload / "fver"
+    wrapper.write_text(
+        '#!/bin/sh\nset -eu\nentry=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n'
+        'exec "${FITSVIEWER_PYTHON:-python3}" -I -B "$entry/FitsViewer.app/Contents/Resources/fver.py" "$@"\n',
+        encoding="utf-8")
+    wrapper.chmod(0o755)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fetch-assets", type=Path, help="Download only the locked release asset using gh")
@@ -175,6 +203,7 @@ def main():
     resources = app / "Contents/Resources"
     resources.mkdir(parents=True)
     extract_resources(wheel, resources)
+    stage_remote_entry(resources, payload)
     (resources / "bin").mkdir()
     binary = resources / "bin/fitsviewer"
     shutil.copy2(ROOT / "target/macos-full/release/fitsviewer", binary)
@@ -200,7 +229,7 @@ def main():
             "CFBundleName": "FitsViewer", "CFBundleDisplayName": "FitsViewer",
             "CFBundlePackageType": "APPL", "CFBundleIconFile": "FitsViewer.icns",
             "CFBundleShortVersionString": version.split("-")[0],
-            "CFBundleVersion": version.split("-")[0] + "b" + version.rsplit(".", 1)[-1],
+            "CFBundleVersion": version.split("-")[0] + ("b" + version.rsplit(".", 1)[-1] if "-rc." in version else ""),
             "LSMinimumSystemVersion": "11.0", "NSHighResolutionCapable": True,
             "NSHumanReadableCopyright": "FitsViewer contributors"}
     with (app / "Contents/Info.plist").open("wb") as stream:
@@ -217,6 +246,8 @@ def main():
         "Open FitsViewer.app, or copy it to ~/Applications and open it.\n"
         "Use Open in the app to select an image or spectrum.\n"
         "Terminal: ./fitsviewer /path/to/image.fits\n"
+        "SSH helper: ./fver helper --url http://127.0.0.1:18877 --target science\n"
+        "The fver entry requires your external Python 3.10+; set FITSVIEWER_PYTHON to choose it.\n"
         "Optional science: ./fitsviewer image.fits --python /path/to/environment/bin/python\n"
         "Python, scientific packages and TeX remain external; they are not bundled.\n"
         "Prebuilt Lab resources are included; this portable app does not install Jupyter extensions.\n"

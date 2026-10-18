@@ -1,7 +1,9 @@
 # Scientific tools / 科学工具
 
-This describes the 0.1.5rc1 Full tools. See [release validation](releases/VALIDATION-0.1.5rc1.md) for tested platforms and limitations.
-本文说明 0.1.5rc1 全功能包，平台测试与边界见发行验收记录。
+This describes the current Full source, including the 0.1.6 workflow changes.
+[Historical validation](releases/VALIDATION-0.1.5rc1.md) applies to its own artifacts;
+new source and online services require separate acceptance.
+本文说明当前 Full 源码与 0.1.6 工作流；历史验收只覆盖对应产物，不能代替新版测试。
 
 ## Modes and language / 模式与语言
 
@@ -103,12 +105,96 @@ Gaia 校准独立管理，在两种模式中使用同一个坐标面板。
 
 ## Existing Python environment / 使用已有 Python 环境
 
+**Settings → Scientific Python environment** is a shared independent window in
+Minimal and PRO. Inspect the actual Python executable/prefix, choose an existing
+Python/Conda environment, then check its imports. This selects the external science
+worker; the Jupyter server and Notebook kernels keep their own environments.
+
+Missing, incompatible and import-failed packages are distinct states. Select missing
+packages and explicitly install them in that environment. The installer first
+resolves a pip dry-run plan, refuses replacements/upgrades/downgrades and existing
+dependency conflicts, then installs the fixed plan. Logs, cancellation and the
+result belong to that viewer. An active job or undelivered result blocks environment
+switching. Pip must support dry-run/report; the viewer does not upgrade pip silently.
+
+环境选择移至**设置 → 科学计算 Python 环境**，与 Jupyter 内核环境区分。先检查实际
+导入，再勾选缺失包安装；已有包冲突、导入失败不能简单当作“未安装”。安装不暗中
+替换已有科学环境中的包，日志和取消入口可见。外部依赖仍不进入程序发行包。
+
 Basic FITS/FZ/gzip/spectrum viewing and Rust aperture sums do not require the
 scientific Python stack. The tools below import packages from the selected
 environment on demand. They are neither embedded nor installed automatically.
 
 基础 FITS/FZ/gzip/光谱查看及 Rust 孔径计算无需 Python 科学栈；下列工具按需调用所选环境中
 已有的包，程序不内嵌或自动安装这些依赖。
+
+<a id="catalogues-and-nearby-observations"></a>
+
+## Catalogue identities and nearby observations / 星表身份与附近观测
+
+**Find stars** projects Gaia DR3 or SDSS DR17 primary-star catalogue positions through
+the active FITS/Gaia WCS. It needs usable sky coordinates. **Local source candidates**
+instead detects intensity peaks; it does not identify a peak as a catalogue object
+or perform PSF photometry. Gaia calibration defaults to a 3-arcsec quality threshold,
+retains independent validation, and never changes the source FITS header.
+
+**CDS XMatch** offers Gaia DR3, 2MASS, Pan-STARRS1, SDSS DR16 and Gaia DR2. Choose a
+coordinate table or reuse identified/imported positions; specify the matching
+radius and all/nearest strategy. Multiple epochs or nearby alternatives can yield
+ambiguous candidates. Local XMatch keeps rows local; CDS XMatch explicitly uploads
+the selected coordinates/columns to CDS.
+
+**Nearby observations** defaults to the current image's WCS footprint, including
+an accepted Gaia overlay. It searches metadata first; a chosen product is downloaded
+only on request. The main list prioritizes candidate sky areas of **40%–150%** of the
+current image's sky area, with actual intersection checked separately. Products
+over 150% are excluded. If this bounded response has no preferred product, smaller
+partial products can appear. The displayed overlap percentage is the intersection
+area divided by the current image's area; it is distinct from the area ratio.
+Unverified geometry remains in diagnostics rather than the matching-product list.
+
+| Preset | Scope |
+| --- | --- |
+| Aladin / CDS | Discover 2D FITS HiPS covering the current field; generate a bounded, resampled FITS cutout on request |
+| SDSS DR17 | Calibrated ugriz survey frames |
+| DES DR2 coadds / single exposures | Separate stacked and single-epoch queries |
+| Legacy Surveys DR9 | DECaLS/BASS/MzLS products |
+| NOIRLab calibrated archive | Calibrated multi-instrument images |
+| MAST | HST/JWST and other missions, then observation product lists |
+| ESO | Archive observations/products; access restrictions may apply |
+| CADC | Multi-collection observations and DataLink products |
+| IRSA | WISE, 2MASS, NEOWISE and supported Euclid collections |
+| ALMA | Millimeter/submillimeter observations; image/cube products may be large |
+| ASTRON | Radio surveys including LoTSS/LoLSS |
+
+Where a preset has tested fallback endpoints, the adapter tries its bounded
+sequence and retains earlier failures. A timeout or malformed response is not an
+empty successful search. A record without a usable footprint remains unverified;
+an inconsistent footprint is not offered as matching coverage. DataLink must be
+resolved and a concrete product chosen. Searches do not automatically download
+large data; cube/raw/bundle products may exceed viewer support or preparation limits.
+Past availability checks do not guarantee current service uptime or field coverage.
+
+**Generate FITS cutout and add** / **Download and add to viewer** validates the
+response, saves it with a unique name beside the original FITS and opens it as an
+additional viewer file. The original remains unchanged. If the original directory
+cannot support an atomic save, the UI explains that it is opening a temporary
+result instead. Downloads and decompression each have a 512 MiB limit. HiPS cutouts
+are resampled from survey tiles; they are neither original exposures nor a promise
+of flux-conserving scientific reprojection. Inspect provenance, masks, calibration
+and access rights before scientific use.
+
+Footprints use 32 sampled positions along the physical image boundary, spherical
+areas and intersections, including RA wrap and polar fields. This is a sampled WCS
+representation, not exact integration of arbitrary distortion. Supported discovery
+fields have a radius up to 1.5°; complex or invalid geometry is rejected explicitly.
+
+“找星”与“局部光源候选”用途不同；不能以亮点代替星表身份，也不能以巡天覆盖代替
+某次曝光。网络检索只发送所选天区/查询，下载由用户明确选择产品。普通可信 Jupyter
+可使用这些在线工具；`fver` 的文件能力不授予任意 URL 下载、环境更改或任意目录访问。
+文件能力下的表格必须自包含，外部 STREAM/DTD/实体会被拒绝；合法产品链接仍可显示。
+
+## External package reference / 外部包参考
 
 | Tools / 功能 | External packages / 外部包 |
 |---|---|
@@ -150,13 +236,13 @@ solver. The search radius is at most 1.5 degrees. No catalogue/index is bundled.
 
 Only the search field/query is sent to ESA Gaia TAP; images stay local. A local
 reference table can replace the query. The TAN fit needs at least ten unique
-matches and independent validation stars. The default RMS limit is 1 arcsec;
+matches and independent validation stars. The default RMS limit is 3 arcsec;
 the panel exposes the configured limit, fitted and validation RMS. This is not
 a universal accuracy guarantee. Proper motions are propagated when epoch and
 motion data are usable; otherwise the result explains the retained epoch.
 
 仅向 ESA Gaia TAP 发送检索天区/查询语句，图像保留在本地；也可使用本地参考表。
-TAN 拟合至少需要十个唯一匹配和独立验证星。默认 RMS 门槛为 1 角秒，面板显示可调整门槛、
+TAN 拟合至少需要十个唯一匹配和独立验证星。默认 RMS 门槛为 3 角秒，面板显示可调整门槛、
 拟合 RMS 与独立验证 RMS；门槛并非通用精度承诺。有可用历元及自行时执行传播，否则结果说明采用的历元。
 
 A validated solution is an in-memory WCS overlay used by coordinates, catalogue

@@ -16,8 +16,13 @@ not a claim that every new profile has completed release or platform validation.
 | Packaging selection | `config/build-modules.json`, `scripts/build_profiles.py` | source features and selected resources from one checkout |
 | macOS bundle | `macos/launcher.c`, `scripts/build_macos_full.py` | native app entry, locked shared resources, target-specific license collection and portable signing |
 
-The main data flow is file → Rust core → shared image/spectrum data → UI texture or
-plot. Scientific jobs pass a bounded JSON request through `science_client.rs` and
+The local data flow is file → Rust core → shared image/spectrum data → UI texture or
+plot. HTTP views first negotiate a manifest. A decoded selected-HDU packet up to
+`20_000_000` bytes is transferred once; a larger supported two-dimensional image
+uses a numeric preview and visible tiles. `core/src/remote.rs` owns the protocol,
+`server/src/remote_data.rs` owns preparation/seek access, and
+`viewer/src/remote_image.rs` owns progressive display. Original values and science
+requests stay separate from sampled display data. Scientific jobs pass a bounded JSON request through `science_client.rs` and
 `crates/server/src/science.rs` into `fitsviewer_science.py`. Results are checked against
 the current document/generation before changing overlays or derived state.
 
@@ -25,7 +30,11 @@ the current document/generation before changing overlays or derived state.
 rows, `controls.rs` preferences, `coordinates.rs` WCS/Gaia, `regions_ui.rs` apertures.
 `ui_style.rs` owns shared control geometry, interaction colors and popup/window
 appearance for both Mini and PRO, without changing scientific plot or image colors.
-PRO-specific responsibilities are in `pro.rs`, `multiview.rs`, `image_layers.rs`,
+`image_transform.rs` supplies the same forward/inverse pixel transform to textures,
+apertures, picking, WCS readout and overlays. Display rotation does not resample the
+scientific array. `image_display.rs` draws the scale/compass and rotation controls;
+`environment_ui.rs` remains a base controller for external Python settings.
+PRO-specific responsibilities are in `pro.rs`, `pro_forms.rs`, `pro_points.rs`, `multiview.rs`, `image_layers.rs`,
 `spectral_lines.rs`, and `spectral_analysis.rs`. Basic and full spectrum rendering
 reuse geometry from `plot_geometry.rs`.
 
@@ -35,7 +44,8 @@ file replacement, cached selection, close and artifact references. `header_ui.rs
 reads one original HDU header without merging it with another HDU.
 
 `window_layout.rs` is a base module for Minimal-mode popup geometry, open and
-collapsed state. Its stable keys distinguish image, spectrum and empty contexts;
+collapsed state. Its stable keys distinguish empty, Minimal image/spectrum and
+PRO image/spectrum contexts;
 it does not instantiate PRO controllers. Preferences store both kinds of layout,
 while imported session settings take precedence over the current popup cache.
 
@@ -47,6 +57,22 @@ starting Python. See [resource ownership](RESOURCE_LIFECYCLE.md).
 
 `server/src/supervisor.rs` observes the Jupyter server's lifetime independently
 of third-party proxy cleanup. It observes only; it never signals the parent.
+
+The independent SSH entry is `jupyter/fitsviewer/remote.py` / `fver`. It uses a
+separate broker namespace, rather than a Jupyter server or its master credential.
+`remote_broker.rs` owns explicit-file grants, one-use bootstrap/pairing tickets,
+target queues, scoped scientific owners and delivery receipts. `remote_native.rs`
+is a desktop-only fixed stdin connection entry; `web/remote.js` handles browser
+bootstrap, following a target and bounded image fetches. The broker and numeric
+transport belong to **base**, independently of the optional PRO tools.
+
+`server/src/environment.rs` probes/selects the external interpreter; executable
+symlinks are preserved so a virtual environment does not turn into its base
+Python. `fitsviewer_environment.py` checks actual imports and resolves missing
+packages before installation, rejecting changes to installed distributions.
+Dependency jobs use the base `view` role, including status/cancel polling. A close
+in another window must not kill an active installation or discard its undelivered
+result. See [resource ownership](RESOURCE_LIFECYCLE.md).
 
 ## Build modules / 按模块选择
 
@@ -76,6 +102,14 @@ plugins are not implemented. This boundary avoids maintaining copied application
 Shared star detection lives in `fitsviewer_detection.py`; shared TAP operations live
 in `fitsviewer_tap.py`. Gaia imports these directly. The PRO adapters re-export the
 same helpers where needed. Packaging never generates stripped science-source forks.
+
+Archive discovery lives in `fitsviewer_archive_services.py`; spherical footprint
+geometry is isolated in `fitsviewer_archive_geometry.py`. The latter uses a sampled
+WCS boundary, spherical area/intersection and conservative rejection of unknown
+geometry. It does not infer a footprint from a survey name or a bounding RA range.
+`fitsviewer_vo.py` streams and validates chosen products into the owned artifact
+cache. Persistent saves belong to the Rust host's `download_save.rs` and are separate
+from the cache: closing a viewer must not delete a completed user download.
 
 ## Plans, artifacts and installed capabilities
 
@@ -110,8 +144,26 @@ that module. Base-only custom builds can be installed directly with pip.
 
 - Image layers share `Arc<FitsImage>`; texture/cache ownership is separate from raw
   samples. The 128 MiB multi-view LRU limit does not cap total process/GPU memory.
+- A tiled active view has a 40 MiB estimated numeric/texture cache, up to four
+  local tile fetches and at most twenty visible tile requests. Background layers
+  retain a bounded shared preview while their original metadata remains explicit;
+  selecting them reloads the original source. `RawPixels::Unavailable` must never
+  be treated as an original array or passed to full-image rendering/photometry.
+- The host bounds its preparation cache to 192 MiB and gzip spool storage to
+  1 GiB, with sixteen admitted image operations. Ordinary FITS supports seeked
+  tiles; gzip requires bounded disk preparation, and tiled compression currently
+  requires a bounded decoded cache. These are format-specific limits, not a
+  promise to decode arbitrary image sizes. Source revisions are checked again
+  after reads; cached display statistics are labelled as samples.
 - Closing a document releases its view/worker owners; collapsing a panel must keep
   active task polling and cancellation available. Mode changes do not reuse stale jobs.
+- A downloaded FITS is copied beside the original only after artifact ownership,
+  role epoch, document, source identity and shared-core FITS checks pass. A unique
+  same-directory temporary file is committed without overwriting another file.
+  Cancellation/release interrupts the copy and removes only its owned temporary
+  file. The atomic commit is completion: later cancellation never unlinks a saved
+  user file. Unsupported/unwritable destinations explicitly use the temporary
+  artifact instead. File-only remote capabilities cannot request downloads/saves.
 - FITS physical values preserve BSCALE/BZERO/BLANK and nonfinite masks. Rendering,
   brightness matching and overlays never replace original measurement samples.
 - Pixel coordinates are zero-based internally; displayed pixel coordinates are

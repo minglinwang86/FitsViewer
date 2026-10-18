@@ -55,6 +55,7 @@ def native_path(value,strict=False,verbatim=False):
     return path.resolve(strict=strict)
 
 def bounded_path(value,limit=MAX_INPUT):
+    if not isinstance(value,(str,Path)) or not str(value).strip():raise ValueError('Choose a nonempty input file path')
     path=native_path(value,strict=True)
     if not path.is_file() or path.stat().st_size>limit:raise ValueError('Input exceeds the supported file size')
     return path
@@ -120,7 +121,7 @@ class Worker:
                     self.discard_artifacts(lambda key:self.artifact_jobs.get(key)==identifier)
                 else:response={'state':'completed','result':future.result()}
             except InterruptedError:response={'state':'cancelled'}
-            except Exception as error:response={'state':'failed','error':str(error)}
+            except Exception as error:response={'state':'failed','error':str(error),'error_type':type(error).__name__,'error_category':getattr(error,'category','missing_dependency' if isinstance(error,ModuleNotFoundError) else 'operation')}
             payload=bytearray()
             for chunk in json.JSONEncoder(ensure_ascii=False,allow_nan=False,separators=(',',':')).iterencode(clean(response)):
                 encoded=chunk.encode('utf-8')
@@ -147,13 +148,13 @@ class Worker:
 
     def capabilities(self,params):
         packages={}
-        for name in ['numpy','astropy','specutils','matplotlib','scipy','photutils','pyvo','astroquery','astroalign','reproject','scikit-image']:
+        for name in ['numpy','astropy','specutils','matplotlib','scipy','photutils','pyvo','astroquery','astroalign','reproject','scikit-image','shapely','requests']:
             try:packages[name]=importlib.metadata.version(name)
             except importlib.metadata.PackageNotFoundError:packages[name]=None
         return {'protocol':1,'python':sys.executable,'prefix':sys.prefix,'packages':packages,
                 'loaded_modules':[p for p in ['numpy','astropy','specutils','matplotlib','scipy','photutils','pyvo','astroquery','reproject','skimage'] if p in sys.modules],
                 'bundled_scientific_packages':False,'embedded_tex':False,
-                'operations':available_operations(['wcs','catalogue','xmatch','detect_stars','detect_lines','trace_curve','reproject','rgb','export','vo_query','vo_download','samp','region_transform','line_profile','gaia_solve','spectral_candidates','spectral_analysis','image_flux_match','math_preview','xmatch_cds','sky_point','view_link','job_start','job_status','job_cancel'])}
+                'operations':available_operations(['wcs','catalogue','xmatch','identify_stars','detect_stars','detect_lines','trace_curve','reproject','rgb','export','vo_query','vo_download','vo_datalink','archive_search','service_presets','dependency_probe','dependency_install','samp','region_transform','line_profile','gaia_solve','spectral_candidates','spectral_analysis','image_flux_match','math_preview','xmatch_cds','sky_point','view_link','job_start','job_status','job_cancel'])}
 
     def image(self,params,data=False):
         require('numpy','astropy')
@@ -275,10 +276,30 @@ class Worker:
                                'arcsec_per_pixel_x':nearby[0].separation(nearby[1]).arcsec,'arcsec_per_pixel_y':nearby[2].separation(nearby[3]).arcsec,'local_only':True}
         return clean(result)
 
+    def image_center(self,params):
+        """Use the image geometry, never the most recent cursor WCS request.
+
+        图像中心与局部角尺度来自当前HDU/override，供重投影与在线天区查询共用。
+        """
+        require('numpy','astropy')
+        import numpy as np
+        from astropy.coordinates import FK5
+        from astropy.time import Time
+        from astropy.wcs.utils import pixel_to_skycoord
+        header,wcs=self.celestial(params);width,height=int(header['NAXIS1']),int(header['NAXIS2'])
+        x,y=(width-1)/2,(height-1)/2
+        center=pixel_to_skycoord(x,y,wcs,origin=0,mode='all');icrs=center.icrs;j2000=center.transform_to(FK5(equinox=Time('J2000')))
+        near=pixel_to_skycoord([x-.5,x+.5,x,x],[y,y,y-.5,y+.5],wcs,origin=0,mode='all')
+        sx,sy=float(near[0].separation(near[1]).arcsec),float(near[2].separation(near[3]).arcsec)
+        if not np.isfinite([sx,sy,icrs.ra.deg,icrs.dec.deg]).all() or min(sx,sy)<=0:raise ValueError('Image center has no finite celestial position/pixel scale')
+        return {'pixel':[x,y],'icrs':{'ra_deg':float(icrs.ra.deg),'dec_deg':float(icrs.dec.deg)},
+                'j2000':{'ra_deg':float(j2000.ra.deg),'dec_deg':float(j2000.dec.deg)},
+                'scale_arcsec':math.sqrt(sx*sy),'scale_x_arcsec':sx,'scale_y_arcsec':sy,'local_only':True}
+
     def catalogue(self,params):
         require('numpy','astropy')
         import numpy as np
-        from astropy.table import Table
+        from fitsviewer_network import read_table,file_capability_request
         from astropy.coordinates import SkyCoord,FK5
         from astropy.time import Time
         import astropy.units as u
@@ -287,9 +308,10 @@ class Worker:
         if params.get('format'):kwargs['format']=params['format']
         if params.get('table_hdu') is not None:kwargs['hdu']=int(params['table_hdu'])
         if path.suffix.lower() in ['.vot','.votable','.xml']:kwargs.setdefault('format','votable')
-        key=(str(path),path.stat().st_mtime_ns,json.dumps(kwargs,sort_keys=True))
+        file_capability=file_capability_request(self,params)
+        key=(str(path),path.stat().st_mtime_ns,json.dumps(kwargs,sort_keys=True),file_capability)
         with self.cache_lock:table=self.tables.get(key)
-        if table is None:table=Table.read(path,**kwargs)
+        if table is None:table=read_table(path,file_capability=file_capability,**kwargs)
         with self.cache_lock:
             self.check_cancelled()
             table=self.tables.setdefault(key,table)
@@ -304,6 +326,8 @@ class Worker:
         preview={name:preview_values(table[name][start:start+100]) for name in names[:64]}
         result={'columns':[{'name':name,'unit':str(table[name].unit or ''),'dtype':str(table[name].dtype)} for name in names[:256]],'rows':count,'preview':preview,'preview_start':start,'preview_limit':100,'markers':[]}
         if not params.get('ra_column') or not params.get('dec_column'):return result
+        missing=[name for name in [params['ra_column'],params['dec_column'],params.get('id_column')] if name and name not in names]
+        if missing:raise ValueError('Selected catalogue columns are absent: '+', '.join(missing))
         ra=table[params['ra_column']];dec=table[params['dec_column']]
         unit=(u.Unit(params.get('ra_unit') or ra.unit or 'deg'),u.Unit(params.get('dec_unit') or dec.unit or 'deg'))
         kwargs={'frame':params.get('frame','icrs').lower()}
@@ -385,7 +409,7 @@ class Worker:
             if len(self.artifacts)>=64 or sum(p.stat().st_size for p in self.artifacts.values() if p.is_file())+path.stat().st_size>512*1024*1024:
                 path.unlink(missing_ok=True);raise ValueError('Session cache limit reached; close unused views')
             identifier=uuid.uuid4().hex;self.artifacts[identifier]=path
-            group='gaia' if getattr(self.scope,'operation','')=='gaia_solve' else 'pro'
+            group=getattr(self.scope,'science_role',None) or ('gaia' if getattr(self.scope,'operation','')=='gaia_solve' else 'pro')
             self.artifact_owners[identifier]=(getattr(self.scope,'owner','cli'),group)
             self.artifact_jobs[identifier]=getattr(self.scope,'job',None)
             self.artifact_documents[identifier]=getattr(self.scope,'document_generation',0)
@@ -435,8 +459,11 @@ class Worker:
         projection=params.get('projection','TAN')
         if projection not in ['TAN','SIN','ARC','STG','ZEA','CAR','AIT','MOL']:raise ValueError('Select a supported standard projection')
         target=WCS(naxis=2);target.wcs.ctype=['RA---'+projection,'DEC--'+projection];target.wcs.radesys='FK5';target.wcs.equinox=2000.
-        target.wcs.crval=[float(params['ra_deg']),float(params['dec_deg'])];target.wcs.crpix=[(width+1)/2,(height+1)/2]
-        scale=float(params.get('scale_arcsec',1.))/3600.;angle=math.radians(float(params.get('rotation_deg',0.)))
+        use_center=bool(params.get('use_image_center'));center=self.image_center(params) if use_center or params.get('scale_arcsec',1.) is None else None
+        target.wcs.crval=[center['j2000']['ra_deg'],center['j2000']['dec_deg']] if use_center else [float(params['ra_deg']),float(params['dec_deg'])]
+        target.wcs.crpix=[(width+1)/2,(height+1)/2]
+        requested_scale=params.get('scale_arcsec');requested_scale=requested_scale if requested_scale is not None else center['scale_arcsec'] if center else 1.
+        scale=float(requested_scale)/3600.;angle=math.radians(float(params.get('rotation_deg',0.)))
         if not 0<scale<=10:raise ValueError('Invalid target pixel scale')
         target.wcs.cd=np.array([[-scale*math.cos(angle),scale*math.sin(angle)],[scale*math.sin(angle),scale*math.cos(angle)]])
         output=np.full((height,width),np.nan,dtype='float32')
@@ -449,12 +476,14 @@ class Worker:
             output[row:row+len(y)]=np.where(valid,values,np.nan)
         result_header=target.to_header();result_header['BUNIT']=header.get('BUNIT','');result_header['HISTORY']='FitsViewer visualization reprojection: bilinear, not flux conserving'
         path=self.cache/('projection-'+uuid.uuid4().hex+'.fits');fits.PrimaryHDU(output,header=result_header).writeto(path)
-        return self.artifact(path,'fits',visualization_only=True,flux_conserving=False,source_hdu=hdu,projection=projection)
+        return self.artifact(path,'fits',visualization_only=True,flux_conserving=False,source_hdu=hdu,projection=projection,
+                             center_j2000={'ra_deg':float(target.wcs.crval[0]),'dec_deg':float(target.wcs.crval[1])},scale_arcsec=scale*3600.,use_image_center=use_center)
 
     def dispatch(self,operation,params):
         # Internal host bookkeeping needs no PRO adapter. / 宿主内部移交与文档释放不依赖 PRO。
         if operation not in ['artifact_detach','release_document']:require_operation(operation,params)
         self.scope.owner=params.get('_viewer_session','cli')
+        self.scope.file_capability=params.get('_file_capability') is True
         if not isinstance(self.scope.owner,str) or len(self.scope.owner)>128:raise ValueError('Invalid viewer session')
         generation=params.get('_document_generation',0)
         if isinstance(generation,bool) or not isinstance(generation,int) or not 0<=generation<2**64:raise ValueError('Invalid document generation')
@@ -497,6 +526,10 @@ class Worker:
             self.reap_jobs()
             return response
         if operation=='artifact_detach':return self.detach_artifacts(params.get('artifact_ids'))
+        if operation=='environment_busy':
+            jobs=[{'id':identifier,'state':'running' if job['future'].running() else 'queued'} for identifier,job in self.jobs.items() if not job['future'].done()]
+            pending=sum(job['future'].done() and not job['future'].cancelled() and not (job.get('cancel') and job['cancel'].is_set()) for job in self.jobs.values())+sum(not job.get('delivered',False) for job in self.terminals.values())
+            return {'active_jobs':len(jobs),'jobs':jobs,'pending_results':pending,'installing':any(job['operation']=='dependency_install' and not job['future'].done() for job in self.jobs.values())}
         if operation=='artifact_path':
             path=self.artifacts.get(params['artifact_id'])
             if path is None or not path.is_file():raise ValueError('Session artifact is unavailable')
@@ -505,25 +538,26 @@ class Worker:
         if operation=='job_start':
             self.reap_jobs()
             target=params['operation']
-            if target not in ['reproject','export','vo_query','vo_download','rgb','detect_stars','detect_lines','trace_curve','xmatch_cds','gaia_solve','spectral_candidates','spectral_analysis','image_flux_match']:raise ValueError('This operation is not a background job')
+            if target not in ['reproject','export','vo_query','vo_download','vo_datalink','archive_search','identify_stars','dependency_probe','dependency_install','rgb','detect_stars','detect_lines','trace_curve','xmatch_cds','gaia_solve','spectral_candidates','spectral_analysis','image_flux_match']:raise ValueError('This operation is not a background job')
             if sum(not job['future'].done() for job in self.jobs.values())>=MAX_JOBS:raise ValueError('Too many queued jobs')
             options=dict(params.get('params',{}));document=options.get('_document_generation',generation)
             if isinstance(document,bool) or not isinstance(document,int) or not 0<=document<2**64:raise ValueError('Invalid document generation')
             job_role=options.get('_science_role',role);job_epoch=options.get('_role_epoch',epoch)
-            if job_role not in ['pro','gaia'] or (job_epoch is not None and (isinstance(job_epoch,bool) or not isinstance(job_epoch,int) or not 0<=job_epoch<2**64)):raise ValueError('Invalid science role or epoch')
+            if target in ['dependency_probe','dependency_install']:job_role='view'
+            if job_role not in ['pro','gaia','view'] or (job_role=='view' and target not in ['dependency_probe','dependency_install']) or (job_epoch is not None and (isinstance(job_epoch,bool) or not isinstance(job_epoch,int) or not 0<=job_epoch<2**64)):raise ValueError('Invalid science role or epoch')
             job_gaia=options.get('_gaia_generation',gaia_generation)
             if job_gaia is not None and (isinstance(job_gaia,bool) or not isinstance(job_gaia,int) or not 0<=job_gaia<2**64):raise ValueError('Invalid Gaia generation')
             identifier=uuid.uuid4().hex;cancel=threading.Event();job={'cancel':cancel,'created':time.time(),'operation':target,'owner':self.scope.owner,'document_generation':document,'gaia_generation':job_gaia,'science_role':job_role,'role_epoch':job_epoch}
-            options.update(_viewer_session=self.scope.owner,_job_id=identifier,_document_generation=document)
+            options.update(_viewer_session=self.scope.owner,_job_id=identifier,_document_generation=document,_file_capability=self.scope.file_capability)
             options.update(_science_role=job_role,_role_epoch=job_epoch,_gaia_generation=job_gaia)
             job['future']=self.executor.submit(self.run_job,target,options,cancel);self.jobs[identifier]=job
             return {'job_id':identifier,'state':'queued'}
         if operation=='job_status':
             self.reap_jobs();identifier=params['job_id'];job=self.owned_job(identifier)
-            if identifier in self.terminals:return json.loads(job['payload'])
+            if identifier in self.terminals:job['delivered']=True;return json.loads(job['payload'])
             if identifier in self.consumed_jobs:return {'state':'consumed','reason':job['reason']}
             future=job['future']
-            return {'state':'running' if future.running() else 'queued','cancel_requested':job['cancel'].is_set()}
+            return {'state':'running' if future.running() else 'queued','cancel_requested':job['cancel'].is_set(),'progress':job.get('progress')}
         if operation=='job_cancel':
             self.reap_jobs();identifier=params['job_id'];job=self.owned_job(identifier)
             if 'future' in job:job['cancel'].set();job['future'].cancel()
@@ -532,6 +566,15 @@ class Worker:
                 self.discard_artifacts(lambda key:self.artifact_jobs.get(key)==identifier)
             return {'cancel_requested':True}
         if operation in ['capabilities','wcs','view_link','sky_point','catalogue','xmatch']:return getattr(self,operation)(params)
+        if operation in ['dependency_probe','dependency_install']:
+            from fitsviewer_environment import probe,install
+            return {'dependency_probe':probe,'dependency_install':install}[operation](self,params)
+        if operation=='identify_stars':
+            from fitsviewer_catalogue_services import identify
+            return identify(self,params)
+        if operation in ['service_presets','archive_search','vo_datalink']:
+            from fitsviewer_archive_services import presets,search,datalink
+            return {'service_presets':presets,'archive_search':search,'vo_datalink':datalink}[operation](self,params)
         if operation=='spectral_candidates':
             from fitsviewer_spectra import detect
             return detect(self,params)
@@ -565,6 +608,7 @@ class Worker:
     def run_job(self,operation,params,cancel):
         require_operation(operation,params)
         self.scope.owner=params.get('_viewer_session','cli');self.scope.operation=operation
+        self.scope.file_capability=params.get('_file_capability') is True
         self.scope.document_generation=params.get('_document_generation',0);self.scope.document_explicit='_document_generation' in params;self.scope.gaia_generation=params.get('_gaia_generation')
         self.scope.science_role=params.get('_science_role','gaia' if operation=='gaia_solve' else 'pro');self.scope.role_epoch=params.get('_role_epoch')
         self.scope.job=params.get('_job_id') or uuid.uuid4().hex;self.scope.cancel=cancel
@@ -607,7 +651,7 @@ def main():
                 if operation=='shutdown':break
                 with contextlib.redirect_stdout(sys.stderr):result=worker.dispatch(operation,request.get('params',{}))
                 response={'id':identifier,'ok':True,'result':clean(result)}
-            except Exception as error:response={'id':identifier,'ok':False,'error':str(error),'type':type(error).__name__}
+            except Exception as error:response={'id':identifier,'ok':False,'error':str(error),'type':type(error).__name__,'error_category':getattr(error,'category','missing_dependency' if isinstance(error,ModuleNotFoundError) else 'operation')}
             print(json.dumps(response,ensure_ascii=False,allow_nan=False,separators=(',',':')),file=protocol_output,flush=True)
     finally:worker.close()
 

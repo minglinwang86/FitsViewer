@@ -4,6 +4,10 @@ use std::sync::{Arc, Mutex};
 #[cfg_attr(not(feature="pro"),path="spectrum_mini.rs")]
 mod spectrum;
 mod plot_geometry;
+mod image_transform;
+mod image_display;
+mod remote_image;
+mod environment_ui;
 #[cfg(feature="pro")]
 mod spectral_lines;
 #[cfg(feature="pro")]
@@ -18,6 +22,10 @@ mod science_client;
 mod regions_ui;
 #[cfg(feature="pro")]
 mod pro;
+#[cfg(feature="pro")]
+mod pro_forms;
+#[cfg(feature="pro")]
+mod pro_points;
 #[cfg(feature="pro")]
 mod multiview;
 #[cfg(feature="pro")]
@@ -38,17 +46,21 @@ pub fn install_cjk_font(ctx: &egui::Context, bytes: Vec<u8>) {
     ctx.set_fonts(fonts);
 }
 
-type Pending = Arc<Mutex<(u64,Option<Result<FitsImage, String>>)>>;
+enum ImageLoad { Full(FitsImage), Remote(fitsviewer_core::remote::Manifest) }
+type Pending = Arc<Mutex<(u64,Option<Result<ImageLoad, String>>)>>;
 /// The egui viewer shared by desktop and browser builds.
 pub struct FitsApp {
     image: Option<Arc<FitsImage>>,
     stats: Statistics,
     texture: Option<egui::TextureHandle>,
+    remote: Option<remote_image::RemoteImage>,
     path: String,
     api: Option<String>,
     token: String,
     pending: Pending,
+    pending_group:Option<String>,
     loading: bool,
+    first_frame:bool,
     error: String,
     limits: Limits,
     stretch: Stretch,
@@ -61,6 +73,7 @@ pub struct FitsApp {
     dirty: bool,
     zoom: f32,
     pan: Vec2,
+    rotation_deg:f32,
     auto_fit: bool,
     header_open: bool,
     cursor: String,
@@ -71,6 +84,7 @@ pub struct FitsApp {
     ribbon_height: f32,
     view_rect: [f32; 4],
     tools: controls::Tools,
+    environment:environment_ui::Environment,
     popup_windows:window_layout::Runtime,
     science: science_client::Client,
     generation:u64,
@@ -100,17 +114,28 @@ pub struct FitsApp {
     started: std::time::Instant,
 }
 impl FitsApp {
+    /// A completed visible dataset frame, rather than a started process or metadata response.
+    /// 确认已绘制数据首帧，而不是仅有进程或元数据。
+    pub fn first_frame_ready(&self)->bool{self.first_frame && !self.loading}
+    pub fn first_frame_error(&self)->Option<&str>{
+        if self.loading || self.first_frame{return None;}
+        if !self.error.is_empty(){return Some(&self.error);}
+        self.remote.as_ref().filter(|remote|!remote.error.is_empty()).map(|remote|remote.error.as_str())
+    }
     pub fn new(path: String, api: Option<String>, token: String, hdu: Option<usize>) -> Self {
         Self {
             image: None,
             stats: Statistics::default(),
             texture: None,
+            remote: None,
             path,
             science:science_client::Client::new(api.clone(),token.clone()),
             api,
             token,
             pending: Arc::new(Mutex::new((0,None))),
+            pending_group:None,
             loading: false,
+            first_frame:false,
             error: String::new(),
             limits: Limits::ZScale,
             stretch: Stretch::Linear,
@@ -123,6 +148,7 @@ impl FitsApp {
             dirty: false,
             zoom: 1.0,
             pan: Vec2::ZERO,
+            rotation_deg:0.,
             auto_fit: true,
             header_open: false,
             cursor: String::new(),
@@ -133,6 +159,7 @@ impl FitsApp {
             ribbon_height: 0.,
             view_rect: [0.; 4],
             tools: controls::Tools::default(),
+            environment:Default::default(),
             popup_windows:Default::default(),
             generation:0,lifecycle:Default::default(),header:Default::default(),cursor_pixel:None,wcs_pixel:None,wcs_text:String::new(),wcs_pending:false,wcs_disabled:false,wcs_requested_at:-100.,wcs_cache:Default::default(),
             regions:regions_ui::Regions::default(),last_export:std::cell::Cell::new(-100.),
@@ -201,7 +228,7 @@ impl FitsApp {
     }
     fn popup_context(&self)->Option<window_layout::Context>{
         if self.image.is_none(){Some(window_layout::Context::Empty)}
-        else if cfg!(feature="pro") && self.tools.prefs.mode=="PRO"{None}
+        else if cfg!(feature="pro") && self.tools.prefs.mode=="PRO" {Some(if self.image.as_ref().is_some_and(|image|image.spectrum.is_some()){window_layout::Context::ProSpectrum}else{window_layout::Context::ProImage})}
         else if self.image.as_ref().is_some_and(|image|image.spectrum.is_some()){Some(window_layout::Context::Spectrum)}
         else{Some(window_layout::Context::Image)}
     }
@@ -218,15 +245,30 @@ impl FitsApp {
     fn accept(&mut self, image: FitsImage) {
         self.accept_shared(Arc::new(image));
     }
+    fn cancel_image_load(&mut self){if let Some(group)=self.pending_group.take(){remote_image::cancel_group(&group);}}
+    fn accept_remote(&mut self,manifest:fitsviewer_core::remote::Manifest){
+        let saved_view=self.pending_view.is_some();
+        let query=remote_image::query(&self.path,LoadOptions{hdu:Some(manifest.info.hdu),..self.load_options});
+        let image=FitsImage{info:manifest.info.clone(),pixels:fitsviewer_core::RawPixels::Unavailable,spectrum:None};
+        self.accept_shared(Arc::new(image));
+        self.stats=manifest.statistics.clone();
+        if !saved_view{(self.low,self.high)=self.stats.bounds(self.limits);}
+        let group=format!("{}-{}",self.science.session,self.generation);
+        self.remote=Some(remote_image::RemoteImage::new(manifest,self.api.clone().unwrap_or_default(),self.token.clone(),query,group));
+        self.dirty=true;
+    }
     #[cfg(feature="pro")]
 fn cache_current(&mut self){
         let view=self.view_configuration();#[cfg(feature="pro")]
-if let (Some(multi),Some(image))=(&mut self.multi,&self.image){multi.remember(image.clone(),view,self.regions.apertures.clone());}
+if let (Some(multi),Some(image))=(&mut self.multi,&self.image){multi.remember(image.clone(),view,self.regions.apertures.clone());if let Some(remote)=&self.remote{multi.remember_preview(remote.preview_shared());}}
     }
 #[cfg(not(feature="pro"))]
 fn cache_current(&mut self){}
     fn accept_shared(&mut self, image: Arc<FitsImage>) {
         self.cache_current();
+        self.remote=None;
+        self.pending_group=None;
+        self.first_frame=false;
         let was_spectrum=self.image.as_ref().is_some_and(|image|image.spectrum.is_some());
         if was_spectrum!=image.spectrum.is_some(){
             self.tools.prefs.ribbon_tab=if image.spectrum.is_some() && self.tools.prefs.mode=="PRO"{"Analysis"}else{"View"}.into();
@@ -248,6 +290,7 @@ fn cache_current(&mut self){}
         self.plot = spectrum::Plot::default();
         self.auto_fit = true;
         self.pan = Vec2::ZERO;
+        self.rotation_deg=0.;
         self.error.clear();
         self.cursor.clear();
         self.tools.histogram=None;
@@ -256,6 +299,7 @@ fn cache_current(&mut self){}
         #[cfg(feature="pro")]
 if let Some(pro)=&mut self.pro{pro.clear_document_results();}
         if let Some(snapshot)=self.pending_view.take(){
+            self.rotation_deg=snapshot["view"]["rotation_deg"].as_f64().filter(|v|v.is_finite()).unwrap_or(0.) as f32;
             if let Ok(view)=fitsviewer_core::view::View::parse(&snapshot["view"].to_string()){
                 self.low=view.low;self.high=view.high;self.stretch=Stretch::parse(&view.stretch).unwrap_or(Stretch::Linear);self.tone=DisplayTone{bias:view.bias,contrast:view.contrast};self.invert=view.invert;self.zoom=view.zoom as f32;self.pan=Vec2::new(view.pan[0] as f32,view.pan[1] as f32);self.tools.prefs.render=view.render;self.auto_fit=false;
             }
@@ -268,11 +312,13 @@ if let Some(pro)=&mut self.pro{pro.annotations=snapshot["view"]["annotations"].a
         self.cache_current();
     }
     fn request(&mut self, ctx: &egui::Context, hdu: Option<usize>) {
-        if self.loading || self.path.trim().is_empty() {
+        if self.path.trim().is_empty() {
             return;
         }
+        self.cancel_image_load();
         let preserve=self.path.clone();self.abandon_document(ctx,Some(&preserve));
         self.loading = true;
+        self.first_frame=false;
         self.error.clear();
         self.requested_hdu = hdu;
         if self.image.as_ref().is_none_or(|image| image.info.path != self.path || hdu != Some(image.info.hdu)) {
@@ -284,43 +330,37 @@ if let Some(pro)=&mut self.pro{pro.annotations=snapshot["view"]["annotations"].a
         let options = LoadOptions {hdu, ..self.load_options};
         let pending = self.pending.clone();
         let serial={let mut slot=pending.lock().unwrap();slot.0+=1;slot.1=None;slot.0};
+        let group=format!("load-{}-{serial}",self.science.session);self.pending_group=Some(group.clone());
         let ctx = ctx.clone();
         if let Some(base) = &self.api {
-            let mut url = format!("{base}/api/image?path={}", urlencoding::encode(&self.path));
-            url.push_str(&format!("&session={}&generation={}",urlencoding::encode(&self.science.session),self.generation));
-            if let Some(hdu) = hdu {
-                url.push_str(&format!("&hdu={hdu}"));
-            }
-            for (key, value) in [("xcol",options.x_column),("ycol",options.y_column),("ecol",options.error_column),("ehdu",options.error_hdu)] {
-                if let Some(value)=value {url.push_str(&format!("&{key}={value}"));}
-            }
-            url.push_str(&format!("&ekind={}",options.error_kind.as_str()));
-            if options.ignore_errors{url.push_str("&no_error=true");}
-            let mut request = ehttp::Request::get(url);
-            if !self.token.is_empty() {
-                request.headers.insert("X-Fitsviewer-Token", &self.token);
-            }
-            ehttp::fetch(request, move |response| {
-                let result = response.map_err(|e| e.to_string()).and_then(|r| {
-                    if r.ok {
-                        FitsImage::from_packet(&r.bytes)
-                    } else {
-                        Err(String::from_utf8_lossy(&r.bytes).into_owned())
-                    }
-                });
-                let mut slot=pending.lock().unwrap();if slot.0==serial{slot.1=Some(result);}
-                ctx.request_repaint();
-            });
+            let query=format!("{}&session={}&generation={}&fv_image={}",remote_image::query(&self.path,options),urlencoding::encode(&self.science.session),self.generation,urlencoding::encode(&group));
+            let url=format!("{base}/api/image/metadata?{query}");let base=base.clone();let token=self.token.clone();
+            let busy=pending.clone();let busy_ctx=ctx.clone();
+            if !remote_image::get(url,&self.token,2*1024*1024,move|response|{
+                if pending.lock().unwrap().0!=serial{return;}
+                let manifest=response.and_then(|bytes|serde_json::from_slice::<fitsviewer_core::remote::Manifest>(&bytes).map_err(|e|e.to_string()));
+                match manifest{
+                    Ok(manifest) if manifest.transport=="full"=>{
+                        let url=format!("{base}/api/image/full?{query}&version={}",urlencoding::encode(&manifest.source_version));
+                        let busy=pending.clone();let busy_ctx=ctx.clone();
+                        if !remote_image::get(url,&token,fitsviewer_core::remote::FULL_TRANSFER_BYTES as usize,move|response|{
+                            let result=response.and_then(|bytes|FitsImage::from_packet(&bytes)).map(ImageLoad::Full);
+                            let mut slot=pending.lock().unwrap();if slot.0==serial{slot.1=Some(result);}ctx.request_repaint();
+                        }){let mut slot=busy.lock().unwrap();if slot.0==serial{slot.1=Some(Err("Too many image requests; retry opening the file".into()));}busy_ctx.request_repaint();}
+                    },
+                    result=>{let result=result.and_then(|manifest|if manifest.schema==1 && manifest.transport=="tiles" && manifest.info.spectrum.is_none(){Ok(ImageLoad::Remote(manifest))}else{Err("Unsupported remote image protocol".into())});let mut slot=pending.lock().unwrap();if slot.0==serial{slot.1=Some(result);}ctx.request_repaint();},
+                }
+            }){let mut slot=busy.lock().unwrap();if slot.0==serial{slot.1=Some(Err("Too many image requests; retry opening the file".into()));}busy_ctx.request_repaint();}
         } else {
             #[cfg(all(target_arch="wasm32",feature="offline"))]
-            {let result=WEB_OFFLINE_SOURCE.with(|slot|{let source=slot.borrow();let (name,bytes)=source.as_ref().ok_or("Choose a local file using the file picker")?;if fitsviewer_core::pasted_path(&self.path)!=name{return Err("Browser paths cannot access local files; choose a file using the picker".into());}fitsviewer_core::load_bytes_with_options(bytes,name,options)});let mut slot=pending.lock().unwrap();if slot.0==serial{slot.1=Some(result);}ctx.request_repaint();}
+            {let result=WEB_OFFLINE_SOURCE.with(|slot|{let source=slot.borrow();let (name,bytes)=source.as_ref().ok_or("Choose a local file using the file picker")?;if fitsviewer_core::pasted_path(&self.path)!=name{return Err("Browser paths cannot access local files; choose a file using the picker".into());}fitsviewer_core::load_bytes_with_options(bytes,name,options)}).map(ImageLoad::Full);let mut slot=pending.lock().unwrap();if slot.0==serial{slot.1=Some(result);}ctx.request_repaint();}
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let path = self.path.clone();
                 std::thread::spawn(move || {
                     let literal = std::path::Path::new(&path);
                     let path = if literal.exists() {literal} else {std::path::Path::new(fitsviewer_core::pasted_path(&path))};
-                    let result = fitsviewer_core::load_file_with_options(path, options);
+                    let result = fitsviewer_core::load_file_with_options(path, options).map(ImageLoad::Full);
                     let mut slot=pending.lock().unwrap();if slot.0==serial{slot.1=Some(result);}
                     ctx.request_repaint();
                 });
@@ -428,7 +468,7 @@ if let Some(pro)=&mut self.pro{pro.annotations=snapshot["view"]["annotations"].a
             pro.preview_open=dock.was_open(Page::Preview);
             self.multi.as_mut().unwrap().set_files_open(dock.was_open(Page::Files));
             self.tools.histogram_open=!spectrum && dock.was_open(Page::Histogram);
-            self.tools.settings_open=dock.was_open(Page::Settings);self.header_open=dock.was_open(Page::Header);
+            // Settings and Header are independent base windows, never dock pages.
         }
         let (operation,task)=dock.operation().split_once(':').unwrap_or((dock.operation(),""));
         if !pro.busy && pro::OPERATIONS.iter().any(|(candidate,_)|*candidate==operation) && (if spectrum{pro::spectrum_operation(operation)}else{!["spectral_candidates","spectral_analysis"].contains(&operation)}){
@@ -451,8 +491,6 @@ if let Some(pro)=&mut self.pro{pro.annotations=snapshot["view"]["annotations"].a
         if self.multi.as_ref().is_some_and(|multi|multi.files_open()){requested.push(Page::Files);}
         if !spectrum && (self.multi.as_ref().is_some_and(|multi|multi.secondary_open()) || dock.was_open(Page::Secondary)){requested.push(Page::Secondary);}
         if self.tools.histogram_open && !spectrum{requested.push(Page::Histogram);}
-        if self.tools.settings_open{requested.push(Page::Settings);}
-        if self.header_open{requested.push(Page::Header);}
         let pro=self.pro.as_ref().unwrap();let operation=format!("{}:{}",pro.operation,if pro.operation=="spectral_analysis"{pro.spectral_analysis.as_ref().map_or("",|analysis|analysis.task.as_str())}else{""});
         let width=self.tools.prefs.pro_width(spectrum);let collapsed=self.tools.prefs.pro_collapsed(spectrum);let saved_layout=self.tools.prefs.pro_layout(spectrum).clone();
         let result=dock.show(ctx,spectrum,&requested,&operation,width,collapsed,|ui,page|match page{
@@ -462,7 +500,7 @@ if let Some(pro)=&mut self.pro{pro.annotations=snapshot["view"]["annotations"].a
             Page::Growth=>self.regions.growth_ui(ui,ctx),
             Page::Preview=>self.pro.as_mut().unwrap().preview_ui(ui),
             Page::Files=>self.multi.as_mut().unwrap().files_ui(ui),
-            Page::Secondary=>{if let Some(image)=image.as_deref(){let center=[(image.info.width as f64-1.)/2.-f64::from(self.pan.x/self.zoom),(image.info.height as f64-1.)/2.+f64::from(self.pan.y/self.zoom)];self.multi.as_mut().unwrap().secondary_ui(ui,ctx,&self.science,self.generation,image,center,self.zoom,self.wcs_override.as_deref());}},
+            Page::Secondary=>{if let Some(image)=image.as_deref(){let center=image_transform::ImageTransform::new(Pos2::ZERO,egui::vec2(image.info.width as f32,image.info.height as f32),self.zoom,self.rotation_deg).screen_to_pixel(Pos2::ZERO-self.pan);self.multi.as_mut().unwrap().secondary_ui(ui,ctx,&self.science,self.generation,image,center,self.zoom,self.wcs_override.as_deref());}},
             Page::Histogram=>self.tools.histogram_ui(ui,image.as_deref(),self.low,self.high),
             Page::Settings=>self.tools.settings_ui(ui,ctx,self.stats.max),
             Page::Header=>self.header_ui(ui,ctx),
@@ -498,6 +536,7 @@ if let Some(pro)=&mut self.pro{pro.annotations=snapshot["view"]["annotations"].a
     }
     fn science_updates(&mut self,ctx:&egui::Context){
         for reply in self.science.drain(){
+            if reply.operation.starts_with("environment."){self.environment.reply(reply);continue;}
             if reply.generation!=self.generation {continue;}
             if ["view_heartbeat","artifact_refs","release_document","release_view"].contains(&reply.operation.as_str()){continue;}
             if let Some(hdu)=reply.operation.strip_prefix("header.").and_then(|h|h.parse::<usize>().ok()){self.header.accept(hdu,reply.result);continue;}
@@ -542,22 +581,38 @@ if let Some(pro)=&mut self.pro {pro.reply(reply);}
             }
         }
     }
+    fn settings_window(&mut self,ctx:&egui::Context){
+        self.environment.tick(ctx,&self.science,self.generation);
+        let mut open=self.tools.settings_open;
+        let mut windows=std::mem::take(&mut self.popup_windows);
+        windows.show(ctx,window_layout::Key::Settings,crate::i18n::t("Settings"),&mut open,egui::vec2(480.,580.),|ui|{
+            egui::CollapsingHeader::new(crate::i18n::t("Scientific Python environment")).id_salt("settings-environment").default_open(true).show(ui,|ui|self.environment.ui(ui,ctx,&self.science,self.generation));
+            ui.separator();ui.strong(crate::i18n::t("Image display / interface"));self.tools.settings_ui(ui,ctx,self.stats.max);
+        });
+        self.popup_windows=windows;self.tools.settings_open=open;
+    }
     fn view_configuration(&self)->serde_json::Value{
         #[cfg(feature="pro")] let annotations=self.pro.as_ref().map(|p|p.annotations.clone()).unwrap_or_default();
         #[cfg(not(feature="pro"))] let annotations:Vec<serde_json::Value>=vec![];
         let crop=self.image.as_ref().filter(|i|i.spectrum.is_none()).and_then(|image|{
-            let width=f64::from(self.view_rect[2]-self.view_rect[0])/f64::from(self.zoom);
-            let height=f64::from(self.view_rect[3]-self.view_rect[1])/f64::from(self.zoom);
-            let cx=(image.info.width as f64-1.)/2.-f64::from(self.pan.x/self.zoom);let cy=(image.info.height as f64-1.)/2.+f64::from(self.pan.y/self.zoom);
-            let bounds=[(cx-width/2.).max(-0.5),(cy-height/2.).max(-0.5),(cx+width/2.).min(image.info.width as f64-0.5),(cy+height/2.).min(image.info.height as f64-0.5)];
-            (width>0. && height>0. && bounds[0]<bounds[2] && bounds[1]<bounds[3]).then_some(bounds)
+            let viewport=Rect::from_min_max(egui::pos2(self.view_rect[0],self.view_rect[1]),egui::pos2(self.view_rect[2],self.view_rect[3]));
+            let transform=image_transform::ImageTransform::new(viewport.center()+self.pan,egui::vec2(image.info.width as f32,image.info.height as f32),self.zoom,self.rotation_deg);
+            let bounds=transform.visible_roi(viewport);
+            (viewport.is_positive() && bounds[0]<bounds[2] && bounds[1]<bounds[3]).then_some(bounds)
         });
-        serde_json::json!({"schema":1,"path":self.image.as_ref().map_or(self.path.as_str(),|i|i.info.path.as_str()),"hdu":self.image.as_ref().map(|i|i.info.hdu),"low":self.low,"high":self.high,"stretch":self.stretch.name(),"invert":self.invert,"bias":self.tone.bias,"contrast":self.tone.contrast,"zoom":self.zoom,"pan":[self.pan.x,self.pan.y],"crop":crop,"render":self.tools.prefs.render,"plot_bounds":self.plot.bounds,"apertures":self.regions.apertures,"load_options":{"x_column":self.load_options.x_column,"y_column":self.load_options.y_column,"error_column":self.load_options.error_column,"error_hdu":self.load_options.error_hdu,"error_kind":self.load_options.error_kind.as_str(),"no_error":self.load_options.ignore_errors},"annotations":annotations,"wcs_override":self.wcs_override})
+        let viewport_polygon=self.image.as_ref().filter(|image|image.spectrum.is_none()).map(|image|{
+            let viewport=Rect::from_min_max(egui::pos2(self.view_rect[0],self.view_rect[1]),egui::pos2(self.view_rect[2],self.view_rect[3]));
+            let transform=image_transform::ImageTransform::new(viewport.center()+self.pan,egui::vec2(image.info.width as f32,image.info.height as f32),self.zoom,self.rotation_deg);
+            [viewport.left_top(),viewport.right_top(),viewport.right_bottom(),viewport.left_bottom()].map(|point|transform.screen_to_pixel(point))
+        });
+        serde_json::json!({"schema":1,"path":self.image.as_ref().map_or(self.path.as_str(),|i|i.info.path.as_str()),"hdu":self.image.as_ref().map(|i|i.info.hdu),"low":self.low,"high":self.high,"stretch":self.stretch.name(),"invert":self.invert,"bias":self.tone.bias,"contrast":self.tone.contrast,"zoom":self.zoom,"rotation_deg":self.rotation_deg,"pan":[self.pan.x,self.pan.y],"crop":crop,"viewport_polygon":viewport_polygon,"viewport_size":[self.view_rect[2]-self.view_rect[0],self.view_rect[3]-self.view_rect[1]],"render":self.tools.prefs.render,"plot_bounds":self.plot.bounds,"apertures":self.regions.apertures,"selected_aperture":self.regions.selected,"arcsec_per_pixel":image_display::angular_scale(self.wcs_result.as_ref()),"load_options":{"x_column":self.load_options.x_column,"y_column":self.load_options.y_column,"error_column":self.load_options.error_column,"error_hdu":self.load_options.error_hdu,"error_kind":self.load_options.error_kind.as_str(),"no_error":self.load_options.ignore_errors},"annotations":annotations,"sky_position":self.wcs_result.as_ref().and_then(|v|v["points"].as_array()).and_then(|v|v.first()),"wcs_override":self.wcs_override})
     }
     fn state(&self)->serde_json::Value{
         let image=self.image.as_deref();
-        let mut state=serde_json::json!({"schema":1,"loaded":image.is_some(),"loading":self.loading,"error":self.error,"path":self.path,"hdu":image.map(|m|m.info.hdu),"width":image.map(|m|m.info.width),"height":image.map(|m|m.info.height),"spectrum":image.and_then(|m|m.info.spectrum.as_ref()),"plot_bounds":self.plot.bounds,"status_height":self.status_height,"view_rect":self.view_rect,"stretch":self.stretch.name(),"limits":self.limits.name(),"low":self.low,"high":self.high,"bias":self.tone.bias,"contrast":self.tone.contrast,"zoom":self.zoom,"pan":[self.pan.x,self.pan.y],"cursor":self.cursor,"texture":self.texture.is_some(),"mode":self.tools.prefs.mode,"theme":self.tools.prefs.theme,"preferences":self.tools.prefs,"histogram_builds":self.tools.histogram_builds,"histogram_loaded":self.tools.histogram.is_some(),"science_session":self.science.session,"generation":self.generation,"j2000":self.wcs_text,"wcs":self.wcs_result,"apertures":self.regions.apertures,"measurements":self.regions.results,"region_message":self.regions.message,"measurement_pending":self.regions.measurement_pending,"measurement_revision":self.regions.revision});
+        let mut state=serde_json::json!({"schema":1,"loaded":image.is_some(),"loading":self.loading,"error":self.error,"path":self.path,"hdu":image.map(|m|m.info.hdu),"width":image.map(|m|m.info.width),"height":image.map(|m|m.info.height),"spectrum":image.and_then(|m|m.info.spectrum.as_ref()),"plot_bounds":self.plot.bounds,"status_height":self.status_height,"view_rect":self.view_rect,"stretch":self.stretch.name(),"limits":self.limits.name(),"low":self.low,"high":self.high,"bias":self.tone.bias,"contrast":self.tone.contrast,"zoom":self.zoom,"rotation_deg":self.rotation_deg,"pan":[self.pan.x,self.pan.y],"cursor":self.cursor,"texture":self.texture.is_some(),"mode":self.tools.prefs.mode,"theme":self.tools.prefs.theme,"preferences":self.tools.prefs,"histogram_builds":self.tools.histogram_builds,"histogram_loaded":self.tools.histogram.is_some(),"science_session":self.science.session,"generation":self.generation,"j2000":self.wcs_text,"wcs":self.wcs_result,"apertures":self.regions.apertures,"measurements":self.regions.results,"region_message":self.regions.message,"measurement_pending":self.regions.measurement_pending,"measurement_revision":self.regions.revision});
         state["ribbon_height"]=serde_json::json!(self.ribbon_height);
+        state["first_frame_ready"]=serde_json::json!(self.first_frame_ready());
+        state["remote_image"]=self.remote.as_ref().map_or(serde_json::Value::Null,|remote|remote.state());
         state["wcs_cache"]=self.wcs_cache.summary();
         state["wcs_pixel"]=serde_json::json!(self.wcs_pixel);
         state["cursor_pixel"]=serde_json::json!(self.cursor_pixel);
@@ -606,7 +661,7 @@ if let Some(pro)=&mut self.pro {pro.reply(reply);}
                 let replacement=Self::new(String::new(),self.api.clone(),self.token.clone(),None).with_session(params.clone())?;
                 self.coordinates.cancel(ctx,&self.science,self.generation);self.science.request(ctx,self.generation,"release_pro",json!({}));
                 self.path=replacement.path;self.requested_hdu=replacement.requested_hdu;self.pending_view=replacement.pending_view;self.saved_multi=replacement.saved_multi;
-                self.tools.prefs.mode=replacement.tools.prefs.mode;#[cfg(feature="pro")] {self.pro=None;self.multi=None;self.pro_dock=None;}self.image=None;self.texture=None;self.generation+=1;
+                self.tools.prefs.mode=replacement.tools.prefs.mode;#[cfg(feature="pro")] {self.pro=None;self.multi=None;self.pro_dock=None;}self.image=None;self.texture=None;self.remote=None;self.first_frame=false;self.generation+=1;
                 self.request(ctx,self.requested_hdu);
             },
             #[cfg(feature="pro")]
@@ -629,7 +684,7 @@ if let Some(pro)=&mut self.pro {pro.reply(reply);}
                 if self.loading{return Err("Wait for the current load".into());}self.cache_current();
                 let (active,next)=self.multi.as_mut().ok_or("Select PRO for multiple views")?.remove(params["index"].as_u64().ok_or("Missing view index")? as usize)?;
                 if active{
-                    self.image=None;self.texture=None;self.path.clear();self.regions=regions_ui::Regions::default();self.tools.histogram=None;self.cursor.clear();
+                    self.image=None;self.texture=None;self.remote=None;self.first_frame=false;self.path.clear();self.regions=regions_ui::Regions::default();self.tools.histogram=None;self.cursor.clear();
                     if let Some(selection)=next{self.pending_view=Some(json!({"view":selection.view,"apertures":selection.apertures}));if let Some(image)=selection.image{self.replace_shared(ctx,image);}else{self.path=selection.path;self.request(ctx,selection.hdu);}}
                     else{self.close_document(ctx);}
                 }
@@ -645,18 +700,20 @@ if let Some(pro)=&mut self.pro {pro.reply(reply);}
                 let render=if params["render"].is_object(){let r:fitsviewer_core::display::RenderOptions=serde_json::from_value(params["render"].clone()).map_err(|e|e.to_string())?;r.validate()?;r}else{self.tools.prefs.render.clone()};
                 self.low=low;self.high=high;self.stretch=stretch;self.tone=DisplayTone{bias,contrast};self.tools.prefs.render=render;self.limits=Limits::Manual;self.invert=params["invert"].as_bool().unwrap_or(self.invert);self.dirty=true;
                 if let Some(zoom)=params["zoom"].as_f64().filter(|v|v.is_finite() && *v>=0.005 && *v<=128.){self.zoom=zoom as f32;self.auto_fit=false;}
+                if let Some(angle)=params["rotation_deg"].as_f64().filter(|v|v.is_finite()){self.rotation_deg=((angle+180.).rem_euclid(360.)-180.) as f32;}
                 if let (Some(x),Some(y))=(params["pan"][0].as_f64(),params["pan"][1].as_f64()){if x.abs()<1e8 && y.abs()<1e8{self.pan=egui::vec2(x as f32,y as f32);self.auto_fit=false;}}
                 if let Ok(bounds)=serde_json::from_value::<[f64;4]>(params["plot_bounds"].clone()){self.plot.bounds=bounds;self.plot.fit=false;}
             },
             "aperture.uncertainty"=>self.regions.configure_uncertainty(params)?,
             "aperture.add"=>{#[cfg(not(feature="pro"))] mini_aperture(params)?;let aperture:fitsviewer_core::regions::Aperture=serde_json::from_value(params.clone()).map_err(|e|e.to_string())?;aperture.shape.validate()?;if self.tools.prefs.mode!="PRO" && !matches!(aperture.shape,fitsviewer_core::regions::Shape::Circle{..}){return Err("Select PRO for advanced geometry".into());}self.regions.add_aperture(aperture);},
-            "aperture.select"|"aperture.delete"|"aperture.resize"|"aperture.move"|"aperture.update"=>{
+            "aperture.select"|"aperture.clear"|"aperture.delete"|"aperture.resize"|"aperture.move"|"aperture.update"=>{
                 let image=self.image.as_deref().ok_or("Open an image first")?;
                 if image.spectrum.is_some(){return Err("Aperture editing needs a two-dimensional image".into());}
                 if let Some(index)=params.get("index"){
                     self.regions.select_aperture(index.as_u64().ok_or("Invalid aperture index")? as usize)?;
                 }else if operation=="aperture.select"{return Err("Missing aperture index".into());}
                 match operation{
+                    "aperture.clear"=>self.regions.clear_all(),
                     "aperture.delete"=>{if !self.regions.delete_selected(){return Err("Select an aperture first".into());}},
                     "aperture.resize"=>self.regions.resize_selected(params["radius"].as_f64().ok_or("Missing aperture radius")?,image)?,
                     "aperture.move"|"aperture.update"=>{
@@ -867,7 +924,8 @@ impl eframe::App for FitsApp {
         if let Some(result) = ready {
             self.loading = false;
             match result {
-                Ok(image) => self.accept(image),
+                Ok(ImageLoad::Full(image)) => self.accept(image),
+                Ok(ImageLoad::Remote(manifest)) => self.accept_remote(manifest),
                 Err(error) => {
                     self.error = error;
                     // Keep the last valid view so a failed column/path choice can be corrected.
@@ -878,6 +936,12 @@ impl eframe::App for FitsApp {
         if self.image.is_none() && !self.loading && self.error.is_empty() && !self.path.is_empty() {
             self.request(ctx, self.requested_hdu);
         }
+        let mut preview_changed=false;
+        if let Some(remote)=&mut self.remote{
+            if remote.poll(){preview_changed=true;self.tools.histogram=None;self.scale_mapping=None;self.dirty=true;}
+            if self.tools.histogram.is_none(){if let Some(preview)=remote.preview(){let mut histogram=fitsviewer_core::display::Histogram::new(preview,128);histogram.sampled=true;self.tools.histogram=Some(histogram);self.tools.histogram_builds+=1;}}
+        }
+        if preview_changed{self.cache_current();}
         self.prepare_popup_windows();
         #[cfg(feature="pro")] self.prepare_pro_dock(ctx,false);
         self.commands(ctx);
@@ -903,7 +967,7 @@ impl eframe::App for FitsApp {
         }
         let ribbon_multi_action=self.ribbon(ctx);
         self.prepare_popup_windows();
-        if !cfg!(feature="pro") || self.tools.prefs.mode!="PRO" || self.image.is_none(){self.tools.settings(ctx,self.stats.max,&mut self.popup_windows);}
+        self.settings_window(ctx);
         if i18n::set(&self.tools.prefs.language){
             #[cfg(target_arch="wasm32")] let _=text_io::browser("setLanguage",&[&self.tools.prefs.language]);
             ctx.request_repaint();
@@ -934,10 +998,10 @@ if let Some(pro)=&mut self.pro{pro.send(ctx,&self.science,self.generation,"expor
         #[cfg(feature="pro")] self.pro_workspace(ctx,&view,available);
         #[cfg(feature="pro")] if let Some(pro)=&mut self.pro {
             for aperture in std::mem::take(&mut pro.new_apertures){self.regions.add_aperture(aperture);}
-            if let (Some(pixel),Some(image))=(pro.focus_pixel.take(),self.image.as_ref()){self.auto_fit=false;self.pan=Vec2::new(((image.info.width as f64-1.)/2.-pixel[0]) as f32*self.zoom,(pixel[1]-(image.info.height as f64-1.)/2.) as f32*self.zoom);}
+            if let (Some(pixel),Some(image))=(pro.focus_pixel.take(),self.image.as_ref()){self.auto_fit=false;self.pan=image_transform::ImageTransform::new(Pos2::ZERO,Vec2::ZERO,1.,self.rotation_deg).rotate_vector(Vec2::new(((image.info.width as f64-1.)/2.-pixel[0]) as f32*self.zoom,(pixel[1]-(image.info.height as f64-1.)/2.) as f32*self.zoom));}
             #[cfg(not(target_arch="wasm32"))]
             if let Some(path)=pro.open_artifact.take(){let mut command=std::process::Command::new(if cfg!(windows){"explorer.exe"}else if cfg!(target_os="macos"){"open"}else{"xdg-open"});command.arg(path);let _=command.spawn();}
-            if let Some(path)=pro.open_path.take(){self.path=path;self.request(ctx,None);}
+            if let Some(path)=pro.open_path.take(){let notice=pro.take_open_notice();self.path=path;self.request(ctx,None);if let Some(notice)=notice{if let Some(pro)=&mut self.pro{pro.message=notice;}}}
         }
         #[cfg(feature="pro")]
         if let Some(index)=self.multi.as_mut().and_then(|multi|multi.pending_selection.take()){
@@ -960,11 +1024,12 @@ if let Some(pro)=&mut self.pro{if !pro.busy{pro.select("line_profile");pro.param
         if let Some(image)=&self.image{self.regions.measure_selected(image);}
         if previous_render!=self.tools.prefs.render {self.dirty=true;}
         let status=egui::TopBottomPanel::bottom("status").exact_height(40.).resizable(false).show(ctx, |ui| {
-                if !self.error.is_empty() {
-                    ui.add(egui::Label::new(egui::RichText::new(&self.error).color(Color32::from_rgb(255,150,130))).truncate()).on_hover_text(&self.error);
+                let error=if !self.error.is_empty(){self.error.as_str()}else{self.remote.as_ref().map_or("",|remote|remote.error.as_str())};
+                if !error.is_empty() {
+                    ui.add(egui::Label::new(egui::RichText::new(error).color(Color32::from_rgb(255,150,130))).truncate()).on_hover_text(error);
                 } else if let Some(image) = &self.image {
                     let dimensions=if image.spectrum.is_some(){format!("{} · {} {}",crate::i18n::t("Spectrum"),image.info.width,crate::i18n::t("samples"))}else{format!("{} × {} · BITPIX {}",image.info.width,image.info.height,image.info.bitpix)};
-                    let details=format!("{dimensions} · {} {} · HDU {}",self.stats.finite,crate::i18n::t("valid values"),image.info.hdu);
+                    let details=format!("{dimensions} · {} {} · HDU {}",self.stats.finite,crate::i18n::t(if self.remote.is_some(){"valid display samples"}else{"valid values"}),image.info.hdu);
                     ui.add(egui::Label::new(&details).truncate()).on_hover_text(&details);
                 } else {
                     ui.add(egui::Label::new(crate::i18n::t("Choose a FITS image or spectrum.")).truncate());
@@ -975,7 +1040,7 @@ if let Some(pro)=&mut self.pro{if !pro.busy{pro.select("line_profile");pro.param
                 ui.add(egui::Label::new(&readout).truncate()).on_hover_text(&readout);
         });
         self.status_height=status.response.rect.height();
-        if self.header_open && (!is_pro || self.image.is_none()) {
+        if self.header_open {
             let mut open=self.header_open;
             let mut windows=std::mem::take(&mut self.popup_windows);
             windows.show(ctx,window_layout::Key::Header,crate::i18n::t("FITS header"),&mut open,egui::vec2(680.,500.),|ui|self.header_ui(ui,ctx));
@@ -983,7 +1048,13 @@ if let Some(pro)=&mut self.pro{if !pro.busy{pro.select("line_profile");pro.param
             self.header_open=open;
         }
         if self.dirty && self.low.is_finite() && self.high.is_finite() && self.low < self.high {
-            if let Some(image) = &self.image {
+            if let Some(remote)=&mut self.remote{
+                if self.scale_mapping.as_ref().is_none_or(|m|!m.matches(self.low,self.high,self.stretch,self.tools.prefs.render.stretch_exponent)){
+                    self.scale_mapping=Some(fitsviewer_core::display::ScaleMapping::new(remote.preview(),self.low,self.high,self.stretch,self.tools.prefs.render.stretch_exponent));
+                    if self.stretch==Stretch::HistogramEqualization{self.stretch_histogram_builds+=1;}
+                }
+                remote.dirty();
+            }else if let Some(image) = &self.image {
                 if self.scale_mapping.as_ref().is_none_or(|m|!m.matches(self.low,self.high,self.stretch,self.tools.prefs.render.stretch_exponent)){
                     self.scale_mapping=Some(fitsviewer_core::display::ScaleMapping::new(Some(image),self.low,self.high,self.stretch,self.tools.prefs.render.stretch_exponent));
                     if self.stretch==Stretch::HistogramEqualization{self.stretch_histogram_builds+=1;}
@@ -1026,6 +1097,7 @@ if let Some(pro)=&mut self.pro{if !pro.busy{pro.select("line_profile");pro.param
                         }
                         #[cfg(not(feature="pro"))]
                         {self.cursor=self.plot.show(ui,image);}
+                        self.first_frame=true;
                         return;
                     }
                 }
@@ -1038,16 +1110,20 @@ if let Some(pro)=&mut self.pro{if !pro.busy{pro.select("line_profile");pro.param
                 if let Some(image) = &self.image {
                     let dimensions = Vec2::new(image.info.width as f32, image.info.height as f32);
                     if self.auto_fit {
-                        self.zoom = ((area.width() - 24.0) / dimensions.x)
-                            .min((area.height() - 24.0) / dimensions.y)
+                        let rotated=image_transform::ImageTransform::new(center,dimensions,1.,self.rotation_deg).bounding_size();
+                        self.zoom = ((area.width() - 24.0) / rotated.x)
+                            .min((area.height() - 24.0) / rotated.y)
                             .max(0.005);
                     }
-                    let aperture_rect=Rect::from_center_size(center+self.pan,dimensions*self.zoom);
-                    if response.dragged_by(egui::PointerButton::Middle) || (response.dragged_by(egui::PointerButton::Primary) && !self.regions.editing() && !self.regions.claims_primary_drag(ctx,aperture_rect,self.zoom)) {
+                    let controls_hover=ctx.input(|input|input.pointer.interact_pos()).is_some_and(|p|p.x>area.right()-210. && p.y>area.bottom()-38.);
+                    let transform=image_transform::ImageTransform::new(center+self.pan,dimensions,self.zoom,self.rotation_deg);
+                    #[cfg(feature="pro")] let picking=self.pro.as_ref().is_some_and(|pro|pro.picking());
+                    #[cfg(not(feature="pro"))] let picking=false;
+                    if !controls_hover && (response.dragged_by(egui::PointerButton::Middle) || (response.dragged_by(egui::PointerButton::Primary) && !picking && !self.regions.editing() && !self.regions.claims_primary_drag_transformed(ctx,transform))) {
                         self.pan += response.drag_delta();
                         self.auto_fit = false;
                     }
-                    if response.dragged_by(egui::PointerButton::Secondary) {
+                    if !controls_hover && response.dragged_by(egui::PointerButton::Secondary) {
                         let delta = response.drag_delta();
                         // Relative motion avoids a jump at mouse-down. / 相对位移避免按下右键时跳变。
                         self.tone.bias = (self.tone.bias
@@ -1059,7 +1135,7 @@ if let Some(pro)=&mut self.pro{if !pro.busy{pro.select("line_profile");pro.param
                         self.dirty = true;
                         ctx.request_repaint();
                     }
-                    if response.hovered() {
+                    if response.hovered() && !controls_hover {
                         let delta = ctx.input(|i| i.smooth_scroll_delta.y);
                         if delta != 0.0 {
                             if let Some(pointer) = response.hover_pos() {
@@ -1071,36 +1147,47 @@ if let Some(pro)=&mut self.pro{if !pro.busy{pro.select("line_profile");pro.param
                             }
                         }
                     }
-                    if let Some(texture) = &self.texture {
-                        let size = dimensions * self.zoom;
-                        let rect = Rect::from_center_size(center + self.pan, size);
+                    if self.remote.is_some() || self.texture.is_some() {
+                        let transform=image_transform::ImageTransform::new(center+self.pan,dimensions,self.zoom,self.rotation_deg);
+                        let clipped=painter.with_clip_rect(area);
+                        if let (Some(remote),Some(mapping))=(&mut self.remote,&self.scale_mapping){
+                            #[cfg(feature="pro")]{
+                                if let (Some(pro),Some(multi))=(&mut self.pro,&self.multi){
+                                    let layers=multi.image_layers(image);let style=multi.source_layer_style(image);let order=multi.source_layer_order(image);
+                                    let transfer=image_layers::Transfer{mapping,invert:self.invert,tone:self.tone,options:&self.tools.prefs.render,key:format!("remote:{}:{}:{}:{}:{}:{}:{}:{}:{}",image.info.path,image.info.hdu,self.low,self.high,self.stretch.name(),self.invert,self.tone.bias,self.tone.contrast,serde_json::to_string(&self.tools.prefs.render).unwrap_or_default())};
+                                    let color=Color32::from_white_alpha(if style.0{(style.1.clamp(0.,1.)*255.).round() as u8}else{0});
+                                    pro.image_layers.get_or_insert_with(||Box::new(image_layers::Renderer::default())).paint_progressive(ctx,&clipped,transform,order,&layers,transfer,||remote.paint(ctx,&clipped,transform,area,mapping,self.invert,self.tone,&self.tools.prefs.render,color));
+                                }else{remote.paint(ctx,&clipped,transform,area,mapping,self.invert,self.tone,&self.tools.prefs.render,Color32::WHITE);}
+                            }
+                            #[cfg(not(feature="pro"))]remote.paint(ctx,&clipped,transform,area,mapping,self.invert,self.tone,&self.tools.prefs.render,Color32::WHITE);
+                        }else if let Some(texture)=&self.texture{
                         #[cfg(feature="pro")]
                         {
                         if let (Some(pro),Some(multi),Some(mapping))=(&mut self.pro,&self.multi,&self.scale_mapping){
                             let layers=multi.image_layers(image);let source_style=multi.source_layer_style(image);let source_order=multi.source_layer_order(image);
                             let transfer=image_layers::Transfer{mapping,invert:self.invert,tone:self.tone,options:&self.tools.prefs.render,
                                 key:format!("{}:{}:{:p}:{}:{}:{}:{}:{}:{}:{}",image.info.path,image.info.hdu,Arc::as_ptr(image),self.low,self.high,self.stretch.name(),self.invert,self.tone.bias,self.tone.contrast,serde_json::to_string(&self.tools.prefs.render).unwrap_or_default())};
-                            pro.image_layers.get_or_insert_with(||Box::new(image_layers::Renderer::default())).paint(ctx,&painter.with_clip_rect(area),texture.id(),rect,self.zoom,source_style,source_order,&layers,transfer);
-                        }else{painter.image(texture.id(),rect,Rect::from_min_max(Pos2::ZERO,Pos2::new(1.,1.)),Color32::WHITE);}
+                            pro.image_layers.get_or_insert_with(||Box::new(image_layers::Renderer::default())).paint_transformed(ctx,&clipped,texture.id(),transform,source_style,source_order,&layers,transfer);
+                        }else{transform.paint_texture(&clipped,texture.id(),Color32::WHITE);}
                         }
                         #[cfg(not(feature="pro"))]
-                        {painter.image(texture.id(),rect,Rect::from_min_max(Pos2::ZERO,Pos2::new(1.,1.)),Color32::WHITE);}
-                        self.regions.canvas(ctx,&response,&painter,rect,self.zoom,image,self.tools.prefs.mode=="PRO");
+                        {transform.paint_texture(&clipped,texture.id(),Color32::WHITE);}
+                        }
+                        self.first_frame=self.texture.is_some() || self.remote.as_ref().is_some_and(|remote|remote.preview().is_some());
+                        self.regions.canvas_transformed(ctx,&response,&clipped,transform,image,self.tools.prefs.mode=="PRO",!picking && !controls_hover);
+                        #[cfg(feature="pro")] if let Some(pro)=&mut self.pro{pro.image_interaction(ctx,&response,&clipped,transform,!controls_hover);}
+                        image_display::paint(&clipped,area,transform,&self.tools.prefs,self.wcs_result.as_ref());
                         #[cfg(feature="pro")]
-if let Some(pro)=&mut self.pro{pro.overlay(&painter,rect,self.zoom,self.wcs_result.as_ref(),response.hover_pos());}
+if let Some(pro)=&mut self.pro{pro.overlay(&clipped,transform,self.wcs_result.as_ref(),response.hover_pos());}
                         if let Some(pos) = response.hover_pos() {
-                            let xy = (pos - rect.min) / self.zoom;
-                            let x = xy.x.floor() as isize;
-                            let screen_y = xy.y.floor() as isize;
-                            if x >= 0
-                                && screen_y >= 0
-                                && x < image.info.width as isize
-                                && screen_y < image.info.height as isize
-                            {
-                                let y = image.info.height - 1 - screen_y as usize;
+                            let xy=transform.screen_to_pixel(pos);
+                            let x=(xy[0]+0.5).floor() as isize;
+                            let source_y=(xy[1]+0.5).floor() as isize;
+                            if x >= 0 && source_y >= 0 && x < image.info.width as isize && source_y < image.info.height as isize {
+                                let y=source_y as usize;
                                 let i = y * image.info.width + x as usize;
                                 self.cursor_pixel=Some([x as f64,y as f64]);
-                                self.cursor = format!(
+                                self.cursor = if let Some(remote)=&mut self.remote{remote.cursor(ctx,x as usize,y)}else{format!(
                                     "x={}  y={}  ·  value={}  ·  raw={}",
                                     x + 1,
                                     y + 1,
@@ -1109,12 +1196,13 @@ if let Some(pro)=&mut self.pro{pro.overlay(&painter,rect,self.zoom,self.wcs_resu
                                         .map(|v| format!("{v:.8}"))
                                         .unwrap_or_else(|| "invalid".into()),
                                     image.pixels.raw_string(i)
-                                );
+                                )};
                             } else {
                                 self.cursor.clear();
                             }
                         }
                     }
+                    if image_display::rotation_controls(ui,area,&mut self.rotation_deg){ctx.request_repaint();}
                 } else {
                     painter.text(
                         center,
@@ -1203,6 +1291,40 @@ fn resolve_startup_mode(explicit:Option<&str>,query:&str)->Result<Option<String>
     if mode.as_deref().is_some_and(|mode|!["Minimal","PRO"].contains(&mode)){return Err("Unknown UI mode".into());}
     #[cfg(not(feature="pro"))] if mode.as_deref()==Some("PRO"){return Err("PRO is not included in this Mini build".into());}
     Ok(mode)
+}
+
+#[cfg(test)]
+mod display_interaction_tests{
+    use super::*;
+    use fitsviewer_core::regions::{Aperture,Shape,measure,MeasureOptions};
+    use serde_json::json;
+    // Controlled state fixture; scientific acceptance uses real FITS separately.
+    // 此处仅验证交互与异步状态，真实科学数据另行验收。
+    fn app()->FitsApp{
+        FitsApp::from_image(FitsImage{info:fitsviewer_core::ImageInfo{path:"display-state-fixture".into(),hdu:0,width:64,height:64,bitpix:-64,bscale:1.,bzero:0.,blank:None,hdus:vec![],header:String::new(),spectrum:None},pixels:fitsviewer_core::RawPixels::F64(vec![1.;4096]),spectrum:None})
+    }
+    #[test]
+    fn clearing_apertures_rejects_a_measurement_already_in_flight(){
+        let ctx=egui::Context::default();let mut app=app();
+        let aperture=Aperture{name:"source".into(),shape:Shape::Circle{center:[25.,25.],radius:3.},background:None,exclude:vec![]};
+        app.regions.add_aperture(aperture.clone());
+        let measurement=measure(app.image.as_ref().unwrap(),&aperture,&MeasureOptions::default(),None).unwrap();
+        let old_revision=app.regions.revision;let defaults=(app.regions.radius,app.regions.inner,app.regions.outer);
+        app.regions.measurement_pending=true;app.regions.clear_all();
+        app.science.replies.lock().unwrap().push(science_client::Reply{generation:app.generation,operation:"measure".into(),result:Ok(json!({"revision":old_revision,"indices":[0],"measurements":[measurement]}))});
+        app.science_updates(&ctx);
+        assert!(app.regions.apertures.is_empty());assert!(app.regions.results.is_empty());assert!(app.regions.growth.is_empty());
+        assert_eq!(app.regions.selected,None);assert!(!app.regions.measurement_pending);assert!(!app.regions.needs_measure);
+        assert_eq!((app.regions.radius,app.regions.inner,app.regions.outer),defaults);
+    }
+    #[test]
+    fn rotated_view_exports_inverse_polygon_without_replacing_samples(){
+        let mut app=app();let image=app.image.as_ref().unwrap().clone();app.view_rect=[20.,40.,420.,340.];app.zoom=5.;app.pan=egui::vec2(13.,-7.);app.rotation_deg=37.;
+        let view=app.view_configuration();let transform=image_transform::ImageTransform::new(egui::pos2(220.,190.)+app.pan,egui::vec2(64.,64.),5.,37.);
+        let polygon:Vec<[f64;2]>=serde_json::from_value(view["viewport_polygon"].clone()).unwrap();
+        for (pixel,screen) in polygon.iter().zip([egui::pos2(20.,40.),egui::pos2(420.,40.),egui::pos2(420.,340.),egui::pos2(20.,340.)]){assert!(transform.pixel_to_screen(*pixel).distance(screen)<0.001);}
+        assert_eq!(view["rotation_deg"],37.);assert!(Arc::ptr_eq(&image,app.image.as_ref().unwrap()));assert_eq!(image.physical(0),Some(1.));
+    }
 }
 
 #[cfg(test)]

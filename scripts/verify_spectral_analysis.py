@@ -136,6 +136,81 @@ def main():
         return {'descending': True, 'units': observed}
     check('descending_order_source_indices_and_nm_um_equivalence', descending_and_units)
 
+    def air_rest_metrics():
+        from scipy.optimize import brentq
+
+        def air_from_vacuum(vacuum):
+            s2 = (10000./np.asarray(vacuum))**2
+            return vacuum/(1.+0.05792105/(238.0185-s2)+0.00167917/(57.362-s2))
+
+        # The truth is supplied in vacuum; only the read-only fixture axis is in air.
+        # 真值网格为真空波长，构造空气观测坐标，不借用被测的逆转换实现。
+        air_x = air_from_vacuum(x)
+        options = {'air': True, 'redshift': .1,
+                   'region': air_from_vacuum(np.array(defaults['region'])).tolist(),
+                   'continuum_windows': [air_from_vacuum(np.array(window)).tolist() for window in defaults['continuum_windows']]}
+        value = run(Fixture(wave=air_x), **options)
+        observed_only = run(Fixture(wave=air_x), **dict(options, air=False))
+        for row in value['measurements']['metrics']:
+            if row['key'].endswith('_observed') or row['key'] == 'minimum_flux':
+                assert row == metric(observed_only, row['key'])
+        def rest(wave):
+            return brentq(lambda vacuum: air_from_vacuum(vacuum)-wave, 2000., 20000., xtol=1e-10)/1.1
+        assert abs(metric(value, 'minimum_wavelength_rest')['value']-center/1.1) < 1e-9
+        assert abs(metric(value, 'centroid_rest')['value']-rest(metric(value, 'centroid_observed')['value'])) < 1e-9
+        assert abs(metric(value, 'minimum_wavelength_rest')['value']-metric(observed_only, 'minimum_wavelength_rest')['value']) > 1.
+        line = (air_x >= options['region'][0]) & (air_x <= options['region'][1])
+        expected_ew = float(np.sum(.5*((1.-y[line][:-1])+(1.-y[line][1:]))*np.diff(x[line]/1.1)))
+        assert abs(metric(value, 'equivalent_width_rest')['value']-expected_ew) < 1e-10
+        profile = 1.-y
+        above = np.flatnonzero(profile >= abs(amplitude)/2.)
+        left, right = above[0], above[-1]
+        xl = np.interp(abs(amplitude)/2., profile[left-1:left+1], air_x[left-1:left+1])
+        xr = np.interp(abs(amplitude)/2., profile[right:right+2][::-1], air_x[right:right+2][::-1])
+        assert abs(metric(value, 'fwhm_rest')['value']-(rest(xr)-rest(xl))) < 1e-9
+        assert value['measurements']['rest_wavelength_medium'] == 'vacuum'
+        for unit, factor in [('nm', 10.), ('um', 10000.)]:
+            scaled = run(Fixture(wave=air_x/factor), **dict(options, unit=unit,
+                region=[v/factor for v in options['region']],
+                continuum_windows=[[a/factor, b/factor] for a, b in options['continuum_windows']]))
+            for key in ('equivalent_width_rest', 'minimum_wavelength_rest', 'centroid_rest', 'fwhm_rest'):
+                assert abs(metric(scaled, key)['value']*factor-metric(value, key)['value']) < 1e-8
+        mc = run(Fixture(wave=air_x), **dict(options, mc_samples=24, seed=17))
+        repeat = run(Fixture(wave=air_x), **dict(options, mc_samples=24, seed=17))
+        assert mc['measurements']['metrics'] == repeat['measurements']['metrics']
+        assert metric(mc, 'equivalent_width_rest')['uncertainty'] > 0
+        assert np.array_equal(air_x, air_from_vacuum(x))
+        return {'vacuum_truth_minimum_rest': center/1.1, 'independent_rest_EW': expected_ew,
+                'independent_rest_FWHM': rest(xr)-rest(xl), 'metrics': value['measurements']['metrics'],
+                'nm_um_equivalence': True, 'air_MC': metric(mc, 'equivalent_width_rest')}
+    check('air_rest_positions_EW_endpoint_FWHM_units_MC_and_observed_invariance', air_rest_metrics)
+
+    def air_rest_domain():
+        from types import SimpleNamespace
+        vacuum = np.array([1999., 2001., 19999., 20001.])
+        s2 = (10000./vacuum)**2
+        air = vacuum/(1.+0.05792105/(238.0185-s2)+0.00167917/(57.362-s2))
+        for unit, factor in [('Angstrom', 1.), ('nm', 10.), ('um', 10000.)]:
+            for redshift in (-.5, 0., .1, 20.):
+                data = SimpleNamespace(np=np, p={'air': True, 'unit': unit, 'redshift': redshift})
+                rest = sa._rest_coordinates(data, air/factor)
+                assert np.isnan(rest[[0, 3]]).all()
+                assert np.max(np.abs(rest[[1, 2]]-vacuum[[1, 2]]/factor/(1.+redshift))) < 1e-9
+        # Outside the observed Ciddor domain, preserve observed measurements and
+        # return explicit missing rest values rather than extrapolating a formula.
+        # 域外保留观测系测量，静止值明确留空；高红移后的静止波长不受观测域限制。
+        wave = np.linspace(1800., 1900., len(x))
+        flux = 1.-.5*np.exp(-.5*((wave-1850.)/3.)**2)
+        value = run(Fixture(wave=wave, flux=flux), air=True, region=[1820., 1880.],
+                    continuum_windows=[[1800., 1810.], [1890., 1900.]])
+        for key in ('equivalent_width_rest', 'minimum_wavelength_rest', 'centroid_rest', 'fwhm_rest'):
+            assert metric(value, key)['value'] is None
+            assert metric(value, key)['status'] == 'unsupported_air_wavelength'
+            assert metric(value, key.replace('_rest', '_observed'))['value'] is not None
+        return {'observed_vacuum_domain_Angstrom': [2000., 20000.], 'units': ['Angstrom', 'nm', 'um'],
+                'redshifts_checked': [-.5, 0., .1, 20.], 'unsupported_metrics': value['measurements']['metrics']}
+    check('air_conversion_observed_domain_and_redshift_order_are_explicit', air_rest_domain)
+
     def error_and_seed():
         first = run(mc_samples=48, seed=17)
         second = run(mc_samples=48, seed=17)
@@ -362,7 +437,7 @@ def main():
             os.environ['FITSVIEWER_CORE_BINARY'] = str(args.core.resolve())
             worker = fs.Worker(args.output/'real-cache')
             options = dict(defaults, path=str(source), hdu=1, x_column=1, y_column=0, error_column=2,
-                           source='real SDSS '+source.name, mc_samples=0)
+                           source='real SDSS '+source.name, mc_samples=0, air=False, redshift=.1)
             try:
                 packet = worker.dataset(options)
                 wx, fy = packet['x'], packet['values']
@@ -388,6 +463,14 @@ def main():
                 residual = fy[source_line]-independent_baseline
                 independent_net = float(np.sum(.5*(residual[:-1]+residual[1:])*np.diff(wx[source_line])))
                 assert math.isclose(metric(value, 'net_flux_observed')['value'], independent_net, rel_tol=1e-10, abs_tol=1e-12)
+                for rest_key, observed_key in [('equivalent_width_rest', 'equivalent_width_observed'),
+                                               ('minimum_wavelength_rest', 'minimum_wavelength_observed'),
+                                               ('centroid_rest', 'centroid_observed'), ('fwhm_rest', 'fwhm_observed')]:
+                    rest_value, observed_value = metric(value, rest_key)['value'], metric(value, observed_key)['value']
+                    if observed_value is None:
+                        assert rest_value is None
+                    else:
+                        assert rest_value == observed_value/(1.+options['redshift'])
                 # Every masked/gap boundary within preview coverage must break the line.
                 # 此处只检查绘图预算和断点，绝不将预览数组作为数值真值。
                 preview_x = np.asarray(baseline['x']); preview_y = np.asarray(baseline['y'], dtype=float)

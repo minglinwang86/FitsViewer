@@ -1,6 +1,6 @@
 # FitsViewer
 
-[English](README.md) · [下载 0.1.5rc1](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.5-rc.1) · [安装](docs/INSTALL.md) · [基础命令](docs/COMMANDS.md) · [代码架构](docs/ARCHITECTURE.md) · [Agent 工作记录](AgentWorkLog.md)
+[English](README.md) · [下载 0.1.6](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.6) · [安装](docs/INSTALL.md) · [基础命令](docs/COMMANDS.md) · [代码架构](docs/ARCHITECTURE.md) · [Agent 工作记录](AgentWorkLog.md)
 
 一款轻量、快速启动的天文 FITS 图像与光谱查看器，为科研中使用远程服务器、本地容器时的人工查看和检查提供便捷方案，也支持 Linux、Windows 和 macOS 桌面。可在 JupyterLab 文件列表中双击打开，通过命令行调用，或内嵌到 Notebook。
 
@@ -10,7 +10,7 @@
 
 ![FitsViewer 中的 JWST SMACS 0723 引力透镜视场](docs/images/jwst-smacs0723-interface.png)
 
-JWST/NIRCam F277W 的 SMACS 0723 视场；这张较早界面的截图保留为项目天文预览，下方展示当前 0.1.5 界面。观测：NASA、ESA、CSA、STScI；拼接数据：[Gabriel Brammer (2022)](https://doi.org/10.5281/zenodo.6874301)，CC BY 4.0。[裁剪、署名与复现说明](docs/images/README.md)。
+JWST/NIRCam F277W 的 SMACS 0723 视场；这张较早界面的截图保留为项目天文预览，下方展示当前 0.1.6 界面。观测：NASA、ESA、CSA、STScI；拼接数据：[Gabriel Brammer (2022)](https://doi.org/10.5281/zenodo.6874301)，CC BY 4.0。[裁剪、署名与复现说明](docs/images/README.md)。
 
 ## 极简模式
 
@@ -24,9 +24,11 @@ JWST/NIRCam F277W 的 SMACS 0723 视场；这张较早界面的截图保留为�
 
 ### 基础孔径测光与坐标
 
-创建圆孔径和背景环，选择后可移动、修改半径或拖动边缘调整大小。未编辑文本时，**Delete / Backspace** 删除选中的孔径。测量使用原始物理像素；误差和 SNR 需要适用的误差图或明确噪声模型。
+创建圆孔径和背景环，选择后可移动、修改半径或拖动边缘调整大小。未编辑文本时，**Delete / Backspace** 删除选中的孔径；**清除全部孔径**可一次清空。测量使用原始物理像素；误差和 SNR 需要适用的误差图或明确噪声模型。
 
-共用的**坐标**面板显示从 1 开始的像素坐标及 FK5 J2000 坐标。**一键识别／校准 Gaia 坐标**利用已有或近似天区位置、角尺度，生成通过验证的 WCS 覆盖层；缓存映射用于底部游标坐标。这是有限天区解算，不能当作全天盲解；不会改写 FITS 文件头。
+共用的**坐标**面板显示从 1 开始的像素坐标及 FK5 J2000 坐标。**一键识别／校准 Gaia 坐标**利用已有或近似天区位置、角尺度，生成经过独立验证的 WCS 覆盖层，默认误差上限为 3 角秒；缓存映射用于底部游标坐标。旧式 FITS 日期 `29/11/51` 按 1951 年 11 月 29 日处理，用于自行传播。这是有限天区解算，不能当作全天盲解；不会改写 FITS 文件头。
+
+**比例尺**位于 HDU 右侧；图像右下角提供左右 90°及任意角度旋转。孔径、选点和坐标共用同一显示逆变换，原始数组不变。
 
 ![极简模式孔径测量及孔径尺寸编辑](docs/images/v0.1.5rc1/mini-aperture.jpg)
 
@@ -34,7 +36,7 @@ JWST/NIRCam F277W 的 SMACS 0723 视场；这张较早界面的截图保留为�
 
 查看一维 FITS、已识别列结构的二进制表光谱，或数值文本光谱。选择波长、流量、误差列，显示不确定度，缩放平移并读出最近的原始采样点。无效采样会断线显示，不跨缺口连线。
 
-**设置**可切换英文／简体中文、主题和默认启动模式。打开及复制保留完整中文路径；弹窗的位置、大小和收起状态会保存。
+**设置**在独立窗口中切换英文／简体中文、主题和默认启动模式，也可选择外部 Python 环境、识别其实际依赖，单击安装选中的缺失包。打开及复制保留完整中文路径；弹窗的位置、大小和收起状态会保存。
 
 ![使用公开 SDSS 数据的极简光谱界面](docs/images/v0.1.5rc1/mini-spectrum.jpg)
 
@@ -64,13 +66,18 @@ PRO 提供带边框的工作区，子页面可移动、调大小、停靠、组�
 
 ### 4. 找星与迹线
 
-检测简单星点候选、检查质量标记并手动修正；检测直线、跟踪指定起点的曲线，查看线／带状剖面。找星工具不是 PSF 测光；迹线检查不会自动完成波长定标或最优光谱提取。
+**找星**根据当前 WCS（包括已验证的 Gaia 校准）投影 Gaia DR3 或 SDSS DR17 的星表身份。另设**局部光源候选**检测图像亮点；亮点候选不等于星表认证，也不是 PSF 测光。可检测直线，手动点击种子跟踪曲线，或点选控制点查看线／带状剖面。迹线检查不会自动完成波长定标或最优光谱提取。
 
 ![真实 M67 视场上的 PRO 找星控件](docs/images/v0.1.5rc1/pro-detection.jpg)
 
 ### 5. 星表、交叉匹配与互操作
 
-叠加本地星表、本地交叉匹配，或显式调用 CDS XMatch；查询 SIA v1、SSA、TAP 服务并下载选中的资源。SAMP 可与外部 Hub／客户端交换信息，远程环境可使用可选本机桥接。
+叠加本地星表、本地交叉匹配，或显式调用 CDS XMatch，提供 Gaia、2MASS、Pan-STARRS1、SDSS 预设。**附近观测检索**连接 Aladin/CDS、SDSS、DES、Legacy Surveys、NOIRLab、MAST、ESO、CADC、IRSA、ALMA、ASTRON 等接口；区分巡天覆盖、观测清单、FITS 产品和 DataLink。覆盖／预览记录本身不能证明存在单次曝光或可下载的原始 FITS。SAMP 可与外部 Hub／客户端交换信息，远程环境可使用可选本机桥接。
+
+默认按当前图像的 WCS 天区足迹检索。主列表优先显示面积为原图 **40%–150%** 的图像，
+排除更大产品；本次有限返回中没有合格结果时才展示更小的部分覆盖。面积比与实际重叠比
+分别显示。可生成 HiPS 重采样 FITS 切图，或下载选中的 FITS 产品，保存到原图目录并同时
+加入查看器。目录不可写时明确改用临时结果，原图不变。[几何、下载与限制](docs/SCIENTIFIC_TOOLS.md#catalogues-and-nearby-observations)。
 
 本地匹配不上传数据。CDS 接收行标识、J2000 坐标及明确选中的附加列。在线功能需要相应外部依赖和可访问的服务。
 
@@ -106,7 +113,7 @@ Boxcar、Gaussian、Savitzky–Golay 平滑按有效段处理。可做有界 Gau
 
 ## 安装
 
-在 [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.5-rc.1) 下载对应平台的 **Full 全功能包**。本次不单独发布 Mini-only 包，也未发布到 PyPI。
+在 [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.6) 下载对应平台的 **Full 全功能包**。本次不单独发布 Mini-only 包，也未发布到 PyPI。
 
 | 安装方式 | 适用场景 |
 |---|---|
@@ -120,7 +127,7 @@ Boxcar、Gaussian、Savitzky–Golay 平滑按有效段处理。可做有界 Gau
 Linux 上先激活**运行 Jupyter 服务本身**的环境，再安装下载的 wheel 及其集成依赖：
 
 ```bash
-python -m pip install --upgrade "./fitsviewer-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl[jupyter]"
+python -m pip install --upgrade "./fitsviewer-0.1.6-py3-none-manylinux_2_28_x86_64.whl[jupyter]"
 fitsviewer defaults set --jupyter yes --desktop no
 fitsviewer jupyter start --root "$HOME/data" --port 8082
 ```
@@ -146,6 +153,12 @@ show("data/image.fits", height=650)
 
 路径相对于 Jupyter 文件根目录。若内核与服务端不在同一环境，服务环境需要 Jupyter 集成，内核环境需要能够导入 Python 包。
 
+## 普通 SSH 打开远程文件
+
+建立 SSH 本机端口转发后，在远端执行 `fver image.fits`。独立查看服务提供首次可点击的地址，已打开的浏览器窗口可接收后续命令；显式配对的可选本机助手也可调用原生程序。不需要先打开 Jupyter 或 X11 转发。普通 SSH 本身不能控制本机浏览器，也不能自行给现有连接增加端口转发，详见[配置与配对说明](docs/REMOTE_VIEWING.md)。
+
+所选 HDU 的完整解码包不超过 20 MB 时一次传输；更大的受支持图像使用预览和当前视野的数值图块，精确游标值与科学测量仍读原始数据。每个远程视图限制图块缓存和在途请求；程序不内置 Chromium、Python 运行时或科学软件栈。
+
 ## 环境要求和边界
 
 | 组件 | 支持范围 |
@@ -157,13 +170,13 @@ show("data/image.fits", height=650)
 | 浏览器 | 支持 WebAssembly、WebGL；Windows/macOS 浏览器可通过 SSH 访问 Linux |
 | 科学功能 | 使用所选环境的外部包，见[依赖列表](DEPENDENCIES.txt) |
 
-JupyterLab 5、Linux/Windows ARM 包、Linux musl、Safari 和真实 X2Go 转发不在本轮验收范围。manylinux 基线不等于每个发行版均经过认证。macOS 窗口启动探测不等于完整交互验收，详见[实际测试范围](docs/releases/VALIDATION-0.1.5rc1.md)。
+JupyterLab 5、Linux/Windows ARM 包、Linux musl、Safari 和真实 X2Go 转发不在本轮验收范围。manylinux 基线不等于每个发行版均经过认证。macOS 窗口启动探测不等于完整交互验收，详见[实际测试范围](docs/releases/VALIDATION-0.1.6.md)。
 
 FITS 图像支持 BITPIX 8/16/32/64/−32/−64 和 BSCALE/BZERO/BLANK。分块压缩支持 RICE/GZIP/GZIP2，暂不支持 HCOMPRESS、PLIO 和压缩空值掩膜列。基础光谱支持一维数组、已识别的标量／定长向量二进制表及 UTF-8 数值文本。
 
-`.fits.gz` 可以直接打开；ZIP/TAR 多文件归档请先解压再打开其中 FITS。暂不支持数据立方、通用表格编辑、变长／多阶光谱和完整非线性光谱 WCS。输入／解压后文件上限 512 MiB、图像 32 Mi 像素、文本光谱 32 MiB、光谱一百万采样点；这些不是总内存上限。
+`.fits.gz` 可以直接打开；ZIP/TAR 多文件归档请先解压再打开其中 FITS。暂不支持数据立方、通用表格编辑、变长／多阶光谱和完整非线性光谱 WCS。完整数组读取的输入／解压后文件上限为 512 MiB、图像 32 Mi 像素；文本光谱限 32 MiB，光谱一百万采样点。HTTP 对普通二维 FITS 的 seek 读取可超过整数组路径限制，无需把整幅图装入内存；压缩输入仍有准备／解码限制，完整包超过 20 MB 的光谱明确拒绝。详见[传输边界](docs/REMOTE_VIEWING.md)，这些局部预算不是总内存上限。
 
-关闭页面会释放对应渲染器及其任务／临时结果。内存分配器与浏览器缓存仍可能使进程内存高于启动值。实际测试范围见[发行验收记录](docs/releases/VALIDATION-0.1.5rc1.md)。
+关闭页面会释放对应渲染器及其任务／临时结果。内存分配器与浏览器缓存仍可能使进程内存高于启动值。实际测试范围见[发行验收记录](docs/releases/VALIDATION-0.1.6.md)。
 
 ## 开发和许可
 

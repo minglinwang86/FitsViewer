@@ -4,12 +4,12 @@
     "base": {
       "description": "FITS/core display, basic spectra/apertures, WCS/Gaia, HTTP/CLI",
       "requires": [],
-      "python": ["fitsviewer_science.py", "fitsviewer_build_profile.py", "fitsviewer_wcs.py", "fitsviewer_gaia.py", "fitsviewer_network.py", "fitsviewer_detection.py", "fitsviewer_tap.py"]
+      "python": ["fitsviewer_science.py", "fitsviewer_build_profile.py", "fitsviewer_wcs.py", "fitsviewer_gaia.py", "fitsviewer_network.py", "fitsviewer_detection.py", "fitsviewer_tap.py", "fitsviewer_environment.py"]
     },
     "pro": {
       "description": "PRO workspaces, layers, advanced spectra and scientific adapters",
       "requires": ["base"],
-      "python": ["fitsviewer_spectra.py", "fitsviewer_spectral_analysis.py", "fitsviewer_measure.py", "fitsviewer_image_matching.py", "fitsviewer_vo.py", "fitsviewer_export.py", "fitsviewer_samp.py"]
+      "python": ["fitsviewer_spectra.py", "fitsviewer_spectral_analysis.py", "fitsviewer_measure.py", "fitsviewer_image_matching.py", "fitsviewer_vo.py", "fitsviewer_export.py", "fitsviewer_samp.py", "fitsviewer_catalogue_services.py", "fitsviewer_archive_services.py", "fitsviewer_archive_geometry.py"]
     },
     "desktop": {
       "description": "Native desktop entry, platform dialogs and file association helpers",

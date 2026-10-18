@@ -50,6 +50,9 @@ pub struct Preferences {
     pub language:String,
     pub render:RenderOptions,
     pub colorbar:bool,
+    pub scale_bar:bool,
+    pub scale_pixels:f64,
+    pub compass:bool,
     pub colorbar_position:String,
     pub toolbar:Vec<String>,
     pub ribbon_tab:String,
@@ -64,13 +67,14 @@ pub struct Preferences {
     pub shortcuts:Vec<(String,String)>,
 }
 impl Default for Preferences {
-    fn default()->Self {Self{schema:1,mode:"Minimal".into(),default_mode:"Minimal".into(),theme:"Dark".into(),language:"en".into(),render:RenderOptions::default(),colorbar:false,colorbar_position:"Right".into(),toolbar:vec!["Fit".into(),"ZScale".into(),"Reset B/C".into()],ribbon_tab:"View".into(),ribbon_collapsed:false,image_pro_width:330.,spectrum_pro_width:330.,image_pro_collapsed:false,spectrum_pro_collapsed:false,image_pro_layout:serde_json::Value::Null,spectrum_pro_layout:serde_json::Value::Null,window_layouts:Default::default(),shortcuts:vec![]}}
+    fn default()->Self {Self{schema:1,mode:"Minimal".into(),default_mode:"Minimal".into(),theme:"Dark".into(),language:"en".into(),render:RenderOptions::default(),colorbar:false,scale_bar:true,scale_pixels:100.,compass:false,colorbar_position:"Right".into(),toolbar:vec!["Fit".into(),"ZScale".into(),"Reset B/C".into()],ribbon_tab:"View".into(),ribbon_collapsed:false,image_pro_width:330.,spectrum_pro_width:330.,image_pro_collapsed:false,spectrum_pro_collapsed:false,image_pro_layout:serde_json::Value::Null,spectrum_pro_layout:serde_json::Value::Null,window_layouts:Default::default(),shortcuts:vec![]}}
 }
 impl Preferences {
     pub fn validate(&self)->Result<(),String>{
         #[cfg(not(feature="pro"))] if self.mode!="Minimal" || self.default_mode!="Minimal" || !["View","Measure","Coordinates"].contains(&self.ribbon_tab.as_str()){return Err("PRO is not included in this Mini build".into());}
         if self.schema!=1 || !["en","zh-CN"].contains(&self.language.as_str()) || !["Minimal","PRO"].contains(&self.mode.as_str()) || !["Dark","Light","Night"].contains(&self.theme.as_str()) || !["Left","Right","Top","Bottom"].contains(&self.colorbar_position.as_str()) {return Err("Unsupported preferences schema, mode, theme or colorbar position".into());}
         self.render.validate()?;
+        if !self.scale_pixels.is_finite() || !(0.001..=1e7).contains(&self.scale_pixels){return Err("Invalid scale bar length".into());}
         self.window_layouts.validate()?;
         if [&self.image_pro_layout,&self.spectrum_pro_layout].iter().any(|layout|!layout.is_null() && (!layout.is_object() || layout.to_string().len()>24*1024)){return Err("Invalid or oversized PRO workspace layout".into());}
         if [self.image_pro_width,self.spectrum_pro_width].iter().any(|width|!width.is_finite() || !(220. ..=1200.).contains(width)){return Err("PRO panel width must be finite and between 220 and 1200".into());}
@@ -212,6 +216,7 @@ impl Tools {
     }
     pub fn settings_ui(&mut self,ui:&mut egui::Ui,ctx:&egui::Context,maximum:f64){
         crate::ribbon::align_controls(ui);
+        ui.checkbox(&mut self.prefs.compass,crate::i18n::t("N / E"));
         information(ui,"settings-help",|ui|{ui.label(crate::i18n::t("Applies to new windows only; does not switch the current mode."));ui.label(crate::i18n::t("Manual threshold, in scaled physical units; no detector saturation is inferred."));});
             egui::ComboBox::from_id_salt("interface-language").selected_text(if self.prefs.language=="zh-CN"{"界面语言：简体中文"}else{"Language: English"}).show_ui(ui,|ui|{ui.selectable_value(&mut self.prefs.language,"en".into(),"English");ui.selectable_value(&mut self.prefs.language,"zh-CN".into(),"简体中文");});
             egui::ComboBox::new("Interface theme",crate::i18n::t("Interface theme")).selected_text(crate::i18n::t(&self.prefs.theme)).show_ui(ui,|ui|{for name in ["Dark","Light","Night"]{ui.selectable_value(&mut self.prefs.theme,name.into(),crate::i18n::t(name));}});
@@ -351,5 +356,61 @@ mod auto_display_tests{
 pub(crate) fn information(ui:&mut egui::Ui,id:impl std::hash::Hash,body:impl FnOnce(&mut egui::Ui)){
     #[cfg(feature="pro")] crate::workspace_ui::information(ui,id,body);
     #[cfg(not(feature="pro"))] ui.push_id(id,|ui|{ui.menu_button("…",|ui|{crate::ui_style::menu_style(ui.style_mut());ui.set_max_width(360.);body(ui);}).response.on_hover_text(crate::i18n::t("Info"));});
+}
+
+/// Keep a useful failure visible without filling a tool with a transport traceback.
+/// 错误摘要保留在主面板；完整诊断与复制操作放在同一行的省略号菜单。
+pub(crate) fn status_message(ui:&mut egui::Ui,message:&str){
+    if message.trim().is_empty(){return;}
+    let summary=status_summary(message);
+    if summary==message{ui.add(egui::Label::new(crate::i18n::t(message)).wrap());return;}
+    ui.horizontal_wrapped(|ui|{
+        ui.add(egui::Label::new(crate::i18n::t(&summary)).wrap());
+        information(ui,"status-message-details",|ui|{
+            ui.strong(crate::i18n::t("Error details"));
+            if ui.button(crate::i18n::t("Copy details")).clicked(){ui.ctx().copy_text(message.into());}
+            egui::ScrollArea::vertical().max_height(200.).show(ui,|ui|{ui.add(egui::Label::new(message).wrap());});
+        });
+    });
+}
+
+fn status_summary(message:&str)->String{
+    let lower=message.to_ascii_lowercase();
+    let summary=if lower.contains("nameresolutionerror") || lower.contains("getaddrinfo failed") || lower.contains("failed to resolve"){
+        Some("Cannot resolve the remote service address. Check the network or proxy.")
+    }else if lower.contains("timed out") || lower.contains("readtimeout") || lower.contains("connecttimeout") || (lower.contains("timeout") && (lower.contains("connectionpool") || lower.contains("network request"))){
+        Some("The remote request timed out. Try again or select another service.")
+    }else if lower.contains("503") && (lower.contains("server error") || lower.contains("service unavailable")){
+        Some("The remote service is temporarily unavailable. Try another service.")
+    }else if lower.contains("sslerror") || lower.contains("certificate_verify_failed"){
+        Some("The secure connection failed. Open the details to check the certificate error.")
+    }else if lower.contains("httpsconnectionpool") || lower.contains("network request failed"){
+        Some("The remote service request failed. Open the details for the cause.")
+    }else if lower.contains("input values did not match any of the formats"){
+        Some("The observation date could not be read. Open the details.")
+    }else{None};
+    if let Some(summary)=summary{return summary.into();}
+    if message.chars().count()<=200 && !message.contains('\n'){return message.into();}
+    let first=message.lines().next().unwrap_or(message);
+    let mut summary=first.chars().take(160).collect::<String>();
+    if first.chars().count()>160{summary.push('…');}
+    summary
+}
+
+#[cfg(test)]
+mod status_message_tests{
+    use super::status_summary;
+    #[test]fn transport_diagnostics_keep_their_cause_visible(){
+        assert!(status_summary("Gaia services failed: NameResolutionError: Failed to resolve 'example'").starts_with("Cannot resolve"));
+        assert!(status_summary("HTTPSConnectionPool timed out (ReadTimeout)").contains("timed out"));
+        assert!(status_summary("503 Server Error: Service Unavailable for url: example").contains("temporarily unavailable"));
+        assert!(status_summary("SSLError: CERTIFICATE_VERIFY_FAILED").contains("secure connection"));
+        assert!(status_summary("HTTP 500: Network request failed").contains("request failed"));
+    }
+    #[test]fn short_scientific_rejections_are_not_hidden_or_relabelled(){
+        for message in ["Completed","Gaia calibration rejected: fit RMS 0.685, holdout RMS 2.877 arcsec","No usable uncertainty array","Observation date is invalid","Timeout must be a finite positive number"]{assert_eq!(status_summary(message),message);}
+        let long=format!("{}\nprivate diagnostic", "测".repeat(250));let short=status_summary(&long);
+        assert_eq!(short.chars().count(),161);assert!(!short.contains("private"));
+    }
 }
 

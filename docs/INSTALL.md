@@ -1,4 +1,4 @@
-# Install FitsViewer 0.1.5rc1 / 安装指南
+# Install FitsViewer 0.1.6 / 安装指南
 
 The Full distribution includes Minimal and PRO interfaces, the native desktop, browser viewer, prebuilt JupyterLab extension and Notebook API. No Rust/Node toolchain or `jupyter lab build` is needed when installing a wheel. Scientific Python packages remain external.
 
@@ -6,14 +6,14 @@ The Full distribution includes Minimal and PRO interfaces, the native desktop, b
 
 ## Download / 下载
 
-[Release assets and checksums](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.5-rc.1)
+[Release assets and checksums](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.6)
 
 | Platform / 平台 | File / 文件 |
 |---|---|
-| GNU/Linux x86_64, glibc 2.28+ | [Linux wheel](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/fitsviewer-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl) |
-| Windows x86_64 desktop | [Setup EXE](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/FitsViewer-0.1.5rc1-windows-x86_64-setup.exe) · [Portable ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/FitsViewer-0.1.5rc1-windows-x86_64-portable.zip) |
-| Windows Python/Jupyter | [Windows wheel](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/fitsviewer-0.1.5rc1-py3-none-win_amd64.whl) |
-| macOS Apple Silicon / Intel desktop | [arm64 ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/FitsViewer-0.1.5rc1-macos-arm64-portable.zip) · [x86_64 ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/FitsViewer-0.1.5rc1-macos-x86_64-portable.zip) |
+| GNU/Linux x86_64, glibc 2.28+ | [Linux wheel](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.6/fitsviewer-0.1.6-py3-none-manylinux_2_28_x86_64.whl) |
+| Windows x86_64 desktop | [Setup EXE](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.6/FitsViewer-0.1.6-windows-x86_64-setup.exe) · [Portable ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.6/FitsViewer-0.1.6-windows-x86_64-portable.zip) |
+| Windows Python/Jupyter | [Windows wheel](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.6/fitsviewer-0.1.6-py3-none-win_amd64.whl) |
+| macOS Apple Silicon / Intel desktop | [arm64 ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.6/FitsViewer-0.1.6-macos-arm64-portable.zip) · [x86_64 ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.6/FitsViewer-0.1.6-macos-x86_64-portable.zip) |
 
 The project is not on PyPI; use these wheel files, not an unrelated similarly named package. Select Python 3.10+ and JupyterLab 4.4–4.x. The environment installer rejects JupyterLab 5 rather than silently downgrading it. Direct pip commands use pip's resolver, so choose the intended environment first.
 
@@ -26,7 +26,7 @@ Activate the environment that starts the Jupyter server. Install the downloaded 
 激活真正启动 Jupyter 服务的环境，使用 `[jupyter]` 安装集成依赖。普通 wheel 不会自动安装 Jupyter 软件栈。
 
 ```bash
-python -m pip install --upgrade "./fitsviewer-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl[jupyter]"
+python -m pip install --upgrade "./fitsviewer-0.1.6-py3-none-manylinux_2_28_x86_64.whl[jupyter]"
 fitsviewer defaults set --jupyter yes --desktop no
 fitsviewer jupyter start --root "$HOME/data" --port 8082
 ```
@@ -38,7 +38,7 @@ The root directory must exist. Restart an already running Jupyter service after 
 Install directly into an existing Conda environment without activating it:
 
 ```bash
-conda run -n astro python -m pip install "./fitsviewer-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl[jupyter]"
+conda run -n astro python -m pip install "./fitsviewer-0.1.6-py3-none-manylinux_2_28_x86_64.whl[jupyter]"
 conda run -n astro fitsviewer defaults set --jupyter yes --desktop no
 ```
 
@@ -94,7 +94,7 @@ Setup 可按用户安装，或解压 portable ZIP 直接运行。独立桌面无
 For an existing Windows Jupyter environment / 已有 Windows Jupyter 环境：
 
 ```powershell
-python -m pip install --upgrade ".\fitsviewer-0.1.5rc1-py3-none-win_amd64.whl[jupyter]"
+python -m pip install --upgrade ".\fitsviewer-0.1.6-py3-none-win_amd64.whl[jupyter]"
 fitsviewer defaults set --jupyter yes --desktop no
 ```
 
@@ -114,7 +114,7 @@ uses an ad-hoc signature without Apple notarization, so read the
 ## Git source installation / Git 源码安装
 
 ```bash
-git clone --branch v0.1.5-rc.1 https://github.com/minglinwang86/FitsViewer.git
+git clone --branch v0.1.6 https://github.com/minglinwang86/FitsViewer.git
 cd FitsViewer
 python3 scripts/install.py --from-source --build-python python3.11 --conda-env astro --with-jupyter --default-viewer yes --desktop-default no
 ```

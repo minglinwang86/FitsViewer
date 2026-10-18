@@ -1,10 +1,12 @@
 # PRO spectral analysis / PRO 光谱分析
 
-This documents the 0.1.5rc1 Full spectral tools. Use the dedicated spectrum PRO
+This documents the current Full spectral source, including the 0.1.6 air/vacuum
+corrections. Historical 0.1.5rc1 validation applies to its own artifacts. Use the dedicated spectrum PRO
 workspace; Mini allocates no analysis state. Scientific packages come from the
 selected Python/Conda environment and are never embedded in the viewer.
 
-本文描述0.1.5rc1 全功能光谱工具。工具位于光谱专用 PRO 工作区，极简模式不创建分析状态。
+本文描述当前全功能光谱源码及 0.1.6 的空气／真空修复；历史 0.1.5rc1 验收仅适用于对应产物。
+工具位于光谱专用 PRO 工作区，极简模式不创建分析状态。
 科学计算调用用户所选 Python/Conda 环境，不内嵌解释器、科学包、模板库或 TeX。
 
 ## Workflow / 操作流程
@@ -44,12 +46,29 @@ releases it. The bottom readout remains two fixed rows.
 The continuum is a user-defined local or pseudo-continuum, especially for blended
 supernova features. Its normalized preview is undefined when the baseline is
 nonpositive. Known frequency/pixel/index axes cannot be re-labeled as wavelength.
-Unit/air choices are interpretations of the source; no barycentric correction or
-implicit air/vacuum rewrite is performed.
+Unit/air choices describe the source samples, which remain unchanged. When the
+source is explicitly declared to use air wavelengths, derived rest coordinates
+use the same Ciddor air-to-vacuum conversion as the display, followed by division
+by `1+z`. The conversion is bounded to the supported optical/near-IR domain
+(approximately 2000–20000 Å observed vacuum wavelength); unsupported values are
+reported rather than extrapolated. No barycentric correction is performed.
 
 连续谱是用户选窗定义的局部基线；对超新星混叠特征应称为伪连续谱。基线非正处不能
-归一化。已知频率、像素或序号横轴不能假装成波长。单位与空气/真空选项解释源坐标，
-不隐式实施重心修正或改写波长。
+归一化。已知频率、像素或序号横轴不能假装成波长。单位与空气/真空选项解释原始采样，
+原数组不变。显式声明为空气波长时，静止系派生坐标与显示轴采用相同的 Ciddor
+空气转真空算法，然后除以 `1+z`；只在支持的光学／近红外范围内换算（观测系真空
+波长约 2000–20000 Å），域外返回无支持状态，不外推，也不实施重心修正。
+
+Rest-frame centroids and minima use this coordinate transform. Rest FWHM is the
+difference of the transformed half-maximum endpoints; rest EW integrates the
+normalized profile on the transformed grid. A width or EW is not itself a
+wavelength to pass to the conversion function. Observed measurements and net
+integrated flux remain on the original coordinate grid. Outputs record both
+observed and rest wavelength media explicitly.
+
+静止系质心、最低点按上述顺序换算；半高宽转换两个半高位置后求差，EW 按转换后的
+坐标间隔积分，不能把宽度或 EW 当作一条波长直接换算。观测系量及净积分流量仍用
+原始坐标网格；结果明确记录观测系与静止系的波长媒体。
 
 Measurements use the complete native sample span inside the requested region,
 without extrapolating its fractional endpoints. A masked/nonfinite sample or large

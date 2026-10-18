@@ -8,7 +8,7 @@ pub enum Role {View,Pro,Gaia}
 impl Role {
     pub fn of(operation:&str,params:&Value)->Self {
         if operation.starts_with("gaia_") || operation=="job_start" && params["operation"]=="gaia_solve" || params["_science_role"]=="gaia"{return Self::Gaia;}
-        if ["capabilities","wcs","artifact_refs","view_heartbeat","release_view","release_document"].contains(&operation){Self::View}else{Self::Pro}
+        if operation.starts_with("environment_") || ["dependency_probe","dependency_install"].contains(&operation) || operation=="job_start" && ["dependency_probe","dependency_install"].iter().any(|name|params["operation"]==*name) || ["job_status","job_cancel"].contains(&operation) && params["_science_role"]=="view" || ["capabilities","wcs","artifact_refs","view_heartbeat","release_view","release_document"].contains(&operation){Self::View}else{Self::Pro}
     }
 }
 #[derive(Clone,Debug)]
@@ -88,6 +88,13 @@ impl Sessions {
         releases
     }
     pub fn counts(&self)->(usize,usize,usize){(self.entries.values().filter(|e|e.view).count(),self.entries.values().filter(|e|e.pro.active).count(),self.entries.values().filter(|e|e.gaia.active).count())}
+    #[cfg(feature="pro")]
+    pub fn active_pro(&self,owner:&str,document:u64,epoch:u64)->bool{
+        self.entries.get(owner).is_some_and(|entry|entry.view && entry.document==document
+            && entry.closed_document.is_none_or(|closed|document>closed)
+            && entry.pro.active && entry.pro.document==document && entry.pro.epoch==epoch
+            && entry.pro.closed.is_none_or(|closed|epoch>closed))
+    }
     pub fn scientific_roles(&self)->bool{let (_,pro,gaia)=self.counts();pro+gaia>0}
     pub fn any_views(&self)->bool{let (view,pro,gaia)=self.counts();view+pro+gaia>0}
 }
@@ -95,6 +102,13 @@ impl Sessions {
 #[cfg(test)]mod tests{
     use super::*;use serde_json::json;
     fn p(document:u64,epoch:u64)->Value{json!({"_viewer_session":"a","_document_generation":document,"_role_epoch":epoch})}
+    #[test]fn minimal_dependency_polling_never_acquires_pro(){
+        let mut s=Sessions::default();let mut params=p(1,0);params["_science_role"]=json!("view");params["operation"]=json!("dependency_install");
+        s.prepare("job_start",&params).unwrap();assert_eq!(s.counts(),(1,0,0));
+        s.prepare("job_status",&params).unwrap();assert_eq!(s.counts(),(1,0,0));
+        s.prepare("release_pro",&params).unwrap();s.prepare("job_cancel",&params).unwrap();assert_eq!(s.counts(),(1,0,0));
+        s.prepare("release_view",&params).unwrap();assert_eq!(s.counts(),(0,0,0));
+    }
     #[test]fn late_start_cannot_resurrect_released_role(){let mut s=Sessions::default();s.prepare("pro_acquire",&p(1,1)).unwrap();s.prepare("release_pro",&p(1,1)).unwrap();assert!(s.prepare("job_start",&p(1,1)).is_err());assert!(s.prepare("pro_acquire",&p(1,3)).is_ok());}
     #[test]fn old_release_keeps_new_role(){let mut s=Sessions::default();s.prepare("pro_acquire",&p(1,1)).unwrap();let (_,old)=s.prepare("pro_acquire",&p(1,3)).unwrap();assert_eq!(old[0].epoch,Some(1));s.prepare("release_pro",&p(1,1)).unwrap();assert_eq!(s.counts(),(1,1,0));}
     #[test]fn cached_selection_rejects_old_document(){let mut s=Sessions::default();s.prepare("pro_acquire",&p(1,1)).unwrap();s.prepare("release_document",&p(1,1)).unwrap();assert!(s.prepare("job_start",&p(1,1)).is_err());assert!(s.prepare("job_start",&p(2,1)).is_ok());}

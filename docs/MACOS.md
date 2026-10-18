@@ -9,26 +9,26 @@ macOS ZIP 包含原生 `FitsViewer.app`（极简及 PRO）和终端启动器。A
 
 | Processor / 处理器 | Download / 下载 |
 |---|---|
-| Apple Silicon | [macOS arm64 ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/FitsViewer-0.1.5rc1-macos-arm64-portable.zip) |
-| Intel | [macOS x86_64 ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/FitsViewer-0.1.5rc1-macos-x86_64-portable.zip) |
+| Apple Silicon | [macOS arm64 ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.6/FitsViewer-0.1.6-macos-arm64-portable.zip) |
+| Intel | [macOS x86_64 ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.6/FitsViewer-0.1.6-macos-x86_64-portable.zip) |
 
 ## Open the application / 打开程序
 
 1. Download the ZIP for your processor and compare its SHA-256 with the release's
-   [SHA256SUMS](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/SHA256SUMS).
+   [SHA256SUMS](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.6/SHA256SUMS).
 2. Extract the archive. Open `FitsViewer.app`, or copy it to `~/Applications` first.
 3. Use **Open** inside the viewer to choose an image or spectrum.
 
 下载后核对校验值并解压。直接打开 `FitsViewer.app`，也可先复制到 `~/Applications`。
 通过程序中的“打开”选择文件。此版本不注册 Finder 双击 FITS 的关联。
 
-This prerelease uses an **ad-hoc signature**, without Developer ID signing or Apple
+This package uses an **ad-hoc signature**, without Developer ID signing or Apple
 notarization. macOS may block the first launch. If you have checked the source and
 checksum and choose to allow this app, Apple's documented route is to attempt opening
 it, then use **System Settings → Privacy & Security → Open Anyway** for this application.
 See [Apple's first-launch guidance](https://support.apple.com/en-us/102445).
 
-本预发布版仅采用临时签名，未获得 Developer ID 签名和 Apple 公证。首次打开可能被
+本版本仅采用临时签名，未获得 Developer ID 签名和 Apple 公证。首次打开可能被
 系统拦截。核实来源及校验值并决定使用后，可按 Apple 指引，在尝试打开后进入
 “系统设置 → 隐私与安全 → 仍要打开”，单独允许该程序。
 
@@ -41,12 +41,20 @@ From the extracted directory / 在解压目录中执行：
 ./fitsviewer --build-info
 ./fitsviewer "/path/to/image.fits" --inspect-json
 ./fitsviewer "/path/to/image.fits" --python "/path/to/science-env/bin/python"
+./fver --help
+./fver helper --url http://127.0.0.1:18877 --target science
 ```
 
 Basic desktop viewing needs no Python interpreter. Scientific operations call the
 selected external Python/Conda environment. NumPy, Astropy, Specutils, scientific
 catalogues and TeX are not bundled. After moving only the `.app`, its equivalent
 terminal entry is `FitsViewer.app/Contents/MacOS/FitsViewer`.
+
+From 0.1.6, the portable directory also includes `fver`, using four shared Python
+source modules and your external Python 3.10+. Set `FITSVIEWER_PYTHON` to select
+that interpreter. The helper requires an explicit pairing code and local SSH
+forward; it does not install Python or Jupyter. See [SSH viewing](REMOTE_VIEWING.md).
+The wrapper avoids bytecode writes inside the signed application resources.
 
 The app's `Contents/Resources` includes the shared notices plus
 `MACOS_THIRD_PARTY_NOTICES.md` and a target-specific license inventory under
@@ -70,7 +78,7 @@ wheel there and connect from your Mac using the [SSH/browser instructions](INSTA
 Native builds and automated checks run on macOS 15 for both processors. The compiler
 targets macOS 11.0, but older systems are not certified. GUI startup probes are
 reported separately from interactive GUI acceptance. See the
-[actual validation record](releases/VALIDATION-0.1.5rc1.md).
+[actual validation record](releases/VALIDATION-0.1.6.md).
 
 两种架构均在 macOS 15 环境原生构建和自动检查。编译目标为 11.0，但没有认证旧系统；
 窗口启动探测与完整交互验收分别记录。科研测量结果仍需独立验证，不能直接用作论文数据。

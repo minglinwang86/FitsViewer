@@ -6,6 +6,8 @@ from pathlib import Path
 BASIC_OPERATIONS = frozenset({
     "capabilities", "wcs", "gaia_solve", "job_start", "job_status", "job_cancel",
     "release_owner", "release_pro_owner", "release_gaia_owner", "release_pro", "artifact_path",
+    "dependency_probe", "dependency_install",
+    "environment_busy",
 })
 
 
@@ -32,8 +34,8 @@ def require_operation(operation, params):
         return
     if operation not in BASIC_OPERATIONS:
         raise ValueError("PRO is not included in this build")
-    if operation == "job_start" and params.get("operation") != "gaia_solve":
-        raise ValueError("Only Gaia background jobs are included in this build")
+    if operation == "job_start" and params.get("operation") not in {"gaia_solve", "dependency_probe", "dependency_install"}:
+        raise ValueError("Only Gaia and environment background jobs are included in this build")
 
 
 def available_operations(operations):

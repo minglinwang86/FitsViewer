@@ -198,15 +198,15 @@ mod compact_spectrum_tests{
                     let tools:&[&str]=match tab{
                         "Measure"=>&["Pan","Circle","Aperture photometry"],
                         "Coordinates"=>&["Gaia coordinate recognition / calibration"],
-                        "Analysis"=>&["Layers","Find stars","Detect straight traces","Track seeded curve","Line / trace profile","Selected environment"],
-                        "Catalogues"=>&["Catalogue overlay","Local XMatch","CDS XMatch","VO query","Download selected resource","SAMP"],
+                        "Analysis"=>&["Layers","Find stars","Local source candidates","Detect straight traces","Track seeded curve","Line / trace profile"],
+                        "Catalogues"=>&["Catalogue overlay","Local XMatch","CDS XMatch","Nearby observations","Download selected resource","SAMP"],
                         "Export"=>&["Figure export","MathText preview","Reprojection","RGB composition"],
                         _=>&["Auto display","Display parameters","Fit","Histogram"],
                     };
                     for key in tools{let bounds=rect(key);assert!(bounds.left()>=0. && bounds.right()<width && bounds.bottom()<=app.ribbon_height,
                         "Tool clipped: {key}, {language}, {theme}, width={width}, PRO={pro}, tab={tab}, {bounds:?}");}
                     assert_eq!(labels.iter().filter(|(text,_)|text==t("Settings")).count(),1,"Settings belongs only to the file row");
-                    assert!(!labels.iter().any(|(text,_)|[t("Data"),t("Coordinate tools"),t("Move aperture")].contains(&text.as_str())));
+                    assert!(!labels.iter().any(|(text,_)|[t("Data"),t("Coordinate tools"),t("Move aperture"),t("Selected environment")].contains(&text.as_str())));
                 }
             }}}
         }crate::i18n::set("en");
@@ -360,7 +360,7 @@ impl FitsApp {
                 ui.menu_button(t("Columns"),|ui|{self.spectrum_toolbar(ui,ctx);}).response.on_hover_text(t("Columns / uncertainty"));
                 #[cfg(feature="pro")]
                 if self.tools.prefs.mode=="PRO"{
-                    for (tab,operation,label) in [("Catalogues","samp","SAMP"),("Export","capabilities","Environment")]{
+                    for (tab,operation,label) in [("Catalogues","samp","SAMP")]{
                         if ui.button(t(label)).clicked(){self.tools.prefs.ribbon_tab=tab.into();self.tools.prefs.set_pro_collapsed(true,false);if let Some(pro)=&mut self.pro{pro.select(operation);}}
                     }
                 }
@@ -385,7 +385,7 @@ impl FitsApp {
                     for (index,(task,label)) in [("Display","Display"),("Lines","Spectral lines"),("Measure","Measure"),("Process","Process"),("Fit","Model fit"),("Compare","Compare")].into_iter().enumerate(){
                         if index==2 || index==4{ui.separator();}
                         let selected=self.pro.as_ref().is_some_and(|pro|if task=="Lines"{pro.operation=="spectral_candidates"}else{pro.operation=="spectral_analysis" && pro.spectral_analysis.as_ref().is_some_and(|analysis|analysis.task==task)});
-                        if ui.selectable_label(selected,t(label)).clicked(){
+                        if ui.add_enabled(self.pro.as_ref().is_some_and(|pro|!pro.busy),egui::Button::selectable(selected,t(label))).clicked(){
                             self.tools.prefs.ribbon_tab="Analysis".into();self.tools.prefs.set_pro_collapsed(true,false);
                             if let Some(pro)=&mut self.pro{if task=="Lines"{pro.select("spectral_candidates");}else{pro.select_analysis(task);}}
                         }
@@ -459,6 +459,7 @@ impl FitsApp {
                     } }
                 });
             if let Some(hdu) = chosen { self.request(ctx, Some(hdu)); }
+            if self.image.as_ref().is_some_and(|image|image.spectrum.is_none()){crate::image_display::scale_controls(ui,&mut self.tools.prefs,self.wcs_result.as_ref(),self.rotation_deg);}
     }
     fn ribbon_inspect(&mut self,ui:&mut egui::Ui){
         if ui.selectable_label(self.tools.histogram_open,t("Histogram")).clicked(){self.tools.histogram_open=!self.tools.histogram_open;}
@@ -543,9 +544,9 @@ impl FitsApp {
         let groups: &[(&str, &[&str])] = match self.tools.prefs.ribbon_tab.as_str() {
             "Analysis" if spectrum => &[("Spectrum", &["spectral_candidates"])],
             "Catalogues" if spectrum => &[("SAMP", &["samp"])],
-            "Export" if spectrum => &[("Environment", &["capabilities"])],
-            "Analysis" => &[("Layers", &["image_layers"]),("Detection", &["detect_stars", "detect_lines", "trace_curve"]), ("Profiles", &["line_profile"]), ("Environment", &["capabilities"])],
-            "Catalogues" => &[("Catalogues", &["catalogue", "xmatch", "xmatch_cds"]), ("Virtual Observatory", &["vo_query", "vo_download", "samp"])],
+            "Export" if spectrum => &[],
+            "Analysis" => &[("Layers", &["image_layers"]),("Detection", &["identify_stars", "detect_stars", "detect_lines", "trace_curve"]), ("Profiles", &["line_profile"])],
+            "Catalogues" => &[("Catalogues", &["catalogue", "xmatch", "xmatch_cds"]), ("Virtual Observatory", &["archive_search", "vo_download", "samp"])],
             _ => &[("Figures", &["export", "math_preview"]), ("Image products", &["reproject", "rgb"])],
         };
         for (index, (title, operations)) in groups.iter().enumerate() {

@@ -15,7 +15,7 @@ impl Default for Overlay {fn default()->Self{Self{enabled:false,hidden:false,opa
 /// A comparison holds the existing cached source, never a resampled pixel copy.
 /// 对照谱复用缓存的原采样；显示比例与错位不修改源数据。
 pub struct SpectrumLayer {pub image:Arc<FitsImage>,pub label:String,pub epoch:String,pub scale:f64,pub offset:f64,pub unit:String,pub redshift:f64,pub air:bool,pub opacity:f32,pub order:i32}
-pub struct ImageLayer {pub index:usize,pub image:Arc<FitsImage>,pub label:String,pub opacity:f32,pub scale:f64,pub offset:f64,pub transform:[[f64;3];2],pub revision:u64,pub order:i32}
+pub struct ImageLayer {pub index:usize,pub image:Arc<FitsImage>,pub preview:Option<Arc<FitsImage>>,pub label:String,pub opacity:f32,pub scale:f64,pub offset:f64,pub transform:[[f64;3];2],pub revision:u64,pub order:i32}
 #[derive(Clone,Serialize,Deserialize)]
 struct Alignment {reference:String,hdu:usize,matrix:[[f64;3];2]}
 #[derive(Serialize,Deserialize)]
@@ -23,10 +23,10 @@ struct Alignment {reference:String,hdu:usize,matrix:[[f64;3];2]}
 struct ComparisonView{zoom:f32,pan:[f32;2],fit:bool}
 impl Default for ComparisonView{fn default()->Self{Self{zoom:1.,pan:[0.,0.],fit:true}}}
 impl ComparisonView{fn valid(&self)->bool{self.zoom.is_finite() && (0.005..=128.).contains(&self.zoom) && self.pan.iter().all(|v|v.is_finite() && v.abs()<=1e8)}}
-struct Slot {path:String,hdu:Option<usize>,image:Option<Arc<FitsImage>>,view:Value,apertures:Vec<Aperture>,texture:Option<egui::TextureHandle>,zoom:f32,pan:Vec2,fit:bool,touched:u64,overlay:Overlay,revision:u64,alignment:Option<Alignment>,calibration:Value}
-pub struct Workspace {slots:Vec<Slot>,pub selected:Option<usize>,secondary:Option<usize>,pub link:String,paths:String,open:bool,clock:u64,pub linked_center:Option<[f64;2]>,pub linked_ratio:f64,last_link:Option<[f64;3]>,pub message:String,pub pending_selection:Option<usize>,flux_mode:String,flux_aligned:bool,flux_allow_filter:bool,flux_options:Value}
+struct Slot {path:String,hdu:Option<usize>,image:Option<Arc<FitsImage>>,preview:Option<Arc<FitsImage>>,view:Value,apertures:Vec<Aperture>,texture:Option<egui::TextureHandle>,zoom:f32,pan:Vec2,fit:bool,touched:u64,overlay:Overlay,revision:u64,alignment:Option<Alignment>,calibration:Value}
+pub struct Workspace {slots:Vec<Slot>,pub selected:Option<usize>,secondary:Option<usize>,pub link:String,paths:String,open:bool,clock:u64,pub linked_center:Option<[f64;2]>,pub linked_ratio:f64,last_link:Option<[f64;3]>,pub message:String,pub pending_selection:Option<usize>,flux_mode:String,flux_aligned:bool,flux_allow_filter:bool,flux_options:Value,flux_target:Option<usize>}
 impl Default for Workspace {fn default()->Self{Self{slots:vec![],selected:None,secondary:None,link:"Independent".into(),paths:String::new(),open:false,clock:0,linked_center:None,linked_ratio:1.,last_link:None,message:String::new(),pending_selection:None,flux_mode:"wcs".into(),flux_aligned:false,flux_allow_filter:false,
-    flux_options:json!({"aperture_radius":5.,"annulus_inner":8.,"annulus_outer":12.,"fwhm":3.,"threshold_sigma":5.,"match_radius":2.,"max_stars":200,"min_matches":5})}}}
+    flux_target:None,flux_options:json!({"aperture_radius":5.,"annulus_inner":8.,"annulus_outer":12.,"fwhm":3.,"threshold_sigma":5.,"match_radius":2.,"max_stars":200,"min_matches":5})}}}
 impl Workspace {
     pub fn paths(&self)->Vec<String>{self.slots.iter().map(|slot|slot.path.clone()).collect()}
     pub fn files_open(&self)->bool{self.open}
@@ -42,18 +42,19 @@ impl Workspace {
     }
     pub fn configuration(&self)->Value{json!({"schema":1,"selected":self.selected,"secondary":self.secondary,"link":self.link,"views":self.slots.iter().map(|s|json!({"path":s.path,"hdu":s.hdu,"view":s.view,"apertures":s.apertures,"spectrum_overlay":s.overlay,"comparison_view":ComparisonView{zoom:s.zoom,pan:[s.pan.x,s.pan.y],fit:s.fit}})).collect::<Vec<_>>()})}
     pub fn add_paths(&mut self,paths:&[String]){for path in paths{self.add(path.clone(),None);}}
-    pub fn bytes(&self)->usize{self.slots.iter().map(|s|s.image.as_ref().map_or(0,|i|i.pixels.len()*(i.info.bitpix.unsigned_abs() as usize/8)+i.spectrum.as_ref().map_or(0,|p|p.x.len()*8+p.error.as_ref().map_or(0,|e|e.len()*8)))+s.texture.as_ref().map_or(0,|t|t.size()[0]*t.size()[1]*4)).sum()}
-    fn trim(&mut self){while self.bytes()>128*1024*1024 {let candidate=self.slots.iter().enumerate().filter(|(i,s)|Some(*i)!=self.selected && Some(*i)!=self.secondary && s.image.is_some()).min_by_key(|(_,s)|s.touched).map(|(i,_)|i);let Some(index)=candidate else{break;};self.slots[index].image=None;self.slots[index].texture=None;}}
+    pub fn bytes(&self)->usize{self.slots.iter().map(|s|s.image.as_ref().map_or(0,|i|i.pixels.len()*(i.info.bitpix.unsigned_abs() as usize/8)+i.spectrum.as_ref().map_or(0,|p|p.x.len()*8+p.error.as_ref().map_or(0,|e|e.len()*8)))+s.preview.as_ref().map_or(0,|i|i.pixels.len()*(i.info.bitpix.unsigned_abs() as usize/8))+s.texture.as_ref().map_or(0,|t|t.size()[0]*t.size()[1]*4)).sum()}
+    fn trim(&mut self){while self.bytes()>128*1024*1024 {let candidate=self.slots.iter().enumerate().filter(|(i,s)|Some(*i)!=self.selected && Some(*i)!=self.secondary && s.image.is_some()).min_by_key(|(_,s)|s.touched).map(|(i,_)|i);let Some(index)=candidate else{break;};self.slots[index].image=None;self.slots[index].preview=None;self.slots[index].texture=None;}}
     fn add(&mut self,path:String,hdu:Option<usize>)->Option<usize>{
         if let Some(index)=self.slots.iter().position(|s|s.path==path && (s.hdu==hdu || s.hdu.is_none())){return Some(index);}
         if self.slots.len()>=32{self.message="At most 32 views; close unused tabs".into();return None;}
         let overlay=Overlay{order:self.slots.len() as i32,..Default::default()};
-        self.slots.push(Slot{path,hdu,image:None,view:Value::Null,apertures:vec![],texture:None,zoom:1.,pan:Vec2::ZERO,fit:true,touched:0,overlay,revision:1,alignment:None,calibration:Value::Null});Some(self.slots.len()-1)
+        self.slots.push(Slot{path,hdu,image:None,preview:None,view:Value::Null,apertures:vec![],texture:None,zoom:1.,pan:Vec2::ZERO,fit:true,touched:0,overlay,revision:1,alignment:None,calibration:Value::Null});Some(self.slots.len()-1)
     }
     pub fn remember(&mut self,image:Arc<FitsImage>,view:Value,apertures:Vec<Aperture>){
-        if let Some(index)=self.add(image.info.path.clone(),Some(image.info.hdu)){let slot=&mut self.slots[index];if slot.image.as_ref().is_none_or(|old|!Arc::ptr_eq(old,&image)){slot.revision+=1;slot.alignment=None;slot.calibration=Value::Null;}slot.hdu=Some(image.info.hdu);slot.image=Some(image);slot.texture=None;slot.view=view;slot.apertures=apertures;self.clock+=1;slot.touched=self.clock;self.selected=Some(index);}self.trim();
+        if let Some(index)=self.add(image.info.path.clone(),Some(image.info.hdu)){let slot=&mut self.slots[index];if slot.image.as_ref().is_none_or(|old|!Arc::ptr_eq(old,&image)){slot.revision+=1;slot.alignment=None;slot.preview=None;slot.calibration=Value::Null;}slot.hdu=Some(image.info.hdu);slot.image=Some(image);slot.texture=None;slot.view=view;slot.apertures=apertures;self.clock+=1;slot.touched=self.clock;self.selected=Some(index);}self.trim();
     }
-    pub fn selection(&mut self,index:usize)->Option<Selection>{let slot=self.slots.get_mut(index)?;self.clock+=1;slot.touched=self.clock;self.selected=Some(index);Some(Selection{path:slot.path.clone(),hdu:slot.hdu,image:slot.image.clone(),view:slot.view.clone(),apertures:slot.apertures.clone()})}
+    pub fn remember_preview(&mut self,preview:Option<Arc<FitsImage>>){if let Some(slot)=self.selected.and_then(|i|self.slots.get_mut(i)){if slot.image.as_ref().is_some_and(|i|matches!(i.pixels,fitsviewer_core::RawPixels::Unavailable)){slot.preview=preview;}}self.trim();}
+    pub fn selection(&mut self,index:usize)->Option<Selection>{let slot=self.slots.get_mut(index)?;self.clock+=1;slot.touched=self.clock;self.selected=Some(index);Some(Selection{path:slot.path.clone(),hdu:slot.hdu,image:slot.image.clone().filter(|i|!matches!(i.pixels,fitsviewer_core::RawPixels::Unavailable)),view:slot.view.clone(),apertures:slot.apertures.clone()})}
     pub fn configure_spectrum_overlay(&mut self,index:usize,params:&Value)->Result<(),String>{
         let slot=self.slots.get(index).ok_or("Unknown view index")?;
         let mut next=slot.overlay.clone();
@@ -99,9 +100,10 @@ impl Workspace {
         self.ordered_indices().into_iter().filter_map(|index|{
             let slot=&self.slots[index];let image=slot.image.as_ref()?;
             if !slot.overlay.enabled || slot.overlay.hidden || image.spectrum.is_some() || Self::layer_is_active(slot,active){return None;}
+            if image.pixels.is_empty() && slot.preview.is_none(){return None;}
             let transform=slot.alignment.as_ref().filter(|alignment|alignment.reference==active.info.path && alignment.hdu==active.info.hdu)
                 .map(|alignment|alignment.matrix).unwrap_or([[1.,0.,0.],[0.,1.,0.]]);
-            Some(ImageLayer{index,image:image.clone(),label:if slot.overlay.label.is_empty(){slot.path.rsplit(['/', '\\']).next().unwrap_or(&slot.path).into()}else{slot.overlay.label.clone()},
+            Some(ImageLayer{index,image:image.clone(),preview:slot.preview.clone(),label:if slot.overlay.label.is_empty(){slot.path.rsplit(['/', '\\']).next().unwrap_or(&slot.path).into()}else{slot.overlay.label.clone()},
                 opacity:slot.overlay.opacity,scale:slot.overlay.scale,offset:slot.overlay.offset,transform,revision:slot.revision,order:slot.overlay.order})
         }).take(8).collect()
     }
@@ -150,9 +152,26 @@ impl Workspace {
     }
     pub fn image_layers_ui(&mut self,ui:&mut egui::Ui,active:Option<&FitsImage>,busy:bool)->Option<Value>{
         use crate::i18n::t;
-        egui::CollapsingHeader::new(t("Field-star relative calibration")).id_salt("layer-flux-options").show(ui,|ui|{
-            ui.horizontal(|ui|{ui.label(t("Matching coordinates"));egui::ComboBox::from_id_salt("layer-match-mode").selected_text(t(&self.flux_mode)).show_ui(ui,|ui|{for mode in ["wcs","pixel"]{ui.selectable_value(&mut self.flux_mode,mode.into(),t(mode));}});});
-            if self.flux_mode=="pixel"{ui.checkbox(&mut self.flux_aligned,t("I confirm the pixel grids are already aligned"));}
+        let mut reference=self.selected;let old_reference=reference;
+        ui.label(t("Reference image"));
+        egui::ComboBox::from_id_salt("brightness-reference").selected_text(reference.and_then(|i|self.slots.get(i)).map(|s|s.path.rsplit(['/', '\\']).next().unwrap_or(&s.path)).unwrap_or(t("Open a reference image"))).show_ui(ui,|ui|{
+            for (index,slot) in self.slots.iter().enumerate().filter(|(_,s)|s.image.as_ref().is_some_and(|image|image.spectrum.is_none())){ui.selectable_value(&mut reference,Some(index),slot.path.rsplit(['/', '\\']).next().unwrap_or(&slot.path));}
+        });
+        if reference!=old_reference{self.pending_selection=reference;}
+        if self.flux_target.is_none_or(|index|Some(index)==self.selected || self.slots.get(index).is_none_or(|s|s.image.as_ref().is_none_or(|image|image.spectrum.is_some()))){self.flux_target=self.slots.iter().enumerate().find(|(i,s)|Some(*i)!=self.selected && s.image.as_ref().is_some_and(|image|image.spectrum.is_none())).map(|(i,_)|i);}
+        ui.label(t("Target image"));
+        egui::ComboBox::from_id_salt("brightness-target").selected_text(self.flux_target.and_then(|i|self.slots.get(i)).map(|s|s.path.rsplit(['/', '\\']).next().unwrap_or(&s.path)).unwrap_or(t("Load a second image first"))).show_ui(ui,|ui|{
+            for (index,slot) in self.slots.iter().enumerate().filter(|(i,s)|Some(*i)!=self.selected && s.image.as_ref().is_some_and(|image|image.spectrum.is_none())){ui.selectable_value(&mut self.flux_target,Some(index),slot.path.rsplit(['/', '\\']).next().unwrap_or(&slot.path));}
+        });
+        let ready=!busy && reference==old_reference && self.flux_target.is_some() && active.is_some() && (self.flux_mode!="pixel" || self.flux_aligned);
+        let target=if ui.add_enabled(ready,egui::Button::new(t("▶ Match image brightness"))).clicked(){self.flux_target}else{None};
+        ui.horizontal_wrapped(|ui|{ui.label(t("Matching coordinates"));egui::ComboBox::from_id_salt("layer-match-mode").selected_text(t(&self.flux_mode)).show_ui(ui,|ui|{for mode in ["wcs","pixel"]{ui.selectable_value(&mut self.flux_mode,mode.into(),t(mode));}});});
+        if self.flux_mode=="pixel"{ui.checkbox(&mut self.flux_aligned,t("I confirm the pixel grids are already aligned"));}
+        ui.weak(t("Relative native-count scaling from matched stars; no absolute zero point or exposure correction."));
+        if self.flux_allow_filter{ui.colored_label(egui::Color32::YELLOW,t("Different / unverified filters allowed: display approximation only."));}
+        if let Some(slot)=self.flux_target.and_then(|index|self.slots.get(index)){if !slot.calibration.is_null(){ui.label(format!("{} · {} {} · {} {}",slot.calibration["status"].as_str().unwrap_or("unknown"),slot.calibration["used"],t("stars"),t("Relative scale"),slot.calibration["factor"]));}}
+        if !self.message.is_empty(){ui.label(t(&self.message));}
+        egui::CollapsingHeader::new(t("Advanced matching settings")).id_salt("layer-flux-options").show(ui,|ui|{
             ui.checkbox(&mut self.flux_allow_filter,t("Allow unverified or different filters (display approximation)"));
             egui::Grid::new("field-star-parameters").num_columns(2).spacing(egui::vec2(8.,6.)).show(ui,|ui|{
                 for (key,label,minimum,maximum) in [("fwhm","FWHM (pixels)",1.,30.),("aperture_radius","Aperture radius",1.,64.),("annulus_inner","Background inner radius",1.,127.),("annulus_outer","Background outer radius",2.,128.),("threshold_sigma","Detection threshold sigma",3.,30.),("match_radius","Matching radius",0.1,30.)]{
@@ -161,13 +180,12 @@ impl Workspace {
                 let mut minimum=self.flux_options["min_matches"].as_u64().unwrap_or(5) as usize;ui.label(t("Minimum matched stars"));if ui.add(egui::DragValue::new(&mut minimum).range(3..=200)).changed(){self.flux_options["min_matches"]=json!(minimum);}ui.end_row();
             });
         });
-        let target=self.layer_rows(ui,false,busy);
-        let request=target.and_then(|index|match active.map(|active|self.image_flux_request(index,active,&json!({}))){Some(Ok(params))=>Some(params),Some(Err(error))=>{self.message=error;None},None=>None});
-        if !self.message.is_empty(){ui.label(t(&self.message));}request
+        ui.separator();self.layer_rows(ui,false,busy);
+        target.and_then(|index|match active.map(|active|self.image_flux_request(index,active,&json!({}))){Some(Ok(params))=>Some(params),Some(Err(error))=>{self.message=error;None},None=>None})
     }
-    fn layer_rows(&mut self,ui:&mut egui::Ui,spectrum:bool,busy:bool)->Option<usize>{
+    fn layer_rows(&mut self,ui:&mut egui::Ui,spectrum:bool,_busy:bool)->Option<usize>{
         use crate::i18n::t;
-        let mut changes=Vec::new();let mut moves=Vec::new();let mut selection=None;let mut match_target=None;
+        let mut changes=Vec::new();let mut moves=Vec::new();let mut selection=None;let match_target=None;
         for index in self.ordered_indices().into_iter().rev(){
             let slot=&self.slots[index];if slot.image.as_ref().is_some_and(|image|image.spectrum.is_some()!=spectrum){continue;}
             let active=Some(index)==self.selected;
@@ -210,7 +228,6 @@ impl Workspace {
                     }
                 });
                 if !spectrum && !active{
-                    if ui.add_enabled(!busy && (self.flux_mode!="pixel" || self.flux_aligned),egui::Button::new(t("Match brightness from field stars"))).clicked(){match_target=Some(index);}
                     if !slot.calibration.is_null(){
                         ui.label(format!("{} · {} {} · {} {:.5}",slot.calibration["status"].as_str().unwrap_or("unknown"),slot.calibration["used"],t("stars"),t("Relative scale"),slot.calibration["factor"].as_f64().unwrap_or(f64::NAN)));
                         egui::CollapsingHeader::new(t("Calibration details")).id_salt("layer-calibration-details").show(ui,|ui|{
@@ -308,6 +325,7 @@ impl Workspace {
         let Some(index)=self.secondary.filter(|i|*i<self.slots.len())else{ui.label(crate::i18n::t("Choose comparison image"));return;};
         let slot=&mut self.slots[index];let Some(image)=slot.image.as_ref()else{ui.label(&slot.path);if ui.button(crate::i18n::t("Select as reference / load layer")).clicked(){self.pending_selection=Some(index);}return;};
         if image.spectrum.is_some(){self.message="Spectrum comparison uses separate tabs; image view linking needs two-dimensional images.".into();return;}
+        let display=if image.pixels.is_empty(){let Some(preview)=slot.preview.as_deref() else{ui.label(crate::i18n::t("Select as reference / load layer"));return;};preview}else{image.as_ref()};
         if self.link=="Sky" && self.last_link.is_none_or(|v|(v[0]-center[0]).abs()>0.1 || (v[1]-center[1]).abs()>0.1 || (v[2]-f64::from(zoom)).abs()>0.001){
             self.last_link=Some([center[0],center[1],f64::from(zoom)]);
             client.request(ctx,generation,"view_link",json!({"source_path":main.info.path,"source_hdu":main.info.hdu,"source_wcs_override":source_wcs,"wcs_override":slot.view["wcs_override"],"path":slot.path,"hdu":slot.hdu,"center":center}));self.linked_center=None;
@@ -321,12 +339,12 @@ impl Workspace {
                 ([(image.info.width as f64-1.)/2.-f64::from(slot.pan.x/slot.zoom),(image.info.height as f64-1.)/2.+f64::from(slot.pan.y/slot.zoom)],slot.zoom)
             };
             if slot.texture.is_none(){
-                let stats=Statistics::new(image);let (lo,hi)=stats.bounds(fitsviewer_core::Limits::ZScale);
+                let stats=Statistics::new(display);let (lo,hi)=stats.bounds(fitsviewer_core::Limits::ZScale);
                 let low=slot.view["low"].as_f64().unwrap_or(lo);let high=slot.view["high"].as_f64().unwrap_or(hi);
                 let stretch=slot.view["stretch"].as_str().and_then(Stretch::parse).unwrap_or(Stretch::Linear);
                 let render_options:RenderOptions=serde_json::from_value(slot.view["render"].clone()).unwrap_or_default();
-                let bytes=render(image,low,high,stretch,slot.view["invert"].as_bool().unwrap_or(false),DisplayTone{bias:slot.view["bias"].as_f64().unwrap_or(0.5),contrast:slot.view["contrast"].as_f64().unwrap_or(1.)},&render_options);
-                slot.texture=Some(ctx.load_texture(format!("compare-{index}"),egui::ColorImage::from_rgba_unmultiplied([image.info.width,image.info.height],&bytes),egui::TextureOptions::NEAREST));
+                let bytes=render(display,low,high,stretch,slot.view["invert"].as_bool().unwrap_or(false),DisplayTone{bias:slot.view["bias"].as_f64().unwrap_or(0.5),contrast:slot.view["contrast"].as_f64().unwrap_or(1.)},&render_options);
+                slot.texture=Some(ctx.load_texture(format!("compare-{index}"),egui::ColorImage::from_rgba_unmultiplied([display.info.width,display.info.height],&bytes),egui::TextureOptions::NEAREST));
             }
             if let Some(texture)=&slot.texture{
                 let size=Vec2::new(image.info.width as f32,image.info.height as f32)*view_zoom;

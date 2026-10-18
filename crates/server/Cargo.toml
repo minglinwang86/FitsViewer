@@ -11,6 +11,7 @@ pro = ["fitsviewer-web?/pro"]
 
 [dependencies]
 fitsviewer-core = { path = "../core" }
+flate2 = "1"
 fitsviewer-web = { path = "../viewer", default-features = false, optional = true }
 eframe = { optional = true, version = "=0.32.3", default-features = false, features = ["default_fonts", "glow", "x11"] }
 axum = "0.8"

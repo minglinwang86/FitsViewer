@@ -181,7 +181,7 @@ class _Data:
             raise ValueError('region must stay within the source wavelength range')
         if not meta.get('y_unit'):
             self.warnings.append('Flux unit is unknown: integrals retain source flux units; no physical flux calibration is inferred.')
-        self.warnings.append('Air/vacuum is a source-axis interpretation only; no wavelength samples are converted or barycentrically corrected.')
+        self.warnings.append('Source samples remain unchanged; derived rest coordinates convert a declared air axis to vacuum. No barycentric correction is applied.')
 
     def segments(self, valid=None):
         np = self.np
@@ -286,6 +286,27 @@ def _continuum(data):
     return series, {'status': 'ok', 'continuum': info}
 
 
+def _rest_coordinates(data, values):
+    """Match the display's air -> vacuum -> rest transform in the selected unit.
+
+    与 Rust AxisTransform 相同：先在观测系内反解 Ciddor，再应用红移；不外推。
+    """
+    np, p = data.np, data.p
+    source = np.asarray(values, dtype=float)
+    if not p['air']:
+        return source/(1.+p['redshift'])
+    factor = {'Angstrom': 1., 'nm': 10., 'um': 10000.}[p['unit']]
+    wave = source*factor
+    vacuum = wave*1.00028
+    with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+        for _ in range(8):
+            supported = np.isfinite(vacuum) & (vacuum >= 2000.) & (vacuum <= 20000.)
+            s2 = (10000./np.where(supported, vacuum, np.nan))**2
+            air = vacuum/(1.+0.05792105/(238.0185-s2)+0.00167917/(57.362-s2))
+            vacuum = np.where(supported, vacuum*(wave/air), np.nan)
+    return vacuum/(1.+p['redshift'])/factor
+
+
 def _metrics(data, y, continuum, indices):
     np, p = data.np, data.p
     x, flux, cont = data.x[indices], y[indices], continuum[indices]
@@ -304,7 +325,7 @@ def _metrics(data, y, continuum, indices):
     center_status = 'ok' if center is not None and x[0] <= center <= x[-1] else 'mixed_sign_or_zero_area'
     if center_status != 'ok':
         center = None
-    width, width_status = None, 'no_positive_peak'
+    width, width_rest, width_status = None, None, 'no_positive_peak'
     peak = int(np.argmax(profile)); half = float(profile[peak]/2.)
     above = profile >= half
     if profile[peak] > 0:
@@ -319,20 +340,43 @@ def _metrics(data, y, continuum, indices):
             xl = x[left-1] + (half-profile[left-1])/(profile[left]-profile[left-1])*(x[left]-x[left-1])
             xr = x[right] + (half-profile[right])/(profile[right+1]-profile[right])*(x[right+1]-x[right])
             width = float(xr-xl); width_status = 'ok'
+            if p['air']:
+                endpoints = _rest_coordinates(data, [xl, xr])
+                if np.all(np.isfinite(endpoints)):
+                    width_rest = float(endpoints[1]-endpoints[0])
+            else:
+                width_rest = width/(1.+p['redshift'])
     ew = float(np.dot(weights, 1.-flux/cont)) if np.all(np.isfinite(cont) & (cont > 0)) else None
     minimum = int(np.argmin(flux))
     zscale = 1.+p['redshift']
+    rest_x = _rest_coordinates(data, x)
+    minimum_rest = float(rest_x[minimum]) if np.isfinite(rest_x[minimum]) else None
+    center_rest = None if center is None else float(_rest_coordinates(data, [center])[0])
+    if center_rest is not None and not math.isfinite(center_rest):
+        center_rest = None
+    ew_rest = None
+    if ew is not None:
+        if not p['air']:
+            ew_rest = ew/zscale
+        elif np.all(np.isfinite(rest_x)):
+            # Widths and EW are differences/integrals, not wavelengths to convert.
+            # 宽度转两个端点；EW 使用转换后的坐标间隔，不能把 EW 当作波长反解。
+            rest_dx = np.diff(rest_x)
+            rest_weights = np.zeros(len(x))
+            rest_weights[:-1] += rest_dx/2.; rest_weights[1:] += rest_dx/2.
+            ew_rest = float(np.dot(rest_weights, 1.-flux/cont))
+    unsupported = 'unsupported_air_wavelength'
     values = [
         ('equivalent_width_observed', 'pEW / EW observed', ew, p['unit'], 'ok' if ew is not None else 'undefined_continuum'),
-        ('equivalent_width_rest', 'pEW / EW rest', None if ew is None else ew/zscale, p['unit'], 'ok' if ew is not None else 'undefined_continuum'),
+        ('equivalent_width_rest', 'pEW / EW rest', ew_rest, p['unit'], 'undefined_continuum' if ew is None else ('ok' if ew_rest is not None else unsupported)),
         ('net_flux_observed', 'Net integrated flux observed', net, data.flux_unit+' * '+p['unit'], 'ok'),
         ('minimum_wavelength_observed', 'Original-sample minimum wavelength observed', float(x[minimum]), p['unit'], 'ok'),
-        ('minimum_wavelength_rest', 'Original-sample minimum wavelength rest', float(x[minimum]/zscale), p['unit'], 'ok'),
+        ('minimum_wavelength_rest', 'Original-sample minimum wavelength rest', minimum_rest, p['unit'], 'ok' if minimum_rest is not None else unsupported),
         ('minimum_flux', 'Original-sample minimum flux', float(flux[minimum]), data.flux_unit, 'ok'),
         ('centroid_observed', 'Continuum-subtracted centroid observed', center, p['unit'], center_status),
-        ('centroid_rest', 'Continuum-subtracted centroid rest', None if center is None else center/zscale, p['unit'], center_status),
+        ('centroid_rest', 'Continuum-subtracted centroid rest', center_rest, p['unit'], center_status if center is None or center_rest is not None else unsupported),
         ('fwhm_observed', 'Observed profile FWHM', width, p['unit'], width_status),
-        ('fwhm_rest', 'Rest-coordinate profile FWHM', None if width is None else width/zscale, p['unit'], width_status),
+        ('fwhm_rest', 'Rest-coordinate profile FWHM', width_rest, p['unit'], width_status if width is None or width_rest is not None else unsupported),
     ]
     return [{'key': k, 'name': n, 'value': v, 'unit': u, 'status': s,
              'uncertainty': None, 'uncertainty_status': 'not_available'} for k, n, v, u, s in values]
@@ -386,14 +430,15 @@ def _measure(data):
         for row in metrics:
             row['uncertainty_status'] = state
         data.warnings.append('No formal measurement uncertainty: Monte Carlo is disabled or valid positive source sigma is missing in the line/baseline windows.')
-    data.warnings.append('EW absorption is positive. Rest values change the wavelength coordinate only; integrated flux remains an observed-frame quantity.')
+    data.warnings.append('EW absorption is positive. Rest positions, widths and EW use vacuum coordinates divided by 1+z; air conversion is limited to observed vacuum 2000-20000 Angstrom. Integrated flux remains an observed-frame quantity.')
     data.warnings.append('Minimum wavelength is an original-sample flux minimum, not an interpolated velocity or a species identification; FWHM includes instrumental broadening.')
     series, _ = _continuum(data)
     return series, {'status': 'ok', 'metrics': metrics, 'region': p['region'], 'samples': len(indices),
                     'sample_range': [float(data.x[indices[0]]), float(data.x[indices[-1]])],
                     'minimum_source_index': int(data.original_indices[indices[int(np.argmin(data.y[indices]))]]),
                     'integration': 'trapezoid on complete native sample span; no boundary extrapolation',
-                    'uncertainty': uncertainty, 'continuum': info}
+                    'uncertainty': uncertainty, 'continuum': info,
+                    'observed_wavelength_medium': 'air' if p['air'] else 'vacuum', 'rest_wavelength_medium': 'vacuum'}
 
 
 def _smooth(data):
@@ -579,4 +624,4 @@ def analyze(worker, params):
                       'source_uncertainty_kind': data.meta.get('uncertainty_kind', ''),
                       'display_reduction': 'only derived preview arrays; scientific computation uses full source arrays',
                       'algorithm_backend': 'NumPy/SciPy; no embedded packages; no flux unit conversion',
-                      'frame': 'source frame unchanged; rest coordinates use user redshift only'}})
+                      'frame': 'source frame unchanged; rest coordinates use vacuum wavelengths and user redshift; no flux-density conversion'}})

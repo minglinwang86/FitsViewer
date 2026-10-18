@@ -4,9 +4,9 @@ The viewer reads ordinary/tiled 2D FITS images and basic spectra. It keeps typed
 
 | API | Contract |
 |---|---|
-| MAX_PIXELS / MAX_FILE_BYTES | 32 Mi pixels and 512 MiB; gzip output is capped during decompression. |
+| MAX_PIXELS / MAX_FILE_BYTES | Full-array reader limits: 32 Mi pixels and 512 MiB; gzip output is capped during decompression. HTTP seeked image access has separate bounded preparation and tile contracts below. |
 | HduInfo / ImageInfo | HDU index/name/type/axes and image dimensions, BITPIX, BSCALE, BZERO, BLANK, header text. |
-| RawPixels | U8, I16, I32, I64, F32, F64 owned arrays. |
+| RawPixels | U8, I16, I32, I64, F32, F64 owned arrays; Unavailable explicitly represents a metadata-only HTTP image without original client samples. |
 | RawPixels::len / is_empty / raw_string | Storage length, emptiness and exact textual storage value. raw_string requires an in-bounds index. |
 | FitsImage::physical | Apply BSCALE/BZERO once; None for BLANK, non-finite input or overflow. Requires an in-bounds index. |
 | FitsImage::to_packet / from_packet | Length-prefixed JSON metadata plus little-endian typed pixels. Spectra append f64 coordinates and optional standard deviations; metadata identifies these arrays. Reject invalid lengths/types/dimensions. Preserve raw i64/f64 and NaNs. |
@@ -23,16 +23,52 @@ The viewer reads ordinary/tiled 2D FITS images and basic spectra. It keeps typed
 | FitsApp::new / from_image | Initialize an HTTP/path-backed viewer, or a viewer with an already loaded FitsImage. |
 | start / stop | WASM entry: canvas, API base URL, file path, optional token and HDU, CJK font bytes, optional initial_mode. Resolve explicit mode before the first frame. Returns a JS error if graphics startup fails. stop destroys the managed WebRunner and its app, textures, frame callback and event subscriptions. Document teardown calls it before detaching the iframe; the page also stops polling and loses its WebGL context. |
 | setup_server | Python configuration for the supervised Rust service in Jupyter Server Proxy. |
-| fitsviewer console entry | Run the wheel's bundled ELF program with packaged web assets; use writable state scoped to the Python environment. Warm the same environment's Jupyter service when available. |
+| fitsviewer console entry | Run the wheel's bundled platform executable with packaged web assets; use writable state scoped to the Python environment. Warm the same environment's Jupyter service when available. |
 | CLI management | status/ports inspect live services without starting them; ports set saves per-environment future-start settings; tunnel prints a client-side SSH command. |
 | Jupyter CLI | jupyter start reuses a matching linked server or starts a separate one; explicit busy ports fail without stopping another server. jupyter url prints the login token only on request. |
 | Environment installer | install selects exactly one Python/prefix/Conda target, preserves venv Python symlinks, validates Python/Jupyter compatibility, and runs target pip. A terminal without a target offers interactive selection. --check is read-only. --default-viewer yes/no selects the Jupyter default and --desktop-default yes/no changes the current user's desktop association. Complete installed resources can reconstruct a platform wheel without the original download. Success output reports the target environment, ports, binding, defaults, and shell-quoted binding commands. Target inspection excludes caller FitsViewer/Python development overrides. |
 | Default-viewer commands | defaults status inspects preferences; defaults set --jupyter yes/no saves the per-environment factory preference. Refresh JupyterLab to apply it; Open With remains registered. --desktop yes registers the native launcher, and no restores recorded previous defaults. |
-| Desktop commands | desktop install registers per-user FITS MIME types and a launcher using the selected environment's absolute fitsviewer path; --no-default keeps an Open With entry. desktop status inspects; desktop remove restores previous defaults and removes owned files. Requires xdg-utils/shared-mime-info. |
+| Desktop commands | desktop install registers the per-user platform launcher using the selected environment's absolute fitsviewer path; --no-default keeps an Open With entry. desktop status inspects; desktop remove restores recorded defaults and removes owned files. Linux requires xdg-utils/shared-mime-info; Windows uses the bundled native association handler and respects protected system defaults. macOS has its own platform handler. Program icons do not replace associated data-file icons. |
 | Jupyter server extension | Automatically bind the proxy command to ServerApp.root_dir and base_url. Record only the PID/runtime directory for CLI discovery; authentication stays in Jupyter's own runtime file. |
 | show | Python show(path, hdu=None, height=650, base_url=None, mode=None, view=None) returns IPython IFrame; invalid height/HDU raises ValueError. |
 
 HTTP: GET /api/health; GET /api/image?path=...&hdu=... (optional zero-based xcol/ycol/ecol and no_error=true for spectra); POST /api/open with JSON path/hdu and optional session; GET /api/requests?after=... . Standalone APIs require the runtime token. Jupyter mode uses authenticated same-origin proxy access.
+
+## 0.1.6 progressive HTTP images
+
+The shared HTTP viewer negotiates metadata before requesting pixels. Image query
+parameters are flat URI fields: `path`, optional zero-based `hdu`, `xcol`, `ycol`,
+`ecol`, `ehdu`, `ekind`, `no_error`, and lifecycle `session` / `generation`.
+The selected uncertainty column and uncertainty HDU are mutually exclusive.
+
+| Route | Result and conditions |
+| --- | --- |
+| `GET /api/image/metadata` | JSON manifest: `schema`, original `info`, `source_version`, complete decoded `full_packet_bytes`, `threshold_bytes`, `transport`, `compression`, `hdus_complete`, statistics/sample flag and `preview_level`. |
+| `GET /api/image/full` | Original typed packet, only when its complete size is at most `20_000_000` bytes. Requires the manifest's `version=source_version`. |
+| `GET /api/image/tile` | Numeric display packet, at most 256×256. Seek-read tiles retain the stored type and BSCALE/BZERO/BLANK metadata; the decoded fallback returns physical F64 samples with identity scaling. Requires `version`; zero-based tile `x/y` and decimation `level` default to zero. Level 0 is the original sampling grid; higher levels select display samples, not flux-conserving scientific bins. |
+| `GET /api/image/pixel` | JSON original pixel value and raw storage string, original-sample flag and source version. Here `x/y` are zero-based original pixel coordinates, not tile indices. Requires `version`. |
+
+Tile packets omit redundant original headers/HDU lists. Their dimensions describe
+the tile only; geometry, WCS and apertures use the manifest's original dimensions.
+Metadata-only `RawPixels::Unavailable` cannot be serialized as original samples or
+used for full-image measurement/rendering. Native direct-file loading retains the
+full-reader limits. HTTP seeked ordinary FITS can exceed that full-array path;
+gzip and tile compression still have explicit preparation/decode bounds.
+
+Source-version mismatches return a conflict and require metadata reload. Malformed
+URI types return 400. Unsupported data or preparation limits produce an explicit
+error, rather than a silent empty image. Client cancellation and late-response
+guards apply through reading the body. The host admits at most sixteen concurrent
+image operations, serializes preparation I/O and bounds its cache/spool; see
+[remote viewing](REMOTE_VIEWING.md) for component budgets and limitations.
+
+The `fver` broker supplies separate scoped file, browser, helper and download
+credentials. They are not substitutes for the server control credential, arbitrary
+file-root access or environment-install permission. The legacy full-image/raw-file
+routes must not bypass the scoped progressive path. See [SSH viewing](REMOTE_VIEWING.md)
+for commands, pairing, request states and forwarding requirements.
+
+## Spectrum mappings and existing interfaces
 
 Spectrum image queries additionally accept zero-based `ehdu` and
 `ekind=auto|sigma|variance|ivar`. Sessions retain `view.load_options`, including
@@ -55,6 +91,7 @@ The 0.1.5rc1 Full release includes the following bounded interfaces:
 | `aperture.select` / `aperture.delete` | Select a zero-based `index`, or delete the current selection (optional `index`). Requires an image; spectra are rejected. Deletion preserves other apertures and supports UI Undo/Redo. |
 | `aperture.resize` / `aperture.move` / `aperture.update` | Edit the selection, optionally selecting `index` first. Resize takes `radius` in pixels. Move takes a zero-based `center: [x,y]`. Update takes both and optionally `sky: [inner,outer]`. Radius is 0.1–9999.8 pixels; center is clamped to the image. Existing geometry/results for other apertures remain unchanged. Changed measurements must be recomputed. |
 | `GET /api/artifact?id=...` | Authenticated download of an owned derived artifact. Page teardown releases its ownership. |
+| Science `persist_download` / `persist_cancel` | Full trusted PRO sessions only, with the current owner/document/role epoch. Persist an owned validated FITS artifact beside the declared original source using a unique no-overwrite commit; return `persistent:true` and `saved_path`, or an explicit temporary-artifact fallback. Cancellation marks the matching in-progress copy; its acknowledgement is not completion. A committed persistent file is outside artifact cleanup ownership. File-only remote capabilities reject both operations. |
 | `aperture.template` / `aperture.template_load` | PRO template paste; `preview:true` stages it. `aperture.preview.apply/cancel` confirms or discards staged apertures. Target values are measured again. |
 | `pro.select_row` / `annotation.set` | PRO row focus (zero-based row) and bounded pixel/sky/canvas annotations. Scientific column names are preserved. |
 | `spectral.lines` | PRO spectrum overlays only. `unit` is Angstrom/nm/um, `redshift` is finite with -1 < z <= 20, `line_width` is 0.5–5 display pixels, `tolerance` is 0.01–1000 observed Angstrom. `visible` selects reference names; `air` and `show_candidates` are booleans. Invalid updates are rejected atomically. |

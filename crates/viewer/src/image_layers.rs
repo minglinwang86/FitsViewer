@@ -3,6 +3,7 @@
 use eframe::egui::{self,Color32,Pos2,Rect,TextureId};
 use fitsviewer_core::{DisplayTone,display::{ScaleMapping,RenderOptions,MaskStyle}};
 use crate::multiview::ImageLayer;
+use crate::image_transform::ImageTransform;
 
 pub const MAX_PIXELS:usize=1024*1024;
 pub const MAX_LAYERS:usize=8;
@@ -20,7 +21,7 @@ pub fn preview_size(width:usize,height:usize)->[usize;2]{
     size
 }
 fn rgba(layer:&ImageLayer,size:[usize;2],transfer:&Transfer<'_>)->Vec<u8>{
-    let image=&layer.image;let mut rgba=Vec::with_capacity(size[0]*size[1]*4);
+    let image=layer.preview.as_deref().unwrap_or(layer.image.as_ref());let mut rgba=Vec::with_capacity(size[0]*size[1]*4);
     for screen_y in 0..size[1]{
         let y=image.info.height-1-(((screen_y as f64+0.5)*image.info.height as f64/size[1] as f64).floor() as usize).min(image.info.height-1);
         for preview_x in 0..size[0]{
@@ -40,11 +41,11 @@ pub fn screen_point(rect:Rect,zoom:f32,transform:[[f64;3];2],point:[f64;2])->Opt
     let point=Pos2::new(rect.left()+(x+0.5) as f32*zoom,rect.bottom()-(y+0.5) as f32*zoom);
     point.is_finite().then_some(point)
 }
-fn draw_layer(painter:&egui::Painter,texture:TextureId,layer:&ImageLayer,rect:Rect,zoom:f32){
+fn draw_layer(painter:&egui::Painter,texture:TextureId,layer:&ImageLayer,transform:ImageTransform){
     if !layer.opacity.is_finite() || layer.opacity<=0.{return;}
     let width=layer.image.info.width as f64;let height=layer.image.info.height as f64;
     let coordinates=[[-0.5,height-0.5],[width-0.5,height-0.5],[width-0.5,-0.5],[-0.5,-0.5]];
-    let points=coordinates.map(|point|screen_point(rect,zoom,layer.transform,point));
+    let points=coordinates.map(|point|{let affine=layer.transform;let p=transform.pixel_to_screen([affine[0][0]*point[0]+affine[0][1]*point[1]+affine[0][2],affine[1][0]*point[0]+affine[1][1]*point[1]+affine[1][2]]);p.is_finite().then_some(p)});
     let [Some(a),Some(b),Some(c),Some(d)]=points else{return;};
     let color=Color32::from_white_alpha((layer.opacity.clamp(0.,1.)*255.).round() as u8);
     let mut mesh=egui::Mesh::with_texture(texture);
@@ -55,23 +56,30 @@ impl Renderer{
     pub fn clear(&mut self){self.textures.clear();self.transfer_key.clear();}
     pub fn summary(&self)->serde_json::Value{serde_json::json!({"textures":self.textures.len(),"display_pixels":self.textures.iter().map(|entry|entry.pixels).sum::<usize>(),"rgba_bytes":self.textures.iter().map(|entry|entry.pixels*4).sum::<usize>(),"builds":self.builds,"per_layer_pixel_budget":MAX_PIXELS})}
     pub fn paint(&mut self,ctx:&egui::Context,painter:&egui::Painter,base:TextureId,rect:Rect,zoom:f32,source_style:(bool,f32),source_order:i32,layers:&[ImageLayer],transfer:Transfer<'_>){
+        self.paint_transformed(ctx,painter,base,ImageTransform::from_rect(rect,zoom),source_style,source_order,layers,transfer);
+    }
+    pub fn paint_transformed(&mut self,ctx:&egui::Context,painter:&egui::Painter,base:TextureId,transform:ImageTransform,source_style:(bool,f32),source_order:i32,layers:&[ImageLayer],transfer:Transfer<'_>){
+        self.paint_progressive(ctx,painter,transform,source_order,layers,transfer,||{if source_style.0 && source_style.1.is_finite() && source_style.1>0.{transform.paint_texture(painter,base,Color32::from_white_alpha((source_style.1.clamp(0.,1.)*255.).round() as u8));}});
+    }
+    /// The active source may consist of many numeric tiles; ordering stays shared.
+    /// 当前图像可由多个数值图块绘制，仍与普通图层共用排列逻辑。
+    pub fn paint_progressive(&mut self,ctx:&egui::Context,painter:&egui::Painter,transform:ImageTransform,source_order:i32,layers:&[ImageLayer],transfer:Transfer<'_>,mut paint_base:impl FnMut()){
         if self.transfer_key!=transfer.key{self.textures.clear();self.transfer_key=transfer.key.clone();}
         let mut layers=layers.iter().filter(|layer|layer.image.spectrum.is_none() && layer.image.info.width>0 && layer.image.info.height>0 && layer.opacity.is_finite() && layer.opacity>0. && layer.scale.is_finite() && layer.offset.is_finite() && layer.transform.iter().flatten().all(|value|value.is_finite())).take(MAX_LAYERS).collect::<Vec<_>>();
         layers.sort_by_key(|layer|(layer.order,layer.index));
         self.textures.retain(|cached|layers.iter().any(|layer|layer.index==cached.index));
         for layer in &layers{
-            let key=format!("{}:{}:{:p}:{}:{}",layer.image.info.path,layer.image.info.hdu,std::sync::Arc::as_ptr(&layer.image),layer.scale,layer.offset);
+            let key=format!("{}:{}:{:p}:{:?}:{}:{}",layer.image.info.path,layer.image.info.hdu,std::sync::Arc::as_ptr(&layer.image),layer.preview.as_ref().map(std::sync::Arc::as_ptr),layer.scale,layer.offset);
             let existing=self.textures.iter().position(|entry|entry.index==layer.index);
             if existing.is_some_and(|index|self.textures[index].key==key){continue;}
-            let size=preview_size(layer.image.info.width,layer.image.info.height);let pixels=rgba(layer,size,&transfer);
+            let display=layer.preview.as_deref().unwrap_or(layer.image.as_ref());let size=preview_size(display.info.width,display.info.height);let pixels=rgba(layer,size,&transfer);
             let color=egui::ColorImage::from_rgba_unmultiplied(size,&pixels);
             if let Some(index)=existing{let entry=&mut self.textures[index];entry.texture.set(color,egui::TextureOptions::LINEAR);entry.key=key;entry.pixels=size[0]*size[1];}
             else{self.textures.push(Cached{index:layer.index,key,texture:ctx.load_texture(format!("fits-layer-{}",layer.index),color,egui::TextureOptions::LINEAR),pixels:size[0]*size[1]});}self.builds=self.builds.saturating_add(1);
         }
-        let paint_base=||{if source_style.0 && source_style.1.is_finite() && source_style.1>0.{painter.image(base,rect,Rect::from_min_max(Pos2::ZERO,Pos2::new(1.,1.)),Color32::from_white_alpha((source_style.1.clamp(0.,1.)*255.).round() as u8));}};
         let mut base_painted=false;
         for layer in layers{if !base_painted && layer.order>=source_order{paint_base();base_painted=true;}
-            if let Some(entry)=self.textures.iter().find(|entry|entry.index==layer.index){draw_layer(painter,entry.texture.id(),layer,rect,zoom);}
+            if let Some(entry)=self.textures.iter().find(|entry|entry.index==layer.index){draw_layer(painter,entry.texture.id(),layer,transform);}
         }if !base_painted{paint_base();}
     }
 }
@@ -83,13 +91,13 @@ mod tests{
     #[test]fn fits_zero_origin_affine_maps_pixel_edges_without_flip(){let rect=Rect::from_min_max(Pos2::new(10.,20.),Pos2::new(110.,220.));let identity=[[1.,0.,0.],[0.,1.,0.]];assert_eq!(screen_point(rect,2.,identity,[-0.5,-0.5]),Some(rect.left_bottom()));assert_eq!(screen_point(rect,2.,identity,[49.5,99.5]),Some(rect.right_top()));let translated=[[1.,0.,2.],[0.,1.,3.]];assert_eq!(screen_point(rect,2.,translated,[0.,0.]),Some(Pos2::new(15.,213.)));}
     #[test]fn scaling_uses_reference_transfer_and_keeps_source_pixels(){
         let image=std::sync::Arc::new(FitsImage{info:fitsviewer_core::ImageInfo{path:"numeric-image".into(),hdu:0,width:2,height:2,bitpix:-64,bscale:1.,bzero:0.,blank:None,hdus:vec![],header:String::new(),spectrum:None},pixels:fitsviewer_core::RawPixels::F64(vec![1.,2.,f64::NAN,4.]),spectrum:None});
-        let layer=ImageLayer{index:0,image:image.clone(),label:"fixture".into(),opacity:1.,scale:2.,offset:1.,transform:[[1.,0.,0.],[0.,1.,0.]],revision:0,order:0};
+        let layer=ImageLayer{index:0,image:image.clone(),preview:None,label:"fixture".into(),opacity:1.,scale:2.,offset:1.,transform:[[1.,0.,0.],[0.,1.,0.]],revision:0,order:0};
         let options=RenderOptions::default();let mapping=ScaleMapping::new(None,0.,10.,fitsviewer_core::Stretch::Linear,1000.);let transfer=Transfer{mapping:&mapping,invert:false,tone:DisplayTone::default(),options:&options,key:String::new()};
         let pixels=rgba(&layer,[2,2],&transfer);assert_eq!(&pixels[0..4],&[0,0,0,0]);assert_eq!(pixels[4],230);assert_eq!(pixels[8],77);assert_eq!(pixels[12],128);assert_eq!(image.physical(0),Some(1.));assert_eq!(std::sync::Arc::strong_count(&image),2);
     }
     #[test]fn texture_cache_is_bounded_reused_and_released_when_hidden(){
         let image=std::sync::Arc::new(FitsImage{info:fitsviewer_core::ImageInfo{path:"cache-fixture".into(),hdu:0,width:1,height:1,bitpix:-64,bscale:1.,bzero:0.,blank:None,hdus:vec![],header:String::new(),spectrum:None},pixels:fitsviewer_core::RawPixels::F64(vec![1.]),spectrum:None});
-        let mut layers=(0..9).map(|index|ImageLayer{index,image:image.clone(),label:String::new(),opacity:1.,scale:1.,offset:0.,transform:[[1.,0.,0.],[0.,1.,0.]],revision:0,order:index as i32}).collect::<Vec<_>>();
+        let mut layers=(0..9).map(|index|ImageLayer{index,image:image.clone(),preview:None,label:String::new(),opacity:1.,scale:1.,offset:0.,transform:[[1.,0.,0.],[0.,1.,0.]],revision:0,order:index as i32}).collect::<Vec<_>>();
         let ctx=egui::Context::default();let mut renderer=Renderer::default();let options=RenderOptions::default();let mapping=ScaleMapping::new(None,0.,2.,fitsviewer_core::Stretch::Linear,1000.);
         let _=ctx.run(Default::default(),|ctx|{
             let base=ctx.load_texture("base",egui::ColorImage::from_rgba_unmultiplied([1,1],&[255,255,255,255]),Default::default());let painter=ctx.layer_painter(egui::LayerId::new(egui::Order::Background,egui::Id::new("layer-cache-test")));let rect=Rect::from_min_max(Pos2::ZERO,Pos2::new(100.,100.));

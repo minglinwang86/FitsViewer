@@ -20,6 +20,11 @@
 | 多图/多谱/相对亮度 | `multiview.rs`, `image_layers.rs` | `web/python/fitsviewer_image_matching.py` |
 | 光谱交互/分析 | `spectrum.rs`, `spectral_lines.rs`, `spectral_analysis.rs` | `fitsviewer_spectra.py`, `fitsviewer_spectral_analysis.py` |
 | WCS/Gaia | `coordinates.rs` | `fitsviewer_wcs.py`, `fitsviewer_gaia.py`, shared detection/TAP |
+| 真实星表识别/附近观测 | `pro_forms.rs`, `pro.rs` | `fitsviewer_catalogue_services.py`, `fitsviewer_archive_services.py`; retain coverage, service and product semantics |
+| 外部环境与依赖安装 | `environment_ui.rs`, `server/src/environment.rs` | `fitsviewer_environment.py`, `science.rs`, View-role job lifetime |
+| 显示旋转/比例尺/选点 | `image_transform.rs`, `image_display.rs`, `pro_points.rs` | regions/layers/WCS/viewport export; never rotate original arrays |
+| HTTP 大图与精确像素 | `core/src/remote.rs`, `server/src/remote_data.rs` | `viewer/src/remote_image.rs`, browser fetch boundary; decoded-HDU threshold, caches, source versions |
+| 普通 SSH 的独立查看 | `jupyter/fitsviewer/remote.py`, `server/src/remote_broker.rs` | `remote_native.rs`, `remote_sources.rs`, `web/remote.js`, `scripts/check_remote.py`; scopes and pairing never share master credentials |
 | 孔径测光 | `regions_ui.rs`, `core/src/regions.rs` | bridge `measure`, optional `fitsviewer_measure.py` |
 | CLI/API/worker | `server/src/main.rs`, `science.rs` | `jupyter/fitsviewer/cli.py`, `scientific.py` |
 | Lab 双击、关闭释放 | `jupyter/src/index.ts` | Python `server.py`, shared viewer `release_view` |
@@ -91,6 +96,33 @@ Arc、WASM 和纹理资源；进程 RSS 不立即下降不等于仍持有对象�
 科研资源的归属、generation/epoch、租约、产物移交和进程退出边界见
 [RESOURCE_LIFECYCLE.md](RESOURCE_LIFECYCLE.md)。不要将 worker 创建直接放回短命请求线程：
 Linux 父线程退出也可能触发 parent-death signal；稳定创建线程必须存活到 worker 已回收。
+
+远程图块的内部坐标仍是原图零基像素。不得把图块宽高当作原图宽高做孔径、WCS 或
+图层配准。低分辨率预览只供绘制/抽样统计，精确读数调用原始 pixel 接口，测量调用
+原始源文件。轮廓掩膜要检查相邻图块，不能把每个 256 像素块的边界画成物理轮廓。
+修改 packet 阈值时同时检查元数据、存储类型及光谱坐标/误差数组；不得按 `.gz` 文件
+大小判断传输路径。浏览器取消要覆盖响应体读取，不能收到 headers 后就移除取消器。
+
+环境选项不是 PRO 工具页。依赖任务从启动到 status/cancel 都属于 `view`，不要隐式
+取得 PRO 租约；收回另一个窗口的租约不能误杀它。安装结果要先交付/移交日志，再允许
+空闲 worker 退出。静态 mock 通过不能证明真实 venv 的安装、符号链接或进程回收通过。
+
+`fver` 修改必须检查 control / pairing / browser / helper / artifact 能力分离、一次性票据、
+内外层生命周期字段一致、文件身份、替换源路径、迟到 ACK、队列满与取消。不要仅修新
+图块 API 而保留可绕过预算的旧完整图像端点。普通 SSH 本身不能控制本机浏览器；首次
+URL 与可选本机助手各有职责，真实 HTTPS 与 SSH 内的 HTTP 也要分别描述。
+
+巡天检索的面积比例是“候选天区面积 / 当前图像天区面积”，不是巡天总面积或文件大小。
+主列表优先 40%–150%，排除超过 150% 的产品；当前有界响应没有合格产品时才展示低于
+40% 的部分结果。另算真实相交面积，不能把接触一个角落写成全覆盖。RA 跨零点、极区、
+畸变 WCS、未知投影与 DataLink 都有独立边界；几何未知只放诊断。HiPS 重采样切图不是
+原始曝光，不得混淆来源。新增 Python helper 必须同步模块资源清单。
+
+下载与保存有两个阶段：Python 只写 owned cache；Rust 校验产物、文档和 PRO epoch 后
+向原文件目录唯一临时路径复制，以不覆盖的原子链接提交，再加载新标签。不能把持久
+文件注册为待清理缓存。取消按钮发送请求后应等待原保存结果，不能把取消 ACK 当作已
+取消；提交成功后不按路径回滚，避免误删用户随后替换的文件。release 在串行请求锁前
+标记文档/epoch 与取消位，防止长复制阻塞关闭，也要覆盖“关闭先于复制注册”的竞态。
 
 ## 验证与构建范围
 

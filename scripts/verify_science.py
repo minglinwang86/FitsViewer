@@ -86,14 +86,23 @@ def reproject_test():
 check('bounded_visualization_reprojection',reproject_test)
 def exports_test():
     from PIL import Image
-    from pypdf import PdfReader
+    import importlib.util,re
     output=[]
     for format in ['png','jpg','svg','pdf']:
         result=worker.dispatch('export',dict(params,format=format,width=800,height=600,dpi=150,wcs_axes=True,compass=True,scale_arcsec=3.,title='科研图像',annotations=[{'kind':'text','x':10,'y':10,'text':r'$F_\lambda / \sigma$'}],view={'low':18.,'high':80.,'stretch':'Log','render':{'palette':{'name':'Heat'}}}))
         file=Path(result['_path']);assert file.stat().st_size>1000
         if format in ['png','jpg']:assert Image.open(file).size==(800,600)
         if format=='pdf':
-            reader=PdfReader(file);box=reader.pages[0].mediabox;assert abs(float(box.width)-800/150*72)<.01 and abs(float(box.height)-600/150*72)<.01
+            assert file.read_bytes().startswith(b'%PDF-')
+            if importlib.util.find_spec('pypdf'):
+                from pypdf import PdfReader
+                box=PdfReader(file).pages[0].mediabox;page_width,page_height=float(box.width),float(box.height)
+            else:
+                # Matplotlib writes a plain page MediaBox. pypdf is an optional
+                # verifier, not an export runtime dependency. / 验证不强制额外装包。
+                match=re.search(rb'/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]',file.read_bytes())
+                assert match,'PDF has no readable page MediaBox';page_width,page_height=map(float,match.groups())
+            assert abs(page_width-800/150*72)<.01 and abs(page_height-600/150*72)<.01
         if format=='svg':assert '<path' in file.read_text(encoding='utf-8')
         output.append(result)
     return output

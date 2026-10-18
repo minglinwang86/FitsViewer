@@ -30,7 +30,7 @@ The portable ZIP can be extracted to a writable folder. Start `fitsviewer.exe`, 
 PowerShell examples use generic paths. Run commands in an activated environment when using the pip entry point.
 
 ```powershell
-python -m pip install ".\fitsviewer-0.1.5rc1-py3-none-win_amd64.whl[jupyter]"
+python -m pip install ".\fitsviewer-0.1.6-py3-none-win_amd64.whl[jupyter]"
 fitsviewer --native 'C:\data\image.fits'
 fitsviewer 'C:\data\image.fits' --no-browser
 fitsviewer defaults status
@@ -51,8 +51,8 @@ The pip `fitsviewer FILE` command uses Jupyter/browser mode. `--native` opens th
 Silent Setup accepts standard Inno switches plus explicit environment options:
 
 ```powershell
-.\FitsViewer-0.1.5rc1-windows-x86_64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="" /PYTHON="C:\path\to\env\Scripts\python.exe" /WITHJUPYTER=no /JUPYTERDEFAULT=yes
-.\FitsViewer-0.1.5rc1-windows-x86_64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="associate" /CONDAENV="C:\path\to\conda\envs\astro" /WITHJUPYTER=yes /JUPYTERDEFAULT=yes
+.\FitsViewer-0.1.6-windows-x86_64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="" /PYTHON="C:\path\to\env\Scripts\python.exe" /WITHJUPYTER=no /JUPYTERDEFAULT=yes
+.\FitsViewer-0.1.6-windows-x86_64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="associate" /CONDAENV="C:\path\to\conda\envs\astro" /WITHJUPYTER=yes /JUPYTERDEFAULT=yes
 ```
 
 Omit `/PYTHON` and `/CONDAENV` for desktop only. `/WITHJUPYTER=no` requires a compatible JupyterLab, jupyter-server-proxy and IPython already installed. Default selection may still require Windows Settings confirmation; silent Setup cannot bypass it.
@@ -84,7 +84,7 @@ bash scripts/build_windows.sh
 Copy the Windows wheel and source to Windows. With Python 3.11+ and Inno Setup 6.7.3 installed, assemble a new payload directory outside the checkout:
 
 ```powershell
-python scripts/build_windows_installer.py --wheel .\dist\full\fitsviewer-0.1.5rc1-py3-none-win_amd64.whl --payload C:\build\fitsviewer-payload --out C:\build\release --iscc 'C:\path\to\Inno Setup 6\ISCC.exe'
+python scripts/build_windows_installer.py --wheel .\dist\full\fitsviewer-0.1.6-py3-none-win_amd64.whl --payload C:\build\fitsviewer-payload --out C:\build\release --iscc 'C:\path\to\Inno Setup 6\ISCC.exe'
 ```
 
 The output includes a portable ZIP and Setup EXE. Inno Setup's compiler is not redistributed. Its installer engine retains upstream notices; see `windows/INNO-NOTICE.txt`. Release assets are not code signed.

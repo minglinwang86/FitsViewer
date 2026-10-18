@@ -5,6 +5,7 @@
 from pathlib import Path
 import argparse
 import hashlib
+import re
 import shutil
 import subprocess
 import tomllib
@@ -18,6 +19,10 @@ parser.add_argument('--out', type=Path)
 parser.add_argument('--iscc', type=Path, help='Optional path to the Inno Setup 6 compiler (Windows only)')
 args = parser.parse_args()
 version = tomllib.loads((root / 'jupyter/pyproject.toml').read_text())['project']['version']
+numeric = re.fullmatch(r'(\d+\.\d+\.\d+)(?:rc(\d+))?', version)
+if not numeric:
+    raise ValueError('Windows PE version requires a three-part stable or rc package version')
+numeric_version = numeric[1] + '.' + (numeric[2] or '0')
 wheel = args.wheel.resolve()
 payload = args.payload.resolve()
 assert not payload.is_relative_to(root), 'Keep assembled payloads outside the source tree'
@@ -59,6 +64,7 @@ with zipfile.ZipFile(portable, 'w', compression=zipfile.ZIP_DEFLATED, compressle
 assets = [portable, wheel]
 if args.iscc:
     subprocess.run([str(args.iscc.resolve()), '/Qp', '/DAppVersion=' + version,
+                    '/DAppNumericVersion=' + numeric_version,
                     '/DPayloadDir=' + str(payload), '/DReleaseDir=' + str(out),
                     str(root / 'windows/FitsViewer.iss')], check=True)
     assets.append(out / f'FitsViewer-{version}-windows-x86_64-setup.exe')

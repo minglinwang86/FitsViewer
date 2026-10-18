@@ -2,10 +2,12 @@
 Gaia 星点匹配与 WCS 校准；不包含星表、索引或 Python 科学依赖。
 """
 import math
+import re
 import uuid
 from fitsviewer_science import require, bounded_path, MAX_TABLE, clean
 
 GAIA_SERVICE = 'https://gea.esac.esa.int/tap-server/tap'
+GAIA_SERVICES = (GAIA_SERVICE, 'https://gaia.ari.uni-heidelberg.de/tap')
 
 
 def checkpoint(params):
@@ -55,9 +57,10 @@ def prior_wcs(header, width, height, params):
 
 
 def reference_table(worker, center, radius, params):
-    from astropy.table import Table
+    from fitsviewer_network import read_table,file_capability_request
+    file_capability=file_capability_request(worker,params)
     if params.get('catalogue'):
-        return Table.read(bounded_path(params['catalogue'], MAX_TABLE)), 'local Gaia reference table', None
+        return read_table(bounded_path(params['catalogue'], MAX_TABLE),file_capability=file_capability), 'local Gaia reference table', None
     from fitsviewer_tap import query
     maximum = max(50, min(int(params.get('reference_limit', 3000)), 5000))
     magnitude = float(params.get('magnitude_limit', 20.))
@@ -69,10 +72,68 @@ def reference_table(worker, center, radius, params):
             f'FROM gaiadr3.gaia_source WHERE 1=CONTAINS(POINT(\'ICRS\',ra,dec),'
             f'CIRCLE(\'ICRS\',{center.ra.deg:.12f},{center.dec.deg:.12f},{radius:.12f})) '
             f'AND phot_g_mean_mag<{magnitude:.8f} ORDER BY phot_g_mean_mag ASC')
-    artifact = query(worker, {'protocol': 'tap', 'service': GAIA_SERVICE, 'adql': adql,
-                              'async': True, 'max_rows': maximum, 'timeout': 120,
-                              '_cancel': params.get('_cancel')})
-    return Table.read(artifact['_path'], format='votable'), 'Gaia DR3 / ESA TAP', artifact
+    from fitsviewer_network import ServiceError
+    failures=[]
+    for service in GAIA_SERVICES:
+        try:
+            artifact = query(worker, {'protocol': 'tap', 'service': service, 'adql': adql,
+                                     'max_rows': maximum, 'timeout': params.get('timeout',60),
+                                     '_cancel': params.get('_cancel'),'_file_capability':file_capability})
+            artifact['prior_service_failures']=failures
+            return read_table(artifact['_path'],format='votable',file_capability=file_capability), 'Gaia DR3 / '+service, artifact
+        except ServiceError as error:failures.append({'service':service,'error':str(error),'category':error.category})
+    raise ServiceError('Gaia services failed: '+'; '.join(item['error'] for item in failures),failures[-1]['category'])
+
+
+def observation_time(epoch):
+    """Read modern and legacy FITS epochs without a two-digit-year pivot.
+
+    旧 FITS DD/MM/YY 固定属于 1900--1999；不能用系统日期解析器猜世纪。
+    https://fits.gsfc.nasa.gov/year2000.html section 3.1.
+    """
+    from astropy.time import Time
+    try:
+        if isinstance(epoch,bool):raise ValueError()
+        if isinstance(epoch,(int,float)):
+            observation=Time(float(epoch),format='jyear')
+        elif isinstance(epoch,str):
+            text=epoch.strip()
+            legacy=re.fullmatch(r'(\d{2})/(\d{2})/(\d{2})',text)
+            if legacy:
+                day,month,year=map(int,legacy.groups())
+                text=f'{1900+year:04d}-{month:02d}-{day:02d}'
+                observation=Time(text,format='fits')
+            elif re.fullmatch(r'[+-]?\d+(?:\.\d+)?',text):
+                observation=Time(float(text),format='jyear')
+            else:observation=Time(text)
+        else:raise ValueError()
+        if not observation.isscalar or not math.isfinite(float(observation.jd)):raise ValueError()
+        return observation
+    except (TypeError,ValueError,OverflowError):
+        raise ValueError('Observation date is invalid; use YYYY-MM-DD, a FITS DD/MM/YY date, or a Julian year') from None
+
+
+def reference_sky(table,header,params):
+    """Share epoch handling for calibration and catalogue overlays. / 共用历元处理。"""
+    import numpy as np
+    import astropy.units as u
+    from astropy.coordinates import SkyCoord
+    from astropy.time import Time
+    sky=SkyCoord(np.asarray(table['ra'],dtype=float)*u.deg,np.asarray(table['dec'],dtype=float)*u.deg,frame='icrs')
+    note='Catalogue reference epoch; observation epoch unavailable'
+    epoch=params.get('observation_epoch',header.get('DATE-OBS'))
+    if epoch is not None and str(epoch).strip() and {'pmra','pmdec','ref_epoch'}<=set(table.colnames):
+        observation=observation_time(epoch)
+        pmra=np.ma.asarray(table['pmra'],dtype=float).filled(np.nan);pmdec=np.ma.asarray(table['pmdec'],dtype=float).filled(np.nan)
+        epochs=np.ma.asarray(table['ref_epoch'],dtype=float).filled(np.nan);valid=np.isfinite(pmra)&np.isfinite(pmdec)&np.isfinite(epochs)
+        if valid.any():
+            moved=SkyCoord(sky[valid],pm_ra_cosdec=pmra[valid]*u.mas/u.yr,pm_dec=pmdec[valid]*u.mas/u.yr,
+                           obstime=Time(epochs[valid],format='jyear')).apply_space_motion(new_obstime=observation)
+            ra,dec=sky.ra.deg.copy(),sky.dec.deg.copy();ra[valid],dec[valid]=moved.ra.deg,moved.dec.deg
+            sky=SkyCoord(ra*u.deg,dec*u.deg,frame='icrs')
+            note=f'Proper motion propagated to {observation.isot}; {int((~valid).sum())} rows lack a usable motion'
+        else:note='No usable proper motions; catalogue positions retained at their reference epochs'
+    return sky,note
 
 
 def detected_points(worker, image, params):
@@ -109,7 +170,7 @@ def detected_points(worker, image, params):
 
 
 def solve(worker, params):
-    maximum = float(params.get('max_residual_arcsec', 1.))
+    maximum = float(params.get('max_residual_arcsec', 3.))
     if not math.isfinite(maximum) or not .02 <= maximum <= 10:
         raise ValueError('Maximum residual must be between 0.02 and 10 arcsec')
     checkpoint(params)
@@ -137,26 +198,7 @@ def solve(worker, params):
     table = table[valid][:5000]
     if len(table) < 8:
         raise ValueError('Too few valid Gaia reference stars in this field')
-    sky = SkyCoord(np.asarray(table['ra'], dtype=float) * u.deg, np.asarray(table['dec'], dtype=float) * u.deg, frame='icrs')
-    epoch_note = 'Gaia catalogue reference epoch; observation epoch unavailable'
-    epoch_value = params.get('observation_epoch')
-    if epoch_value is None:
-        epoch_value = header.get('DATE-OBS')
-    if epoch_value is not None and {'pmra', 'pmdec', 'ref_epoch'} <= set(table.colnames):
-        observation = Time(float(epoch_value), format='jyear') if isinstance(epoch_value, (int, float)) else Time(str(epoch_value))
-        pmra = np.ma.asarray(table['pmra'], dtype=float).filled(np.nan)
-        pmdec = np.ma.asarray(table['pmdec'], dtype=float).filled(np.nan)
-        epochs = np.ma.asarray(table['ref_epoch'], dtype=float).filled(np.nan)
-        has_motion = np.isfinite(pmra) & np.isfinite(pmdec) & np.isfinite(epochs)
-        if has_motion.any():
-            moved = SkyCoord(sky[has_motion], pm_ra_cosdec=pmra[has_motion] * u.mas / u.yr,
-                             pm_dec=pmdec[has_motion] * u.mas / u.yr, obstime=Time(epochs[has_motion], format='jyear')).apply_space_motion(new_obstime=observation)
-            ra, dec = sky.ra.deg.copy(), sky.dec.deg.copy()
-            ra[has_motion], dec[has_motion] = moved.ra.deg, moved.dec.deg
-            sky = SkyCoord(ra * u.deg, dec * u.deg, frame='icrs')
-            epoch_note = f'Proper motion propagated to {observation.isot}; {int((~has_motion).sum())} rows lack a usable motion'
-        else:
-            epoch_note = 'No usable proper motions; catalogue positions retained at their reference epochs'
+    sky,epoch_note=reference_sky(table,header,params)
     x, y = skycoord_to_pixel(sky, prior, origin=0, mode='all')
     finite = np.isfinite(x) & np.isfinite(y) & (x > -width * .4) & (x < width * 1.4) & (y > -height * .4) & (y < height * 1.4)
     table, sky = table[finite], sky[finite]
@@ -211,7 +253,7 @@ def solve(worker, params):
         residual = pixel_to_skycoord(pixel[:, 0], pixel[:, 1], fitted, origin=0).separation(reference).arcsec
         median = np.median(residual[keep])
         mad = np.median(np.abs(residual[keep] - median)) * 1.4826
-        new = (~holdout) & (residual <= max(float(params.get('max_residual_arcsec', 1.)), median + 4 * mad))
+        new = (~holdout) & (residual <= max(maximum, median + 4 * mad))
         if np.array_equal(new, keep):
             break
         keep = new

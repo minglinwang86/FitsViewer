@@ -1,8 +1,9 @@
 # Resource ownership / 资源生命周期
 
-This describes the 0.1.5rc1 resource contract. [Runtime validation](releases/VALIDATION-0.1.5rc1.md)
-is recorded separately; these bounds are not a guarantee of a fixed total RSS.
-本文描述 0.1.5rc1 的资源约定，实际验收另有记录；以下上限不是整个进程的 RSS 上限。
+This describes the current source resource contract, including 0.1.6 additions.
+[Historical 0.1.5rc1 validation](releases/VALIDATION-0.1.5rc1.md) applies to its
+own artifacts, not a later source checkout. These bounds do not guarantee fixed RSS.
+本文描述当前源码及 0.1.6 的新增资源约定；历史验收只适用于对应产物，上限不是整个进程 RSS。
 
 ## Documents, roles and jobs
 
@@ -21,6 +22,12 @@ Live leases expire after 180 seconds without a heartbeat, including when page
 teardown cannot reach the server. The background reaper does not require another
 viewer request. Closed-generation tombstones last up to 30 minutes; the session
 table is capped at 4096. Legacy CLI requests can omit generation/epoch metadata.
+
+Dependency probe/install jobs belong to the base View role through start, status
+and cancellation. Another window releasing PRO or its own document cannot stop
+them. An idle worker is retired only after active jobs and undelivered completed
+results have been handled. Switching the external Python is refused while either
+is present, to avoid losing a completed installation's log/result.
 
 The worker permits 32 active/queued jobs. Completed futures are retired into
 bounded JSON history: at most 32 results and 32 MiB total, with 128 lightweight
@@ -46,6 +53,20 @@ are reported explicitly. Uploaded bridge files acquire a view lease as well.
 临时结果由唯一所有者删除，避免 Python 清理与宿主缓存互相争抢。关闭图层移除引用；
 不同查看页的引用互不代删。产物不是永久保存文件，应通过下载/导出保存需要的结果。
 宿主只删除自己的标记目录，不递归删除共享缓存父目录。
+
+Persistent archive downloads have a separate lifetime. Python creates only an owned
+temporary artifact. The Rust host validates its owner/document/PRO epoch and FITS
+header, copies it to a unique temporary file beside the original, and commits with
+a same-directory hard link that cannot overwrite an existing file. Release/cancel
+marks the matching active copy before waiting for the serialized science request;
+the copy rechecks the lease after registering, so an earlier close cannot escape
+cancellation. The temporary guard is armed only after successful `create_new`.
+
+The no-overwrite commit is the completion point. A late cancellation never removes
+the saved path, which the user might already have replaced. A committed file is not
+registered as a cache artifact. Unsupported/unwritable destinations return an
+explicit temporary-result fallback. The UI waits for the original save result after
+a cancel acknowledgement and discards incompatible late document replies.
 
 ## Processes and browser resources
 

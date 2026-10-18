@@ -78,13 +78,13 @@ def rgba(data,view,histogram_cdf=None):
         output[active,:3]=np.floor(output[active,:3]*(1-opacity)+np.asarray(mask.get('color',[255,70,30]))*opacity+.5).astype('uint8')
     return output,low,high
 
-def annotation(ax,item,font,wcs=None):
+def annotation(ax,item,font,wcs=None,pixel_transform=None):
     from matplotlib.patches import Circle,Ellipse,Rectangle,Polygon
-    kind=item.get('kind','text');color=item.get('color','yellow');width=float(item.get('line_width',1.))
+    kind=item.get('kind','text');color=item.get('color','yellow');width=float(item.get('line_width',1.));pixels=pixel_transform if pixel_transform is not None else ax.transData
     if kind=='text':
         text=str(item.get('text',''))
         if len(text)>4096:raise ValueError('Annotation exceeds 4096 characters')
-        anchor=item.get('anchor','pixel');transform=ax.transData
+        anchor=item.get('anchor','pixel');transform=pixels
         if anchor=='sky':
             if wcs is None or not wcs.has_celestial:raise ValueError('Sky text anchor requires celestial WCS')
             from astropy.coordinates import SkyCoord,FK5
@@ -95,21 +95,66 @@ def annotation(ax,item,font,wcs=None):
         elif anchor=='pixel':x,y=float(item['x']),float(item['y'])
         else:raise ValueError('Text anchor must be pixel, sky or canvas')
         ax.text(x,y,text,color=color,fontsize=float(item.get('font_size',11.)),fontproperties=font,usetex=False,transform=transform)
-    elif kind=='circle':ax.add_patch(Circle(item['center'],float(item['radius']),fill=False,edgecolor=color,linewidth=width))
-    elif kind=='ellipse':ax.add_patch(Ellipse(item['center'],2*item['radii'][0],2*item['radii'][1],angle=item.get('angle_deg',0),fill=False,edgecolor=color,linewidth=width))
+    elif kind=='circle':ax.add_patch(Circle(item['center'],float(item['radius']),fill=False,edgecolor=color,linewidth=width,transform=pixels))
+    elif kind=='ellipse':ax.add_patch(Ellipse(item['center'],2*item['radii'][0],2*item['radii'][1],angle=item.get('angle_deg',0),fill=False,edgecolor=color,linewidth=width,transform=pixels))
     elif kind=='rectangle':
-        center=item['center'];size=item['size'];ax.add_patch(Rectangle((center[0]-size[0]/2,center[1]-size[1]/2),*size,angle=item.get('angle_deg',0),rotation_point='center',fill=False,edgecolor=color,linewidth=width))
+        center=item['center'];size=item['size'];ax.add_patch(Rectangle((center[0]-size[0]/2,center[1]-size[1]/2),*size,angle=item.get('angle_deg',0),rotation_point='center',fill=False,edgecolor=color,linewidth=width,transform=pixels))
     elif kind=='polygon':
-        ax.add_patch(Polygon(item['points'],fill=False,edgecolor=color,linewidth=width))
-        for hole in item.get('holes',[]):ax.add_patch(Polygon(hole,fill=False,edgecolor=color,linewidth=width))
+        ax.add_patch(Polygon(item['points'],fill=False,edgecolor=color,linewidth=width,transform=pixels))
+        for hole in item.get('holes',[]):ax.add_patch(Polygon(hole,fill=False,edgecolor=color,linewidth=width,transform=pixels))
     elif kind=='ring':
-        for radius in [item['inner'],item['outer']]:ax.add_patch(Circle(item['center'],radius,fill=False,edgecolor=color,linewidth=width))
+        for radius in [item['inner'],item['outer']]:ax.add_patch(Circle(item['center'],radius,fill=False,edgecolor=color,linewidth=width,transform=pixels))
     elif kind=='union':
-        for shape in item['shapes']:annotation(ax,dict(shape,color=color,line_width=width),font)
+        for shape in item['shapes']:annotation(ax,dict(shape,color=color,line_width=width),font,wcs,pixels)
     elif kind in ['path','line']:
         import numpy as np
-        points=np.asarray(item.get('points',[item.get('start'),item.get('end')]),dtype=float);ax.plot(points[:,0],points[:,1],color=color,linewidth=width)
+        points=np.asarray(item.get('points',[item.get('start'),item.get('end')]),dtype=float);ax.plot(points[:,0],points[:,1],color=color,linewidth=width,transform=pixels)
     else:raise ValueError('Unsupported annotation shape')
+
+
+def rotated_view(ax,data,view):
+    """Use one artist transform for image and raw-pixel overlays, with no new image.
+
+    屏幕顺时针角对应 y 向上原像素的负角；裁剪四角先映射到同一显示平面。
+    """
+    import numpy as np
+    from matplotlib.transforms import Affine2D
+    angle=float(view.get('rotation_deg',0.))
+    if not math.isfinite(angle):raise ValueError('Display rotation must be finite')
+    height,width=data.shape;affine=Affine2D().rotate_deg_around((width-1)/2,(height-1)/2,-angle)
+    polygon=view.get('viewport_polygon');crop=view.get('crop')
+    if polygon is not None:
+        points=np.asarray(polygon,dtype=float)
+        if points.shape!=(4,2) or not np.isfinite(points).all():raise ValueError('Viewport polygon must contain four finite original-pixel corner pairs')
+    elif crop is not None:
+        if len(crop)!=4 or not np.isfinite(crop).all() or crop[2]<=crop[0] or crop[3]<=crop[1]:raise ValueError('Crop must contain increasing finite pixel bounds')
+        points=np.array([[crop[0],crop[1]],[crop[2],crop[1]],[crop[2],crop[3]],[crop[0],crop[3]]])
+    else:points=np.array([[-.5,-.5],[width-.5,-.5],[width-.5,height-.5],[-.5,height-.5]])
+    bounds=affine.transform(points)
+    ax.set_xlim(float(bounds[:,0].min()),float(bounds[:,0].max()));ax.set_ylim(float(bounds[:,1].min()),float(bounds[:,1].max()))
+    return affine
+
+
+def rotated_wcs(wcs,affine):
+    """Adapt display pixels to the exact original WCS, including distortion terms.
+
+    WCS 轴保持矩形显示框；不旋转边框，也不丢弃 SIP/查找表畸变模型。
+    """
+    import numpy as np
+    from astropy.wcs.wcsapi.wrappers import BaseWCSWrapper
+    class DisplayWCS(BaseWCSWrapper):
+        @property
+        def pixel_shape(self):return None
+        @property
+        def pixel_bounds(self):return None
+        def pixel_to_world_values(self,x,y):
+            x,y=np.broadcast_arrays(x,y);raw=affine.inverted().transform(np.column_stack((x.ravel(),y.ravel())))
+            return self._wcs.pixel_to_world_values(raw[:,0].reshape(x.shape),raw[:,1].reshape(y.shape))
+        def world_to_pixel_values(self,*world):
+            x,y=self._wcs.world_to_pixel_values(*world);x,y=np.broadcast_arrays(x,y)
+            displayed=affine.transform(np.column_stack((x.ravel(),y.ravel())))
+            return displayed[:,0].reshape(x.shape),displayed[:,1].reshape(y.shape)
+    return DisplayWCS(wcs.low_level_wcs)
 
 def export(worker,params):
     require('numpy','astropy','matplotlib')
@@ -159,21 +204,22 @@ def export(worker,params):
                 wcs=WCS(header,naxis=2).celestial;world=bool(panel.get('wcs_axes',params.get('wcs_axes',False)))
                 if world and not wcs.has_celestial:raise ValueError('WCS axes requested for a panel without celestial WCS')
                 ax=figure.add_subplot(rows,columns,index+1,projection=wcs if world else None)
+                display_transform=rotated_view(ax,data,view)
+                if world and float(view.get('rotation_deg',0.))%360:ax.reset_wcs(wcs=rotated_wcs(wcs,display_transform))
+                pixels_transform=display_transform+ax.transData
                 if world:
                     for coordinate,ctype in zip(ax.coords,wcs.wcs.ctype):
                         coordinate.set_axislabel('Right ascension' if ctype.startswith('RA') else 'Declination' if ctype.startswith('DEC') else 'Galactic longitude' if ctype.startswith('GLON') else 'Galactic latitude' if ctype.startswith('GLAT') else ctype,fontproperties=font)
-                ax.imshow(pixels,origin='lower',interpolation='nearest',aspect='equal')
-                crop=view.get('crop')
-                if crop:
-                    if len(crop)!=4 or not np.isfinite(crop).all() or crop[2]<=crop[0] or crop[3]<=crop[1]:raise ValueError('Crop must contain increasing finite pixel bounds')
-                    ax.set_xlim(crop[0],crop[2]);ax.set_ylim(crop[1],crop[3])
-                if not world:ax.set_xlabel('x [zero-based pixels]',fontproperties=font);ax.set_ylabel('y [zero-based pixels]',fontproperties=font)
+                ax.imshow(pixels,origin='lower',interpolation='nearest',aspect='equal',transform=pixels_transform)
+                if not world:
+                    rotated=bool(float(view.get('rotation_deg',0.))%360)
+                    ax.set_xlabel('rotated display x [pixels]' if rotated else 'x [zero-based pixels]',fontproperties=font);ax.set_ylabel('rotated display y [pixels]' if rotated else 'y [zero-based pixels]',fontproperties=font)
                 ax.set_title(str(panel.get('title','')),fontproperties=font)
                 for label in ax.get_xticklabels()+ax.get_yticklabels():label.set_fontproperties(font)
-                for item in panel.get('annotations',view.get('annotations',[])):annotation(ax,item,font,wcs)
+                for item in panel.get('annotations',view.get('annotations',[])):annotation(ax,item,font,wcs,pixels_transform)
                 for aperture in panel.get('apertures',[]):
-                    annotation(ax,dict(aperture['shape'],color='yellow'),font)
-                    if aperture.get('background'):annotation(ax,dict(aperture['background'],color='lime'),font)
+                    annotation(ax,dict(aperture['shape'],color='yellow'),font,wcs,pixels_transform)
+                    if aperture.get('background'):annotation(ax,dict(aperture['background'],color='lime'),font,wcs,pixels_transform)
                 if panel.get('colorbar',params.get('colorbar',True)):
                     position=panel.get('colorbar_position',params.get('colorbar_position','Right'));horizontal=position in ['Top','Bottom']
                     from matplotlib.colors import ListedColormap,Normalize
@@ -185,14 +231,16 @@ def export(worker,params):
                     bar.set_label(header.get('BUNIT','unit unspecified'),fontproperties=font)
                 if panel.get('compass') or panel.get('scale_arcsec'):
                     if not wcs.has_celestial:raise ValueError('Compass/angle scale needs celestial WCS')
-                    xlo,xhi=ax.get_xlim();ylo,yhi=ax.get_ylim();anchor=[xlo+.15*(xhi-xlo),ylo+.15*(yhi-ylo)]
+                    xlo,xhi=ax.get_xlim();ylo,yhi=ax.get_ylim();anchor=display_transform.inverted().transform([xlo+.15*(xhi-xlo),ylo+.15*(yhi-ylo)])
                     local=worker.wcs(dict(panel,points=[anchor]))['compass']
                     if panel.get('compass'):
                         for name,key in [('N','north'),('E','east')]:
-                            v=np.asarray(local[key]);v=v/np.linalg.norm(v)*.08*min(xhi-xlo,yhi-ylo);ax.annotate(name,xy=np.asarray(anchor)+v,xytext=anchor,color='yellow',arrowprops={'arrowstyle':'->','color':'yellow'},fontproperties=font)
+                            v=np.asarray(local[key]);v=v/np.linalg.norm(v)*.08*min(xhi-xlo,yhi-ylo)
+                            ax.annotate('',xy=np.asarray(anchor)+v,xytext=anchor,xycoords=pixels_transform,textcoords=pixels_transform,color='yellow',arrowprops={'arrowstyle':'->','color':'yellow'})
+                            ax.text(*(np.asarray(anchor)+1.25*v),name,transform=pixels_transform,color='yellow',fontproperties=font,ha='center',va='center')
                     if panel.get('scale_arcsec'):
-                        length=float(panel['scale_arcsec'])/local['arcsec_per_pixel_x'];base=[xlo+.1*(xhi-xlo),ylo+.08*(yhi-ylo)]
-                        ax.plot([base[0],base[0]+length],[base[1],base[1]],color='yellow',linewidth=2);ax.text(base[0],base[1],str(panel['scale_arcsec'])+' arcsec (local)',color='yellow',fontproperties=font,va='bottom')
+                        length=float(panel['scale_arcsec'])/local['arcsec_per_pixel_x'];base=display_transform.inverted().transform([xlo+.1*(xhi-xlo),ylo+.08*(yhi-ylo)])
+                        ax.plot([base[0],base[0]+length],[base[1],base[1]],color='yellow',linewidth=2,transform=pixels_transform);ax.text(base[0],base[1],str(panel['scale_arcsec'])+' arcsec (local)',color='yellow',fontproperties=font,va='bottom',transform=pixels_transform)
                 provenance.append({'path':str(panel['path']),'hdu':hdu,'view':view,'shape':list(data.shape),'bunit':header.get('BUNIT'),'wcs_axes':world,'annotations':panel.get('annotations',[]),'apertures':panel.get('apertures',[])})
             figure.savefig(path,format=format,dpi=dpi,transparent=bool(params.get('transparent',False)))
         record={'version':1,'pixel_size':[width,height],'dpi':dpi,'page_inches':[width/dpi,height/dpi],'format':format,'panels':provenance,'tex_engine_embedded':False,'math_backend':'user environment Matplotlib MathText subset','font':fontfile.name}

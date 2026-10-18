@@ -30,6 +30,10 @@ def _warm_jupyter():
 def main():
     """Run the bundled platform program; warm an existing Jupyter viewer when available."""
     arguments = sys.argv[1:]
+    if arguments and arguments[0] == "remote":
+        from .remote import main as remote_main
+        sys.argv = ["fver", *arguments[1:]]
+        return remote_main()
     from .build_info import build_info, require_module
     if arguments == ["build-info"]:
         print(json.dumps(build_info(),ensure_ascii=False,indent=2));return

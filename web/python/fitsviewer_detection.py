@@ -52,5 +52,6 @@ def detect_stars(worker,params):
                         'fwhm_moment_estimate':2.354820045*math.sqrt(max(0.,(vx+vy)/2)),'roundness_estimate':(vx-vy)/max(vx+vy,1e-30),'flags':flags})
         centers.append((cx,cy))
         if len(sources)>=limit:break
-    return {'sources':sources,'background':background,'background_sigma':noise,'convolved_sigma':filtered_noise,'fwhm_input':fwhm,'threshold_sigma':threshold,
+    return {'sources':sources,'result_type':'local_intensity_candidates','catalogue_identification':False,'scientific_note':'Local intensity maxima only; use catalogue identification for catalogue identities.',
+            'background':background,'background_sigma':noise,'convolved_sigma':filtered_noise,'fwhm_input':fwhm,'threshold_sigma':threshold,
             'method':'Gaussian-filtered local maxima with positive-weight centroids','width_is_psf_fit':False,'crowded_field_deblending':False,'coordinate_origin':0,'truncated':len(sources)>=limit}

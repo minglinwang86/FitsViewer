@@ -1,5 +1,6 @@
 use eframe::egui::{self,Color32,Pos2,Rect,Stroke};
 use fitsviewer_core::{ErrorKind,FitsImage,regions::*};
+use crate::image_transform::ImageTransform;
 
 #[derive(Clone,Copy,PartialEq,Debug)]
 pub enum Tool {Pan,Circle,Move,Ellipse,Rectangle,Polygon,Line,Polyline,Curve}
@@ -76,6 +77,16 @@ impl Regions {
         self.needs_measure=self.selected.is_some_and(|i|self.results.get(i).is_none_or(Option::is_none));
         self.uncertainty_source=serde_json::Value::Null;self.message="Selected aperture deleted".into();true
     }
+    /// Clear only this image's geometry; every queued measurement becomes stale.
+    /// 只清当前图像孔径；递增 revision，迟到测光不会恢复已清除结果。
+    pub fn clear_all(&mut self){
+        if !self.apertures.is_empty(){self.remember();}
+        self.apertures.clear();self.results.clear();self.selected=None;self.draft.clear();
+        self.drag=None;self.geometry_editor.clear();self.preview_template=None;self.profile_request=None;
+        self.growth.clear();self.need_growth=None;self.need_batch_measure=false;self.needs_measure=false;
+        self.need_sky_paste=false;self.uncertainty_source=serde_json::Value::Null;
+        self.revision=self.revision.saturating_add(1);self.message="All apertures cleared".into();
+    }
     fn replace_selected(&mut self,aperture:Aperture)->Result<(),String>{
         validate_aperture(&aperture)?;
         let index=self.selected.filter(|&i|i<self.apertures.len()).ok_or("Select an aperture first")?;
@@ -142,7 +153,7 @@ impl Regions {
     pub fn measure_selected(&mut self,image:&FitsImage){
         if !self.needs_measure || self.measurement_pending{return;}
         if self.selected.is_none_or(|index|index>=self.apertures.len()){self.needs_measure=false;return;}
-        if self.has_error_map(){
+        if self.has_error_map() || matches!(image.pixels,fitsviewer_core::RawPixels::Unavailable){
             if !self.error_source_ready(image){self.message="Choose an uncertainty HDU and sigma, variance or ivar explicitly.".into();return;}
             if !self.need_batch_measure{self.need_batch_measure=true;self.needs_measure=false;}return;
         }
@@ -172,6 +183,19 @@ impl Regions {
             #[cfg(feature="pro")]
 if pro{ui.horizontal_wrapped(|ui|{for (tool,label) in [(Tool::Ellipse,"Ellipse"),(Tool::Rectangle,"Rectangle"),(Tool::Polygon,"Polygon"),(Tool::Line,"Line"),(Tool::Polyline,"Polyline"),(Tool::Curve,"Curve")]{if ui.selectable_value(&mut self.tool,tool,crate::i18n::t(&label)).clicked(){self.draft.clear();}}});}
             self.selection_ui(ui,image.unwrap());
+            let current=image.unwrap();
+            ui.horizontal_wrapped(|ui|{
+                let ready=if pro{!self.apertures.is_empty()}else{self.selected.is_some_and(|index|index<self.apertures.len())};
+                if ui.add_enabled(ready && !self.measurement_pending && self.error_source_ready(current),egui::Button::new(crate::i18n::t(if pro{"Measure all apertures"}else{"Measure selected aperture"}))).clicked(){if pro || self.has_error_map(){self.need_batch_measure=true;self.needs_measure=false;}else{self.needs_measure=true;}}
+                #[cfg(feature="pro")]
+                if pro{let circle=self.selected.and_then(|index|self.apertures.get(index)).is_some_and(|aperture|matches!(aperture.shape,Shape::Circle{..}));
+                    if ui.add_enabled(circle && !self.measurement_pending && self.error_source_ready(current),egui::Button::new(crate::i18n::t("Growth curve of selected circle"))).clicked(){self.request_growth(current);}
+                }
+            });
+            if self.measurement_pending{ui.horizontal(|ui|{ui.spinner();ui.label(crate::i18n::t("Measuring…"));});}
+            if !self.message.is_empty(){ui.add(egui::Label::new(crate::i18n::t(&self.message)).wrap());}
+            if self.has_error_map() && !self.error_source_ready(current){ui.label(crate::i18n::t("Choose an uncertainty HDU and sigma, variance or ivar explicitly."));}
+
             egui::CollapsingHeader::new(crate::i18n::t("Defaults for new apertures")).id_salt("aperture-defaults").default_open(self.apertures.is_empty()).show(ui,|ui|{
                 ui.horizontal_wrapped(|ui|{ui.label(crate::i18n::t("Radius"));ui.add(egui::DragValue::new(&mut self.radius).range(0.1..=512.).speed(0.1));ui.label(crate::i18n::t("Sky ring"));ui.add(egui::DragValue::new(&mut self.inner).range(0.2..=1024.).speed(0.1));ui.add(egui::DragValue::new(&mut self.outer).range(0.3..=2048.).speed(0.1));});
                 #[cfg(feature="pro")]
@@ -210,14 +234,6 @@ if pro{ui.horizontal_wrapped(|ui|{for (tool,label) in [(Tool::Ellipse,"Ellipse")
                     for (kind,label) in [(ErrorKind::Sigma,"Standard deviation (sigma)"),(ErrorKind::Variance,"Variance"),(ErrorKind::Ivar,"Inverse variance (ivar)")]{error_changed|=ui.selectable_value(&mut self.error_kind,kind,crate::i18n::t(label)).changed();}
                 });
                 if error_changed{self.changed();}
-                if !pro || self.has_error_map(){
-                    let ready=if pro{!self.apertures.is_empty()}else{self.selected.is_some_and(|index|index<self.apertures.len())};
-                    let label=if pro{"Measure with error map / all apertures"}else{"Measure selected aperture"};
-                    if ui.add_enabled(ready && !self.measurement_pending && self.error_source_ready(current),egui::Button::new(crate::i18n::t(label))).clicked(){
-                        if pro || self.has_error_map(){self.need_batch_measure=true;self.needs_measure=false;}else{self.needs_measure=true;}
-                    }
-                }
-                if self.measurement_pending{ui.label(crate::i18n::t("Measuring…"));}
             });
             if let Some(result)=self.selected.and_then(|i|self.results.get(i)).and_then(|r|r.as_ref()){
                 if let Some(image)=image{let unit=header_unit(&image.info.header);ui.label(format!("{}: {}",crate::i18n::t("Flux unit"),if unit.is_empty(){crate::i18n::t("unit unknown")}else{unit.as_str()}));}
@@ -239,6 +255,7 @@ if pro{
                     });
                     if let Shape::Path{points,width,..}=self.apertures[index].shape.flattened(){if ui.button(crate::i18n::t("Inspect selected line / curve profile")).clicked(){let (gap,background_width)=match &self.apertures[index].background{Some(Shape::Path{width:outer,inner_width,..})=>((inner_width-width).max(0.)/2.,(outer-inner_width).max(0.2)/2.),_=>(self.gap,self.background_width)};self.profile_request=Some(serde_json::json!({"points":points,"width":width,"background_gap":gap,"background_width":background_width}));}}
                 }
+                egui::CollapsingHeader::new(crate::i18n::t("Aperture templates")).id_salt("aperture-templates").show(ui,|ui|{
                 ui.horizontal(|ui|{
                     if ui.button(crate::i18n::t("Copy aperture")).clicked(){if let Some(image)=image {self.copy(ctx,image);}}
                 });
@@ -255,10 +272,16 @@ if pro{
                         #[cfg(target_arch="wasm32")] {if let Err(error)=crate::text_io::browser("importRegions",&[]){self.message=error;}}
                     }
                 });
-                if ui.add_enabled(!self.measurement_pending && !self.apertures.is_empty() && image.is_some_and(|image|self.error_source_ready(image)),egui::Button::new(crate::i18n::t("Measure all apertures"))).clicked(){self.need_batch_measure=true;self.needs_measure=false;}
-                if ui.add_enabled(!self.measurement_pending && image.is_some_and(|image|self.error_source_ready(image)),egui::Button::new(crate::i18n::t("Growth curve of selected circle"))).clicked(){if let (Some(image),Some(index))=(image,self.selected){if let Shape::Circle{radius,..}=&self.apertures[index].shape{let maximum=match &self.apertures[index].background{Some(Shape::Ring{inner,..})=>inner*0.9,_=>radius*2.};let radii=(1..=16).map(|i|maximum*i as f64/16.).collect::<Vec<_>>();if self.has_error_map(){self.need_growth=Some(radii);}else{match growth_curve(image,&self.apertures[index],&self.options,&radii){Ok(curve)=>{self.growth=curve;self.growth_open=true;},Err(error)=>self.message=error,}}}}}
+                });
             }
-            if !self.message.is_empty(){ui.label(crate::i18n::t(&self.message));}
+    }
+    #[cfg(feature="pro")]
+    fn request_growth(&mut self,image:&FitsImage){
+        if let Some(index)=self.selected{if let Shape::Circle{radius,..}=&self.apertures[index].shape{
+            let maximum=match &self.apertures[index].background{Some(Shape::Ring{inner,..})=>inner*0.9,_=>radius*2.};
+            let radii=(1..=16).map(|i|maximum*i as f64/16.).collect::<Vec<_>>();
+            if self.has_error_map(){self.need_growth=Some(radii);}else{match growth_curve(image,&self.apertures[index],&self.options,&radii){Ok(curve)=>{self.growth=curve;self.growth_open=true;},Err(error)=>self.message=error,}}
+        }}
     }
     fn selection_ui(&mut self,ui:&mut egui::Ui,image:&FitsImage){
         ui.group(|ui|{
@@ -266,6 +289,7 @@ if pro{
                 ui.strong(crate::i18n::t("Selected aperture"));
                 if ui.add_enabled(self.selected.is_some_and(|i|i<self.apertures.len()),egui::Button::new(crate::i18n::t("Delete selected aperture"))).on_hover_text(crate::i18n::t("Delete / Backspace; text fields keep their normal editing keys")).clicked(){self.delete_selected();}
             });
+            if ui.add_enabled(!self.apertures.is_empty() || !self.draft.is_empty(),egui::Button::new(crate::i18n::t("Clear all apertures"))).clicked(){self.clear_all();}
             if self.apertures.is_empty(){ui.weak(crate::i18n::t("Choose Circle, then click the image to add an aperture."));}
             else{
                 let mut selected=self.selected;
@@ -355,7 +379,11 @@ if pro{
     /// 在主键平移图像前调用；按下点决定归属，经过孔径不会意外接管平移。
     pub fn claims_primary_drag(&self,ctx:&egui::Context,rect:Rect,zoom:f32)->bool{
         if self.drag.is_some(){return true;}
-        ctx.input(|input|input.pointer.primary_pressed().then(||input.pointer.press_origin()).flatten()).filter(|p|rect.contains(*p)).is_some_and(|p|self.hit_test(pixel_position(rect,zoom,p),zoom).is_some())
+        self.claims_primary_drag_transformed(ctx,ImageTransform::from_rect(rect,zoom))
+    }
+    pub fn claims_primary_drag_transformed(&self,ctx:&egui::Context,transform:ImageTransform)->bool{
+        if self.drag.is_some(){return true;}
+        ctx.input(|input|input.pointer.primary_pressed().then(||input.pointer.press_origin()).flatten()).filter(|p|transform.contains(*p)).is_some_and(|p|self.hit_test(transform.screen_to_pixel(p),transform.zoom).is_some())
     }
     fn begin_drag(&mut self,index:usize,kind:DragKind,origin:[f64;2]){
         if self.select_aperture(index).is_ok(){self.drag=Some(ApertureDrag{index,origin,original:self.apertures[index].clone(),kind,changed:false});self.needs_measure=false;}
@@ -390,9 +418,14 @@ if pro{
     }
     fn finish_drag(&mut self){if let Some(drag)=self.drag.take(){self.needs_measure=drag.changed || self.results.get(drag.index).is_none_or(Option::is_none);}}
     pub fn canvas(&mut self,ctx:&egui::Context,response:&egui::Response,painter:&egui::Painter,rect:Rect,zoom:f32,image:&FitsImage,pro:bool){
+        self.canvas_transformed(ctx,response,painter,ImageTransform::from_rect(rect,zoom),image,pro,true);
+    }
+    pub fn canvas_transformed(&mut self,ctx:&egui::Context,response:&egui::Response,painter:&egui::Painter,transform:ImageTransform,image:&FitsImage,pro:bool,interactive:bool){
+        let zoom=transform.zoom;
         if image.spectrum.is_some() || !zoom.is_finite() || zoom<=0.{self.drag=None;return;}
-        let pixel=|pos:Pos2|[f64::from((pos.x-rect.left())/zoom)-0.5,f64::from((rect.bottom()-pos.y)/zoom)-0.5];
-        let current=response.hover_pos().filter(|p|rect.contains(*p)).map(pixel);
+        let pixel=|pos:Pos2|transform.screen_to_pixel(pos);
+        let current=response.hover_pos().filter(|p|transform.contains(*p)).map(pixel);
+        if interactive{
         self.delete_shortcut(ctx);
         #[cfg(feature="pro")]
         if pro && !ctx.wants_keyboard_input(){
@@ -401,7 +434,7 @@ if pro{
             if let Some(text)=pasted.filter(|s|s.contains("apertures") && s.contains("source_dimensions")){self.template=text;self.auto_confirm=false;self.paste(current,Some(image));}
         }
         if response.hovered() && ctx.input(|input|input.pointer.primary_pressed()){
-            if let Some(origin)=ctx.input(|input|input.pointer.press_origin()).filter(|p|rect.contains(*p)).map(pixel){
+            if let Some(origin)=ctx.input(|input|input.pointer.press_origin()).filter(|p|transform.contains(*p)).map(pixel){
                 if let Some((index,kind))=self.hit_test(origin,zoom){self.begin_drag(index,kind,origin);}
             }
         }
@@ -432,12 +465,13 @@ if pro{
             ctx.set_cursor_icon(if kind==DragKind::Move{if self.drag.is_some(){egui::CursorIcon::Grabbing}else{egui::CursorIcon::Grab}}else{egui::CursorIcon::ResizeHorizontal});
             response.clone().on_hover_text(crate::i18n::t("Drag inside to move; drag a circular edge to resize. Delete removes the selection."));
         }}
-        for (index,aperture) in self.apertures.iter().enumerate(){draw_shape(painter,rect,zoom,&aperture.shape,if self.selected==Some(index){Color32::YELLOW}else{Color32::LIGHT_BLUE});if let Some(background)=&aperture.background{draw_shape(painter,rect,zoom,background,Color32::from_rgb(90,190,110));}}
-        if let Some(aperture)=self.selected.and_then(|i|self.apertures.get(i)){if let Shape::Circle{center,radius}=&aperture.shape{draw_circle_handles(painter,rect,zoom,*center,*radius,Color32::YELLOW);}}
+        }
+        for (index,aperture) in self.apertures.iter().enumerate(){draw_shape_transformed(painter,transform,&aperture.shape,if self.selected==Some(index){Color32::YELLOW}else{Color32::LIGHT_BLUE});if let Some(background)=&aperture.background{draw_shape_transformed(painter,transform,background,Color32::from_rgb(90,190,110));}}
+        if let Some(aperture)=self.selected.and_then(|i|self.apertures.get(i)){if let Shape::Circle{center,radius}=&aperture.shape{draw_circle_handles(painter,transform,*center,*radius,Color32::YELLOW);}}
         #[cfg(feature="pro")]
-if pro{if let Some(template)=&self.preview_template{for aperture in &template.apertures{draw_shape(painter,rect,zoom,&aperture.shape,Color32::LIGHT_BLUE);if let Some(background)=&aperture.background{draw_shape(painter,rect,zoom,background,Color32::LIGHT_BLUE);}}}}
+if pro{if let Some(template)=&self.preview_template{for aperture in &template.apertures{draw_shape_transformed(painter,transform,&aperture.shape,Color32::LIGHT_BLUE);if let Some(background)=&aperture.background{draw_shape_transformed(painter,transform,background,Color32::LIGHT_BLUE);}}}}
         #[cfg(feature="pro")]
-        if self.draft.len()>1{draw_shape(painter,rect,zoom,&Shape::Path{points:self.draft.clone(),width:self.width,inner_width:0.,smooth:false},Color32::LIGHT_RED);}
+        if self.draft.len()>1{draw_shape_transformed(painter,transform,&Shape::Path{points:self.draft.clone(),width:self.width,inner_width:0.,smooth:false},Color32::LIGHT_RED);}
     }
 }
 fn same_aperture(a:&Aperture,b:&Aperture)->bool{a.name==b.name && a.shape==b.shape && a.background==b.background && a.exclude==b.exclude}
@@ -477,23 +511,27 @@ fn edge_hit(aperture:&Aperture,p:[f64;2],zoom:f32)->Option<DragKind>{
     edges.into_iter().filter(|(delta,radius,_)|*delta<=(6./f64::from(zoom)).min(radius*0.3)).min_by(|a,b|a.0.total_cmp(&b.0)).map(|(_,_,kind)|kind)
 }
 fn pixel_position(rect:Rect,zoom:f32,pos:Pos2)->[f64;2]{[f64::from((pos.x-rect.left())/zoom)-0.5,f64::from((rect.bottom()-pos.y)/zoom)-0.5]}
-fn draw_circle_handles(painter:&egui::Painter,rect:Rect,zoom:f32,center:[f64;2],radius:f64,color:Color32){
-    if radius*f64::from(zoom)<8.{return;}
-    for offset in [[radius,0.],[-radius,0.],[0.,radius],[0.,-radius]]{let p=position(rect,zoom,[center[0]+offset[0],center[1]+offset[1]]);painter.rect_filled(Rect::from_center_size(p,egui::vec2(6.,6.)),1.,color);}
+fn draw_circle_handles(painter:&egui::Painter,transform:ImageTransform,center:[f64;2],radius:f64,color:Color32){
+    if radius*f64::from(transform.zoom)<8.{return;}
+    for offset in [[radius,0.],[-radius,0.],[0.,radius],[0.,-radius]]{let p=transform.pixel_to_screen([center[0]+offset[0],center[1]+offset[1]]);painter.rect_filled(Rect::from_center_size(p,egui::vec2(6.,6.)),1.,color);}
 }
 fn position(rect:Rect,zoom:f32,p:[f64;2])->Pos2{Pos2::new(rect.left()+(p[0] as f32+0.5)*zoom,rect.bottom()-(p[1] as f32+0.5)*zoom)}
 pub fn draw_shape(painter:&egui::Painter,rect:Rect,zoom:f32,shape:&Shape,color:Color32){
+    draw_shape_transformed(painter,ImageTransform::from_rect(rect,zoom),shape,color);
+}
+pub fn draw_shape_transformed(painter:&egui::Painter,transform:ImageTransform,shape:&Shape,color:Color32){
+    let zoom=transform.zoom;
     let stroke=Stroke::new(1.3_f32,color);
     match shape {
-        Shape::Circle{center,radius}=>{painter.circle_stroke(position(rect,zoom,*center),*radius as f32*zoom,stroke);},
-        Shape::Ring{center,inner,outer}=>for radius in [inner,outer]{painter.circle_stroke(position(rect,zoom,*center),*radius as f32*zoom,stroke);},
-        Shape::Polygon{points,holes}=>{let mut points=points.iter().map(|p|position(rect,zoom,*p)).collect::<Vec<_>>();if let Some(first)=points.first().copied(){points.push(first);}painter.add(egui::Shape::line(points,stroke));for hole in holes{draw_shape(painter,rect,zoom,&Shape::Polygon{points:hole.clone(),holes:vec![]},color);}},
-        Shape::Union{shapes}=>for shape in shapes{draw_shape(painter,rect,zoom,shape,color);},
-        Shape::Path{..}=>{let flattened=shape.flattened();if let Shape::Path{points,width,..}=flattened{painter.add(egui::Shape::line(points.iter().map(|p|position(rect,zoom,*p)).collect(),stroke));if let Some(p)=points.first(){painter.text(position(rect,zoom,*p),egui::Align2::LEFT_BOTTOM,format!("width {width:0.2} px"),egui::FontId::proportional(10.),color);}}},
+        Shape::Circle{center,radius}=>{painter.circle_stroke(transform.pixel_to_screen(*center),*radius as f32*zoom,stroke);},
+        Shape::Ring{center,inner,outer}=>for radius in [inner,outer]{painter.circle_stroke(transform.pixel_to_screen(*center),*radius as f32*zoom,stroke);},
+        Shape::Polygon{points,holes}=>{let mut points=points.iter().map(|p|transform.pixel_to_screen(*p)).collect::<Vec<_>>();if let Some(first)=points.first().copied(){points.push(first);}painter.add(egui::Shape::line(points,stroke));for hole in holes{draw_shape_transformed(painter,transform,&Shape::Polygon{points:hole.clone(),holes:vec![]},color);}},
+        Shape::Union{shapes}=>for shape in shapes{draw_shape_transformed(painter,transform,shape,color);},
+        Shape::Path{..}=>{let flattened=shape.flattened();if let Shape::Path{points,width,..}=flattened{painter.add(egui::Shape::line(points.iter().map(|p|transform.pixel_to_screen(*p)).collect(),stroke));if let Some(p)=points.first(){painter.text(transform.pixel_to_screen(*p),egui::Align2::LEFT_BOTTOM,format!("width {width:0.2} px"),egui::FontId::proportional(10.),color);}}},
         Shape::Ellipse{center,radii,angle_deg}|Shape::Rectangle{center,size:radii,angle_deg}=>{
             let ellipse=matches!(shape,Shape::Ellipse{..});let count=if ellipse{64}else{4};let angle=angle_deg.to_radians();let mut points=Vec::new();
             for i in 0..count {let p=if ellipse{let t=i as f64/count as f64*std::f64::consts::TAU;[radii[0]*t.cos(),radii[1]*t.sin()]}else{let signs=[[-0.5,-0.5],[0.5,-0.5],[0.5,0.5],[-0.5,0.5]][i];[radii[0]*signs[0],radii[1]*signs[1]]};points.push([center[0]+p[0]*angle.cos()-p[1]*angle.sin(),center[1]+p[0]*angle.sin()+p[1]*angle.cos()]);}
-            draw_shape(painter,rect,zoom,&Shape::Polygon{points,holes:vec![]},color);
+            draw_shape_transformed(painter,transform,&Shape::Polygon{points,holes:vec![]},color);
         },
     }
 }

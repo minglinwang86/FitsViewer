@@ -1,6 +1,6 @@
 # FitsViewer
 
-[简体中文](README.zh-CN.md) · [Download 0.1.5rc1](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.5-rc.1) · [Install](docs/INSTALL.md) · [Commands](docs/COMMANDS.md) · [Architecture](docs/ARCHITECTURE.md) · [Agent work log (中文)](AgentWorkLog.md)
+[简体中文](README.zh-CN.md) · [Download 0.1.6](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.6) · [Install](docs/INSTALL.md) · [Commands](docs/COMMANDS.md) · [Architecture](docs/ARCHITECTURE.md) · [Agent work log (中文)](AgentWorkLog.md)
 
 A lightweight viewer for quickly opening and inspecting astronomical FITS images and spectra on remote servers, in local containers, and on Linux, Windows or macOS desktops. Double-click a file in JupyterLab, open it from a terminal, or embed it in a Notebook.
 
@@ -10,7 +10,7 @@ A lightweight viewer for quickly opening and inspecting astronomical FITS images
 
 ![JWST SMACS 0723 gravitational-lensing field in FitsViewer](docs/images/jwst-smacs0723-interface.png)
 
-JWST/NIRCam F277W, SMACS 0723; an earlier interface screenshot retained as the project's astronomical preview. The current 0.1.5 interface is shown below. Observations: NASA, ESA, CSA, STScI. Mosaic: [Gabriel Brammer (2022)](https://doi.org/10.5281/zenodo.6874301), CC BY 4.0. [Crop and reproduction details](docs/images/README.md).
+JWST/NIRCam F277W, SMACS 0723; an earlier interface screenshot retained as the project's astronomical preview. The current 0.1.6 interface is shown below. Observations: NASA, ESA, CSA, STScI. Mosaic: [Gabriel Brammer (2022)](https://doi.org/10.5281/zenodo.6874301), CC BY 4.0. [Crop and reproduction details](docs/images/README.md).
 
 ## Minimal mode
 
@@ -24,9 +24,11 @@ Eight stretch choices: **Linear, Log, Power, Sqrt, Squared, Asinh, Sinh and Hist
 
 ### Basic apertures and coordinates
 
-Create a circular aperture and sky annulus; select it, move it, edit its radius or drag its edge. **Delete / Backspace** removes the selected aperture when a text field is not being edited. Measurements use original physical pixels; uncertainty and SNR require an appropriate error image or explicit noise model.
+Create a circular aperture and sky annulus; select it, move it, edit its radius or drag its edge. **Delete / Backspace** removes the selected aperture when a text field is not being edited; **Clear all apertures** removes the whole set. Measurements use original physical pixels; uncertainty and SNR require an appropriate error image or explicit noise model.
 
-The shared **Coordinates** panel shows one-based pixels and FK5 J2000 coordinates. **Recognize / calibrate with Gaia** uses an existing or approximate field position and scale, then applies a validated WCS overlay. Its cached mapping supplies the cursor readout. This is a bounded field solver, not an all-sky blind solution; it leaves the FITS header unchanged.
+The shared **Coordinates** panel shows one-based pixels and FK5 J2000 coordinates. **Recognize / calibrate with Gaia** uses an existing or approximate field position and scale, then applies an independently validated WCS overlay with a default 3 arcsec acceptance limit. Its cached mapping supplies the cursor readout. Legacy FITS dates such as `29/11/51` are interpreted as 1951-11-29 for proper-motion propagation. This is a bounded field solver, not an all-sky blind solution; it leaves the FITS header unchanged.
+
+The **Scale bar** control sits beside the HDU selector. Rotate the display by ±90° or a chosen angle using the lower-right controls. Apertures, picking and coordinates use the same inverse display transform; source arrays are unchanged.
 
 ![Minimal aperture measurement and editable aperture geometry](docs/images/v0.1.5rc1/mini-aperture.jpg)
 
@@ -34,7 +36,7 @@ The shared **Coordinates** panel shows one-based pixels and FK5 J2000 coordinate
 
 View 1D FITS spectra, recognized binary-table spectra, or numeric text files. Select wavelength/flux/error columns, show uncertainties, zoom and pan, and read the nearest original sample. Invalid samples break the plot instead of being joined across gaps.
 
-**Settings** switches English/简体中文, theme and default startup mode. Chinese paths are retained for opening and copying. Popup size, position and folded state are remembered.
+**Settings** switches English/简体中文, theme and default startup mode, and opens as a separate window. Select an external Python environment, inspect its actual dependencies and explicitly install selected missing packages. Chinese paths are retained for opening and copying. Popup size, position and folded state are remembered.
 
 ![Minimal spectrum display using public SDSS data](docs/images/v0.1.5rc1/mini-spectrum.jpg)
 
@@ -64,13 +66,21 @@ The same coordinates/Gaia tools available in Minimal can be docked beside other 
 
 ### 4. Source finding and traces
 
-Find simple stellar candidates, inspect quality flags and manually correct selections. Detect straight traces, follow a seeded curved trace, and inspect a line or band profile. The source finder is not PSF photometry; trace inspection does not perform wavelength-calibrated optimal spectral extraction.
+**Find stars** projects Gaia DR3 or SDSS DR17 identities through the current WCS, including a validated Gaia override. **Local source candidates** separately detects intensity peaks; those peaks are not catalogue identities or PSF photometry. Detect straight traces, click a seed to follow a curved trace, or click control points for a line/band profile. Trace inspection does not perform wavelength-calibrated optimal spectral extraction.
 
 ![PRO source detection on the real M67 field](docs/images/v0.1.5rc1/pro-detection.jpg)
 
 ### 5. Catalogues, cross-matching and interoperability
 
-Overlay local catalogues, match catalogues locally, or explicitly call CDS XMatch. Query SIA v1, SSA or TAP services and download a selected resource. SAMP exchanges information with an external Hub/client; remote deployments can use the optional local bridge.
+Overlay local catalogues, match catalogues locally, or explicitly call CDS XMatch with Gaia, 2MASS, Pan-STARRS1 or SDSS presets. **Nearby observations** searches Aladin/CDS, SDSS, DES, Legacy Surveys, NOIRLab, MAST, ESO, CADC, IRSA, ALMA and ASTRON interfaces. Results distinguish survey coverage, observation inventories, FITS products and DataLink resources. A coverage/preview record alone does not establish an individual exposure or a downloadable original FITS file. SAMP exchanges information with an external Hub/client; remote deployments can use the optional local bridge.
+
+Searches default to the current image's WCS footprint. The main list prefers image
+areas of **40%–150%** of the current field, excludes larger products and offers
+smaller partial coverage only when this bounded response has no preferred match.
+Area ratio and actual overlap are displayed separately. Generate a resampled HiPS
+FITS cutout or download a selected FITS product, save it beside the original and
+add it to the viewer. Unwritable destinations explicitly use a temporary result;
+the original stays unchanged. [Geometry, downloads and limits](docs/SCIENTIFIC_TOOLS.md#catalogues-and-nearby-observations).
 
 Local matching does not upload rows. CDS receives row identifiers, J2000 positions and explicitly selected extra columns. Online tools need the corresponding external packages and reachable services.
 
@@ -106,7 +116,7 @@ New screenshots use public scientific data. [Credits and capture details](docs/i
 
 ## Install
 
-Download the **Full** asset for your platform from [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.5-rc.1). This release has no separate Mini-only package and is not published on PyPI.
+Download the **Full** asset for your platform from [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.6). This release has no separate Mini-only package and is not published on PyPI.
 
 | Route | Use |
 |---|---|
@@ -120,7 +130,7 @@ Download the **Full** asset for your platform from [GitHub Releases](https://git
 For Linux Jupyter, activate the environment that **runs the Jupyter server**, then install the downloaded wheel with its integration extra:
 
 ```bash
-python -m pip install --upgrade "./fitsviewer-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl[jupyter]"
+python -m pip install --upgrade "./fitsviewer-0.1.6-py3-none-manylinux_2_28_x86_64.whl[jupyter]"
 fitsviewer defaults set --jupyter yes --desktop no
 fitsviewer jupyter start --root "$HOME/data" --port 8082
 ```
@@ -146,6 +156,12 @@ show("data/image.fits", height=650)
 
 Paths are relative to the Jupyter root. If server and kernel use different environments, the server needs the Jupyter integration and the kernel needs the Python import.
 
+## Open remote files over ordinary SSH
+
+With an SSH local forward already in place, run `fver image.fits` on the remote host. The independent viewer provides a first clickable URL and can reuse an open browser window for later commands. An explicitly paired optional local helper can instead open the native app. Jupyter and X11 forwarding are not required. SSH alone cannot control a local browser window or add a port forward to an existing connection; see [setup and pairing](docs/REMOTE_VIEWING.md).
+
+Selected HDUs with a complete decoded packet up to 20 MB transfer once. Larger supported images use a preview and visible numeric tiles; precise cursor values and scientific measurements still read the original data. Each remote view bounds its tile cache and outstanding requests. No Chromium, Python runtime or scientific package stack is bundled.
+
 ## Requirements and limits
 
 | Component | Supported scope |
@@ -157,13 +173,13 @@ Paths are relative to the Jupyter root. If server and kernel use different envir
 | Browser | WebAssembly and WebGL; Windows/macOS browsers can connect to Linux over SSH |
 | Scientific tools | Packages in your selected environment; [dependency list](DEPENDENCIES.txt) |
 
-JupyterLab 5, Linux/Windows ARM packages, Linux musl, Safari and actual X2Go forwarding are outside current acceptance. A manylinux baseline is not certification of every distribution. macOS startup probes do not constitute full interactive GUI acceptance; see the [validation scope](docs/releases/VALIDATION-0.1.5rc1.md).
+JupyterLab 5, Linux/Windows ARM packages, Linux musl, Safari and actual X2Go forwarding are outside current acceptance. A manylinux baseline is not certification of every distribution. macOS startup probes do not constitute full interactive GUI acceptance; see the [validation scope](docs/releases/VALIDATION-0.1.6.md).
 
 FITS images support BITPIX 8/16/32/64/−32/−64 with BSCALE/BZERO/BLANK. Tiled images support RICE/GZIP/GZIP2; HCOMPRESS, PLIO and compressed null-mask columns remain unsupported. Spectra cover 1D arrays, recognized scalar/fixed-vector binary tables and UTF-8 numeric text.
 
-Open `.fits.gz` directly. Extract ZIP/TAR archives before opening their FITS members. Cubes, general table editing, variable-length/multiple-order spectra and full nonlinear spectral WCS are not implemented. Input/decompressed files are bounded to 512 MiB, images to 32 Mi pixels, text spectra to 32 MiB and spectra to one million samples; these are not total-memory guarantees.
+Open `.fits.gz` directly. Extract ZIP/TAR archives before opening their FITS members. Cubes, general table editing, variable-length/multiple-order spectra and full nonlinear spectral WCS are not implemented. The complete-array reader bounds input/decompressed files to 512 MiB and images to 32 Mi pixels; text spectra are limited to 32 MiB and spectra to one million samples. HTTP seek access to ordinary two-dimensional FITS can exceed the complete-array limits without loading the full image. Compressed inputs still have preparation/decode bounds, and a spectrum above the 20 MB complete-packet threshold is rejected. See [transport limits](docs/REMOTE_VIEWING.md); these component budgets are not total-memory guarantees.
 
-Closing a view releases its renderer and owned jobs/artifacts. Allocator/browser caches can keep process memory above its starting value. See [release validation](docs/releases/VALIDATION-0.1.5rc1.md) for tested scope.
+Closing a view releases its renderer and owned jobs/artifacts. Allocator/browser caches can keep process memory above its starting value. See [release validation](docs/releases/VALIDATION-0.1.6.md) for tested scope.
 
 ## Development and license
 

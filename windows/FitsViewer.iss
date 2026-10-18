@@ -1,11 +1,14 @@
 #ifndef AppVersion
-  #define AppVersion "0.1.5rc1"
+  #define AppVersion "0.1.6"
+#endif
+#ifndef AppNumericVersion
+  #define AppNumericVersion "0.1.6.0"
 #endif
 #ifndef PayloadDir
   #define PayloadDir "payload"
 #endif
 #ifndef ReleaseDir
-  #define ReleaseDir "..\release\0.1.5rc1"
+  #define ReleaseDir "..\release\0.1.6"
 #endif
 #define WheelName "fitsviewer-" + AppVersion + "-py3-none-win_amd64.whl"
 
@@ -33,7 +36,7 @@ SolidCompression=yes
 WizardStyle=modern
 OutputDir={#ReleaseDir}
 OutputBaseFilename=FitsViewer-{#AppVersion}-windows-x86_64-setup
-VersionInfoVersion=0.1.5.1
+VersionInfoVersion={#AppNumericVersion}
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked

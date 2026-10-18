@@ -1,5 +1,21 @@
 # Changelog / 版本记录
 
+## 0.1.6 — Full / 全功能版
+
+- Compact shared English/Chinese toolbars, horizontal PRO task buttons, standalone Settings/Header windows, and primary actions visible on dedicated tool pages.
+- Clear all apertures, selected-aperture Delete/Backspace, shared display rotation with a directly visible Reset for images/regions/layers/picking, and an adjustable scale bar beside HDU.
+- Catalogue identity overlays separated from local intensity candidates; Gaia defaults to a 3 arcsec validation limit and accepts legacy FITS `DD/MM/YY` observation dates without guessing the century.
+- CDS catalogue presets and explicit nearby-observation searches across major archive interfaces; current-image spherical footprint filtering, 40%–150% area preference with partial fallback, bounded HiPS FITS cutouts and download/save/add actions.
+- External-environment dependency inspection and opt-in missing-package installation, with View-role ownership, cancellation and retained installation results.
+- Ordinary-SSH `fver` entry, independent browser service and optionally paired native helper; no Jupyter or X11 prerequisite, and no bundled browser runtime.
+- A 20 MB decoded-packet threshold for complete transfer; larger supported images use bounded numeric preview/tile/pixel APIs while scientific operations retain original coordinates and values.
+- File capabilities, one-use bootstrap/pairing tickets, distinct browser/helper/artifact scopes, stable source identities and bounded request/job ownership.
+- Fixed real HTTP numeric-query extraction, streaming POST regression, late-entered PRO heartbeat ordering, cancellation during persistent copies, and air/vacuum rest-frame spectral measurement consistency; retained first-failure and correction evidence.
+- Source/module guidance, reproducible checks, work logs and release-specific validation distinguish implementation, numeric tests, actual network/GUI tests and platform limits.
+
+中文：统一工具页与错误详情、孔径与旋转、星表／附近观测、依赖管理和普通 SSH 查看；
+修正旧式 FITS 日期、HTTP 协议与光谱空气／真空约定，保留科学数值及生命周期边界。
+
 ## 0.1.5rc1 — Full prerelease / 全功能预发布
 
 - Shared external Apache-licensed CJK fallback, Unicode path opening and paired-quote handling.

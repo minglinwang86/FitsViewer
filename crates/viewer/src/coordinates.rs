@@ -10,7 +10,7 @@ pub struct Coordinates {
     pub job:Option<String>,pub message:String,pub key:String,
     ra:String,dec:String,scale:String,rotation:f64,tolerance:f64,catalogue:String,last_poll:f64,heartbeat:f64,lease:bool,status_pending:bool,generation:u64,run:u64,source_hdu:Option<usize>,active_tolerance:f64,
 }
-impl Default for Coordinates {fn default()->Self{Self{open:false,busy:false,result:Value::Null,solution:None,use_solution:false,changed:false,job:None,message:String::new(),key:String::new(),ra:String::new(),dec:String::new(),scale:String::new(),rotation:0.,tolerance:1.,catalogue:String::new(),last_poll:-100.,heartbeat:-100.,lease:false,status_pending:false,generation:0,run:0,source_hdu:None,active_tolerance:1.}}}
+impl Default for Coordinates {fn default()->Self{Self{open:false,busy:false,result:Value::Null,solution:None,use_solution:false,changed:false,job:None,message:String::new(),key:String::new(),ra:String::new(),dec:String::new(),scale:String::new(),rotation:0.,tolerance:3.,catalogue:String::new(),last_poll:-100.,heartbeat:-100.,lease:false,status_pending:false,generation:0,run:0,source_hdu:None,active_tolerance:3.}}}
 impl Coordinates {
     pub fn header(&self)->Option<&str>{self.use_solution.then_some(self.solution.as_deref()).flatten().filter(|header|valid_header(header))}
     pub fn cancel(&mut self,ctx:&egui::Context,client:&Client,_generation:u64){
@@ -21,19 +21,19 @@ impl Coordinates {
     }
     pub fn bind(&mut self,ctx:&egui::Context,client:&Client,generation:u64,key:String,saved:Option<String>){
         if self.key==key && self.generation==generation{return;}self.cancel(ctx,client,generation);let open=self.open;let run=self.run;*self=Self::default();self.open=open;self.run=run;self.key=key;self.generation=generation;
-        if let Some(header)=saved.filter(|header|valid_header(header)){self.solution=Some(header);self.use_solution=true;self.changed=true;self.lease=true;client.request_labeled(ctx,generation,"gaia_acquire","gaia.acquire",json!({}));}
+        if let Some(header)=saved.filter(|header|valid_header(header)){self.solution=Some(header);self.use_solution=true;self.changed=true;self.lease=true;self.heartbeat=ctx.input(|i|i.time);client.request_labeled(ctx,generation,"gaia_acquire","gaia.acquire",json!({}));}
     }
     pub fn start(&mut self,ctx:&egui::Context,client:&Client,generation:u64,image:&FitsImage,mut params:Value)->Result<(),String>{
         if self.busy{return Err("Gaia calibration is already running".into());}
         if image.spectrum.is_some(){return Err("Gaia calibration needs a two-dimensional stellar image".into());}
         if !params.is_object(){params=json!({});}
-        let tolerance=if params["max_residual_arcsec"].is_null(){1.}else{params["max_residual_arcsec"].as_f64().ok_or("Maximum residual must be between 0.02 and 10 arcsec")?};
+        let tolerance=if params["max_residual_arcsec"].is_null(){3.}else{params["max_residual_arcsec"].as_f64().ok_or("Maximum residual must be between 0.02 and 10 arcsec")?};
         if !tolerance.is_finite() || !(0.02..=10.).contains(&tolerance){return Err("Maximum residual must be between 0.02 and 10 arcsec".into());}
         params["max_residual_arcsec"]=json!(tolerance);
         params["path"]=json!(image.info.path);params["hdu"]=json!(image.info.hdu);
         params["_coordinate_key"]=json!(self.key);
         if let Some(header)=self.header(){params["wcs_override"]=json!(header);}
-        self.generation=generation;self.run=self.run.saturating_add(1);self.source_hdu=Some(image.info.hdu);self.active_tolerance=tolerance;self.open=true;self.busy=true;self.lease=true;self.status_pending=false;self.message="Running Gaia calibration…".into();self.result=Value::Null;
+        self.generation=generation;self.run=self.run.saturating_add(1);self.source_hdu=Some(image.info.hdu);self.active_tolerance=tolerance;self.open=true;self.busy=true;self.lease=true;self.heartbeat=ctx.input(|i|i.time);self.status_pending=false;self.message="Running Gaia calibration…".into();self.result=Value::Null;
         client.request_labeled(ctx,generation,"job_start",&format!("gaia.start.{}",self.run),json!({"operation":"gaia_solve","params":params}));Ok(())
     }
     pub fn reply(&mut self,ctx:&egui::Context,client:&Client,generation:u64,reply:Reply){
@@ -99,7 +99,7 @@ impl Coordinates {
                 ui.horizontal(|ui|{ui.label(t("Maximum residual [arcsec]"));ui.add(egui::DragValue::new(&mut self.tolerance).range(0.02..=10.).speed(0.05));});
                 ui.label(t("Optional local Gaia reference table"));ui.text_edit_singleline(&mut self.catalogue);
             });
-            if !self.message.is_empty(){ui.label(t(&self.message));}
+            crate::controls::status_message(ui,&self.message);
             if self.result["accepted"]==true{
                 ui.label(format!("{}: {} · RMS {:.4}″ · {} RMS {:.4}″",t("Matched stars"),self.result["matched"],self.result["rms_arcsec"].as_f64().unwrap_or(0.),t("Validation"),self.result["validation_rms_arcsec"].as_f64().unwrap_or(0.)));
                 if let Some(center)=self.result["center_j2000"]["sexagesimal"].as_str(){ui.label(format!("{}: {center}",t("Image center J2000")));}

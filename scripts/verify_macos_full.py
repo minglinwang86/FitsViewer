@@ -144,6 +144,15 @@ def main():
                 assert build_info["features"] == expected_features
                 assert build_info["version"] == package["version"]
             report["checks"]["native_loader_and_full_entrypoints"] = True
+            helper = app.parent / "fver"
+            assert os.access(helper, os.X_OK)
+            helper_environment = dict(environment, FITSVIEWER_PYTHON=sys.executable,
+                                      PYTHONPATH=str(work / "unused-python-search"))
+            help_text = execute([helper, "--help"], helper_environment)
+            assert "--ssh" in help_text and "--target" in help_text
+            for name in ["__init__.py", "build_info.py", "runtime.py", "remote.py"]:
+                assert (resources / "python/fitsviewer" / name).read_bytes() == (ROOT / "jupyter/fitsviewer" / name).read_bytes()
+            report["checks"]["relocated_fver_shared_source_external_python_help"] = True
             save()
 
             real_file = work / "真实图像 空格.fits"

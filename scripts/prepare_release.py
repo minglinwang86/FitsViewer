@@ -52,6 +52,7 @@ files.append(root / "scripts/build_profiles.py")
 files.extend(root / name for name in ["AGENTS.md", "AgentWorkLog.md"])
 files.extend(root / "scripts" / name for name in ["verify_science.py","verify_spectra.py","verify_spectral_analysis.py","verify_image_matching.py","verify_vo.py","verify_interactive.cjs","build_static.py"])
 files.extend(root / "scripts" / name for name in ["build_macos_full.py", "verify_macos_full.py", "macos_licenses.py"])
+files.extend(root / "scripts" / name for name in ["check_remote.py", "verify_online_services.py"])
 files.extend(root / name for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "requirements-build.txt", "requirements.txt", "requirements-spectra.txt", "DEPENDENCIES.txt",
              ".gitignore", ".gitattributes", "README.md", "README.zh-CN.md", "LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md",
              "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md"])
@@ -59,7 +60,7 @@ files = sorted(set(files))
 for path in files:
     assert path.is_file(), "Missing release source: " + str(path)
     if path.suffix in {".md", ".json", ".ipynb", ".py", ".sh", ".toml", ".yml"}:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert not re.search(r"token=[A-Za-z0-9]{16,}", text), "Token in " + str(path)
 out = root / "release" / version
 out.mkdir(parents=True, exist_ok=True)
@@ -71,7 +72,7 @@ with tarfile.open(source, "w:gz") as archive:
         # Preserve Linux launchers when packaging from a Windows checkout.
         # 在 Windows 打包时也保留 Linux 启动脚本的执行权限。
         relative = "/".join(Path(info.name).parts[1:])
-        executable = relative == "bin/fitsviewer" or relative.endswith(".sh")
+        executable = relative in {"bin/fitsviewer", "bin/fver"} or relative.endswith(".sh")
         info.mode = 0o755 if executable else 0o644
         info.pax_headers = {key: value for key, value in info.pax_headers.items() if key not in {"atime", "ctime"}}
         return info

@@ -1,6 +1,6 @@
 {
   "name": "fitsviewer",
-  "version": "0.1.5-rc.1",
+  "version": "0.1.6",
   "private": true,
   "description": "FitsViewer document viewer for JupyterLab",
   "license": "MIT",

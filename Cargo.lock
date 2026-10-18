@@ -833,13 +833,14 @@ dependencies = [
 
 [[package]]
 name = "fitsviewer"
-version = "0.1.5-rc.1"
+version = "0.1.6"
 dependencies = [
  "axum",
  "clap",
  "eframe",
  "fitsviewer-core",
  "fitsviewer-web",
+ "flate2",
  "serde",
  "serde_json",
  "tokio",
@@ -852,7 +853,7 @@ dependencies = [
 
 [[package]]
 name = "fitsviewer-core"
-version = "0.1.5-rc.1"
+version = "0.1.6"
 dependencies = [
  "fitsrs",
  "flate2",
@@ -863,7 +864,7 @@ dependencies = [
 
 [[package]]
 name = "fitsviewer-web"
-version = "0.1.5-rc.1"
+version = "0.1.6"
 dependencies = [
  "eframe",
  "ehttp",
@@ -872,6 +873,7 @@ dependencies = [
  "js-sys",
  "serde",
  "serde_json",
+ "ureq",
  "urlencoding",
  "wasm-bindgen",
  "wasm-bindgen-futures",
