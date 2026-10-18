@@ -2,6 +2,8 @@
 
 Read `docs/AI_DEVELOPMENT_GUIDE.md` and `docs/ARCHITECTURE.md` before a substantial change.
 They map source ownership, module features, scientific conventions and validation scope.
+Read [AgentWorkLog](AgentWorkLog.md) for prior UI decisions, lifecycle failures,
+source responsibilities and the distinction between historical and current evidence.
 
 - Preserve unrelated/uncommitted work. Read the affected implementations and lifecycle.
 - Use the shared core/viewer and module registry; do not create stripped source forks.

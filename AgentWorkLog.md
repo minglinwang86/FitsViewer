@@ -1,0 +1,884 @@
+# AgentWorkLog — FitsViewer 开发、UI 演进与源码交接记录
+
+> 面向接手源码的开发者及 AI Agent。最后整理日期：**2026-10-18**。
+> 本文以中文记录决策及故障经过，保留源码中的英文标识，方便检索。
+> Public, sanitized engineering handoff; historical evidence is separated from current implementation and execution results.
+
+## 阅读入口与适用基线
+
+本项目是以 Rust / fitsrs 为内核的轻量 FITS 查看器，服务于本地、远程服务器、容器、
+Jupyter 和桌面查看场景。它逐渐加入交互测量与外部科学工具，但不应被理解为已经验证的
+完整科研归约管线。本工具识别、推算或测量的坐标、流量、星等等数据建议仅作检查与参考；
+用于论文前须独立校准、验证并评估误差和系统效应。
+
+本记录对应以下基线，后续修改时应重新核对，不把这里的版本、包大小和测试数字当作永久常量：
+
+| 项目 | 本次交接基线 |
+|---|---|
+| 公开仓库 | [FitsViewer](https://github.com/minglinwang86/FitsViewer) |
+| 已发布预览版 | [v0.1.5-rc.1 / Python 0.1.5rc1](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.5-rc.1) |
+| 发布源码提交 | `b591ddc8a56ce1b4368537e8c5f66d4ed64e0c08` |
+| Mac 实际构建／验收提交 | `29e9140d67bc1ae30f5e79f4885d3ba16d770dcd`；随后发布提交仅补充文档与源归档过滤 |
+| 内核 | `fitsrs 0.4.1`，含仓库内可追溯小补丁 |
+| 本次发行范围 | **Full 一个功能集合**，运行时含 Minimal / PRO；不另发仅 Mini 功能的包 |
+| 本文变更范围 | 开发记录与导航；不重新生成已发布的 wheel、安装器或 Mac ZIP |
+
+推荐顺序：
+
+1. 读 [AGENTS.md](AGENTS.md)，确认本次请求是否允许编译、安装、重启和发布。
+2. 读本文的[结构地图](#source-map)、[跨模块流程](#flows)和[修改流程](#agent-workflow)。
+3. 对照 [AI 修改指南](docs/AI_DEVELOPMENT_GUIDE.md)、[架构](docs/ARCHITECTURE.md)
+   和 [资源生命周期](docs/RESOURCE_LIFECYCLE.md) 阅读实际函数体。
+4. 检查当前工作树、相关测试与最近新增记录，再修改源码。
+
+本文来自当前源码、历史对话、已保存工作日志、验收 JSON、截图索引及发布缓存的交叉整理。
+原始记录中存在私人路径、连接配置和测试令牌，因此没有把原始缓存整体上传。历史中出现过的
+过时名称和方案只用于解释决策；当前命令、Python 包及导入名均为 **`fitsviewer`**，
+产品显示名为 **FitsViewer**，不保留旧名称别名。
+
+## 目录
+
+- [1. 证据口径与长期约束](#evidence)
+- [2. 开发阶段与需求演进](#history)
+- [3. UI 多轮修改记录](#ui-history)
+- [4. 当前功能与入口](#features)
+- [5. 代码结构与编辑地图](#source-map)
+- [6. 跨模块数据、调用与状态流](#flows)
+- [7. 科学数值与数据约定](#science)
+- [8. 生命周期故障及修复经验](#lifecycle)
+- [9. 模块选择、体积与构建产物](#modules)
+- [10. 安装、Jupyter 和跨平台问题](#platforms)
+- [11. 测试方法、已有证据与边界](#validation)
+- [12. 本次发布中的实际阻塞](#release-problems)
+- [13. Agent 修改源码的操作规程](#agent-workflow)
+- [14. 未完成事项与接手建议](#next)
+- [15. 可公开复核的文档与记录更新规则](#references)
+
+<a id="evidence"></a>
+## 1. 证据口径与长期约束
+
+### 1.1 如何使用历史记录
+
+| 证据类型 | 可以说明 | 不能据此推断 |
+|---|---|---|
+| 需求／调研 | 为什么安排某个功能、曾经考虑哪些方案 | 功能已经实现或可正确运行 |
+| 当前源码阅读 | 分支、默认值、参数、状态与清理路径的实现 | 当前安装包一定包含该源码 |
+| 单元／合成测试 | 已定义输入和边界条件的数值或状态行为 | 真实仪器数据已完成科学验证 |
+| 真实数据集成运行 | 某个版本、环境和输入的完整路径跑通 | 所有系统、文件类型或科研对象适用 |
+| 实际截图／手势 | 特定窗口尺寸、语言、面板和状态的可用性 | 所有展开页面都检查过，或截图中的联网任务已成功 |
+| 发布文件 hash | 所验收文件与所上传文件的一致性 | 算法或测量具有论文级科学可靠性 |
+
+早期日志中的“待同步”“未发布”“待验收”是对应检查点的状态。后续可能已完成；应优先
+查看最后的验收与发布记录。反过来，后来的总体发布成功也不能把早期失败运行改写成通过。
+
+### 1.2 已反复确认的产品约束
+
+- JupyterLab 文件列表双击打开是优先入口，同时保留 Notebook 内嵌及命令行。
+- 极简模式保留日常显示、基础孔径测光和坐标／Gaia；复杂工具放 PRO，按需初始化。
+- 调用用户所选 Python / Conda 环境中的科学包，不内嵌 Python、Astropy、Specutils、
+  大型科学数据、星表或 TeX 排版引擎。外部 MathText 预览不等于内嵌 TeX。
+- 中英文、图像／光谱、Minimal／PRO、native／WASM 的共享行为尽量只实现一次。
+- 图标用于应用、查看标签、启动器、快捷方式和程序窗口；**不替换关联数据文件图标**。
+- 显示拉伸、图层透明度、相对亮度与预览处理不改写原始观测数组。
+- 关闭、换图和退出必须管理本程序拥有的资源；不按模糊进程名终止用户服务。
+- 源码修改、构建、部署、公开发布是不同操作。用户要求“只改源码”时，Cargo check/test
+  也属于编译，不应偷偷执行。
+
+<a id="history"></a>
+## 2. 开发阶段与需求演进
+
+以下按实际决策顺序归纳；没有可靠时间戳的细节不编造精确日期。
+
+| 阶段 | 原始问题／需求 | 实施方向与应保留的经验 |
+|---|---|---|
+| 初始调研 | Rust 点击即看；参考 DS9；Linux 命令行、Jupyter、Notebook 都要 | 选共享 Rust/egui native 与 WASM UI，Jupyter 用预构建扩展；不要为每个平台另写一个查看器 |
+| 内核选择 | 比较 JS9、CARTA 与 fitsrs；控制依赖体积 | 用户确认 fitsrs；遇到格式缺口用小适配层与明确拒绝处理，不能因此声称等同 CFITSIO 全格式支持 |
+| MVP | 缩放、scale、Jupyter 双击、远程弹出窗口 | 分开显示范围、stretch、亮度／对比度和物理数值；浏览器入口通过 Jupyter/SSH 复用 |
+| 交互补充 | DS9 风格右键拖动调亮度／对比度、平移、自动显示 | 手势与快捷键进入共享 UI；“参考 DS9”不等于数值算法和所有按键逐项一致 |
+| 安装与管理 | pip/git 安装、指定 Python/Conda、端口查看与修改、默认 FITS 查看器 | 配置端口、正在监听端口、本地 SSH 映射端口分别报告；安装器必须针对目标解释器工作 |
+| 跨平台发布 | Linux 兼容性、Windows 安装器、应用图标、统一名称 | 验收真实包及卸载；名称迁移后命令／包／导入保持统一，无冲突别名 |
+| 文件与稳定性 | 中文粘贴路径乱码、底部闪烁、`.fz`、基础光谱、开关多文件后的内存 | 新增读取适配、固定状态区布局、Unicode 端到端处理和资源释放测试 |
+| 功能扩展 | A 组进入极简；高级测量、WCS、星表、SAMP、导出与光谱工具进入 PRO | 以外部包执行科学计算，用模块 registry 和能力检查约束依赖 |
+| 真实使用与 UI 整理 | 工具栏拥挤、光谱出现图像测光面板、PRO 子页难用 | 按数据类型切工作区；Office/CAD 的任务栏思路与 PS 的面板管理思路结合 |
+| 快照与独立验收 | 用户指定先存 `1018001`，继续 UI、功能、进程与天文学使用模拟 | 快照是修改前回退点，不是版本号；保留失败证据与真实数据来源 |
+| Full 发布 | 用户授权编译、图文说明与上传；随后补 Mac | 冻结运行时，多平台单独验收；许可、隐私和实际公开下载校验是发布的一部分 |
+
+### 已被后续方案替代的做法
+
+早期曾为估算仅 Mini 包体积而临时剥离 PRO。用户指出这种方式不可维护，随后整理成同一
+源码的 feature/module 构建，不再用复制、AST 删除或临时删函数生成另一套应用。
+
+早期 Jupyter 直接把 TAR 当文本打开出现 “not UTF-8 encoded”，并非归档编码损坏。
+本次公开版本文档要求先解包 ZIP/TAR 再查看其中文件；不要把曾经讨论“压缩包查看”自动
+扩张为已实现任意归档浏览器。FITS 的 gzip 或 tile compression 与归档容器是不同问题。
+
+<a id="ui-history"></a>
+## 3. UI 多轮修改记录
+
+### 3.1 从堆叠工具到任务工具栏
+
+| 轮次／触发问题 | 修改及原因 | 后续 Agent 应遵守 |
+|---|---|---|
+| 初期功能不断增加，测光、坐标分别额外占一行 | 常用操作进入紧凑任务栏，复杂参数进入子页面 | 不在主画布上方为每个新能力常驻增加一整行 |
+| 用户要求参考 Office/CAD | 用任务选项页区分查看、测量、坐标、分析、星表、导出；内容随任务变化 | 顶部负责选择任务，详细参数由工作区承载 |
+| 光谱 PRO 仍显示找星／图像测光工作区 | 光谱专属任务及控制器；不加载无关图像工具 | 分支依据当前数据类型及 `spectrum` 元数据，不依据文件名猜测 |
+| 光谱上方任务太稀疏，随后功能增多又显拥挤 | 采用双行：常用模式／文件操作与按组科学任务；路径另有入口行 | 极简不被迫复制 PRO 的展开行；不要用大面积空白假装分组 |
+| 模块小字占独立一行 | 中文曾改为模块左侧小标签；英文删除这些辅助组名 | 保留真实操作含义；不要为英文重新增加无必要的竖排小标题 |
+| 同行按钮、下拉框高度不同 | 统一交互高度、padding、行距和共享样式 | 中英、Mini/PRO、图像/光谱同步；不能只修一张截图 |
+| 不同行之间的空隙仍不一致 | 将行高、行距和组间距作为布局规则，去掉空文本占位 | 同行高度一致不等于多行整体节奏已经一致 |
+| HDU 占据第二行空间 | Mini 和 PRO 都把 HDU 上移；后续删除左侧冗余“数据”字样 | 不把 HDU 重新塞回单独常驻行 |
+| 顶部路径过长，打开／文件头远在最右 | 路径按可用宽度布局；短路径操作靠近中部，长路径给动作让位；优先露出右侧文件名 | 缩略的是显示副本，完整 Unicode 路径必须保留 |
+| 设置／工作区与路径操作分散 | 放到文件头后；空间不足时压缩路径可视区域 | 重要动作应可达，不能被长路径挤到屏幕外 |
+| 图像任务被换成下拉选择器后不直观 | 当前图像 PRO 采用可见的小任务按钮并自然换行 | 历史窄窗选择器方案已被后续用户反馈替代 |
+| 极简测量／坐标及 PRO 选项行横向滚动过长 | 删除多余横向滚动容器，按内容自然换行／分组 | 不让主任务行产生常驻水平滚动条 |
+| 顶部 HTML “天文图像查看器”行重复 | 去掉重复标题；网页弹出行为用第一行右侧 `↗` | 网页外壳和 egui 内部不要各占一条重复品牌标题行 |
+
+负责文件主要是 [`ribbon.rs`](crates/viewer/src/ribbon.rs)、
+[`controls.rs`](crates/viewer/src/controls.rs)、[`ui_style.rs`](crates/viewer/src/ui_style.rs)
+与网页外壳 [`web/index.html`](web/index.html)。修改前确认操作到底属于哪一层。
+
+### 3.2 PS 风格 PRO 工作区与图层
+
+| 触发问题 | 实施／修复 | 设计约束 |
+|---|---|---|
+| PRO 区没有明显外框，模块边界弱 | 增加工作区框和面板层次 | 内容、分组和整体容器边界应可辨识 |
+| 单个图层缺少边框，名称、箭头和透明度散乱 | 每层独立框，按固定操作区布局，长名称截断 | 图层名称不能决定箭头列的位置 |
+| 上下箭头靠字形基线，视觉不居中 | 图标由几何线段按点击框中心绘制 | 不依赖字体的 Unicode 箭头作为对齐依据 |
+| 大量解释性文字占据面板正文 | 模块右侧统一 `…` 信息入口 | 运行、取消、错误、单位、拟合警告及结果有效性仍须直接可见 |
+| PRO 标题不够醒目、位置偏 | 标题加重，以整个边框为中心；子面板标题同样中心对齐 | 两侧按钮占用不对称时，文字也不能跟随剩余区域偏移 |
+| 测量、分析、坐标、星表等复杂子页各自弹窗 | 所有复杂 PRO 页面进入统一工作区 host | 不是仅把用户截图中提到的两个面板改成停靠 |
+| 用户要求可折成栏、移动、调大小、吸附 | 支持侧栏折叠、浮动、边缘吸附、标题区合并标签组、重新停靠 | 面板容器不拥有科学任务；布局操作不重建控制器 |
+| 关闭重开／刷新后布局丢失 | 保存顺序、开关、折叠、尺寸、位置与浮动组 | 图像和光谱布局分别保存；语言切换使用稳定非翻译 ID |
+
+轻量宿主集中在 [`workspace_ui.rs`](crates/viewer/src/workspace_ui.rs)。当前 `Page`
+覆盖 Current tool、Coordinates、Photometry、Growth、Preview、Files、Secondary、
+Histogram、Settings 和 Header。新复杂页面若绕过该 host 创建另一套窗口管理，会重现
+不一致的拖动、保存、关闭及状态归属问题。
+
+边缘吸附保留独立窗口；标题区域重叠用于标签组合，两者语义不同。隐藏／折叠面板保留
+任务与轮询。关闭浮窗可保留布局元数据以供下次恢复；应检查 `open=false` 和不再绘制，
+不能强制断言 `floating_groups` 数组必须清空。
+
+初版 Dock 在 `1018001` 审计中还暴露过以下状态问题，后续修改者尤其应保留对应防线：
+
+- 用 `current_open || saved_open` 恢复，把“用户明确关闭”重新打开，并让图像与光谱状态
+  互相覆盖。恢复、导入和本帧显式操作必须有确定优先级，不能用 bool OR 推断意图。
+- 浮窗 group 编号从 1 重新开始，原先只用 group id 作为 egui ID，导致图像／光谱串用
+  内部窗口记忆。当前 Window ID 包含 spectrum 上下文，并限制复用的 ID 数量。
+- 标题按下即开始吸附，普通单击或下层重叠标题也可能被误当拖动。必须区分 press 与真正
+  drag，检查可交互层归属，并让 Escape 能取消停靠会话。
+- 导入新布局后，帧尾又把旧内存 Dock 写回偏好，覆盖导入结果。当前集成检查布局变化并
+  重建 host；新增导入入口不能绕过该路径。
+- 激活已折叠浮窗中的页、dock 后重新 float、切换同号组及改变内容尺寸，都要检查实际
+  恢复结果；outer rect 与内容 size 不是同一个数。
+- 增长曲线／预览若缺源标记，切源后可能仍显示旧结果；Secondary 若只存外壳而不存对象
+  与链接参数，恢复出的不是同一个对照。业务来源与布局状态须分别验证。
+
+这些条目记录当时的问题和当前维护要求，不代表仅凭初版只读审计就已获得运行验收；
+后续实际折叠、浮动、吸附、恢复和源切换检查另见验收记录。
+
+### 3.3 黑边、空行和弹窗高度：实际失败经过
+
+1. **底部读数随文字长短换行，改变画布高度。** 光谱截图中看似“三列”的字段分组也引发
+   误解。最终使用固定两行读数，把“图像结构”和“游标像素／坐标／数值”稳定分开。
+   新增字段不得再次让鼠标移动改变画布尺寸。
+2. **对照控件单占一行。** 先移到上方空闲任务选项行；窄窗溢出时的备用行又留下黑边。
+   删除动态空行，窄窗改为同行 Compare 菜单。一次实际 850 px 复验中，受影响工具栏
+   从 108 px 降到 81 px。这个数值是当时截图测量，不能作为所有 DPI 的硬编码高度。
+3. **旧一帧 TopBottomPanel 裁剪。** 即时布局改变行数后，面板可能仍沿用上一帧边界。
+   当前记录工具栏实际高度并请求重绘；不要再靠额外空行掩盖剪裁问题。
+4. **菜单嵌套 ComboBox。** Compare 菜单内普通 ComboBox 替换了父 popup，表现为点开
+   选择后菜单立即关闭。改用原生级联子菜单并复用原选择数据，不另写第二套状态。
+5. **子窗口标题栏过高。** 统一紧凑标题和正文边距；12 pt 标题采用现有字体做轻量加重，
+   不因此额外打包完整粗体中文字库。一次验收中标题纯色带由 35 px 降至 23 px。
+6. **初稿窗口随重绘不断长高。** 在已有 Resize 最小尺寸后手动移动 cursor 补 padding，
+   使尺寸每帧累加。真实复验出现坐标窗内容从 250 高增至 390，重开后到 660。
+   暂停部署，改用标准 Frame 包住正文；保存的是原内容尺寸，正文边距只加一次。
+   新增坐标／测光各 80 帧、重开、保存与恢复回归。
+7. **最后统一普通控件字体。** 顶部普通控件为 12.5 pt，窗口标题保留独立 12 pt 规则，
+   科学绘图和统计文字按用途管理。字体“统一”不代表所有坐标轴与提示都强制同一字号。
+
+当前标题处理通过原始 Galley 身份和标题区域定位，只加重该标题；保留原生 close、collapse、
+淡入淡出、裁剪与拖动。不要粗暴全局替换文本绘制，或给浮窗标题盖一个拦截鼠标的新层。
+
+### 3.4 孔径、坐标与直方图的最后几轮修正
+
+- 孔径新增明确选中状态、删除按钮、Delete/Backspace、半径及背景环参数，并支持拖中心
+  移动、拖边界缩放。输入框正在编辑时 Delete 仍编辑文字，不能误删孔径。
+- 删除冗余的“移动孔径”工具；直接交互不要求用户先切换一个无意义的额外模式。
+- 孔径编辑只失效相关测量结果，通过 revision/generation 拒绝旧响应。
+- Gaia／WCS 解沿坐标功能共用，底部游标读数读取缓存；没有生成整幅像素到世界坐标的大数组。
+- 坐标前端为有界精确像素缓存，后端保留完整 Astropy WCS 模型；不是对坐标做近似插值。
+- 物理数值直方图缩为小窗口，计数和显示设置同行。当前实现默认 340×180、统计字 11 pt、
+  绘图区高上限 120；这些是源码中的当前设置，后续调整仍应从共享样式入手。
+
+### 3.5 功能入口命名造成的实际误解
+
+一次用户询问“谱线识别去哪了”，Agent 把它误解为 Gaussian/Voigt 拟合。应区分：
+
+| 用户目的 | 当前入口 | 实际能力 |
+|---|---|---|
+| 自动寻找发射／吸收特征 | 光谱 → PRO → **谱线** → 候选特征（Specutils）→ 寻找候选发射／吸收特征 | 外部 Specutils 导数／阈值找特征，按给定红移和线表给候选名 |
+| 拟合选中的谱线轮廓 | 光谱 → PRO → **线形拟合** | 1–4 个有界 Gaussian/Voigt 分量、固定连续谱、模型与残差 |
+| 手动查看已知谱线位置 | 光谱 → PRO → **谱线** 的参考列表／线组 | 参考波长、红移和标线宽度；不执行自动找线 |
+
+自动找线入口目前在手动参考列表下方，发现性不足。此项在本文整理时仅记录为后续 UI
+改进建议，**没有为了写文档而改动 UI 或新增完整自动红移／物种分类**。
+
+当前真实 UI 示例仅用于理解已发布界面，不代表所有功能执行成功：
+
+![Minimal 图像界面](docs/images/v0.1.5rc1/mini-image.jpg)
+
+![PRO 光谱标线界面](docs/images/v0.1.5rc1/pro-spectrum-lines.jpg)
+
+<a id="features"></a>
+## 4. 当前功能与入口
+
+### 4.1 基础能力与 Minimal
+
+| 能力 | 当前范围与限制 |
+|---|---|
+| 图像／HDU | 可查看 FITS 图像、相关压缩形式与受支持的 HDU；保留原始头，不把不同 HDU 的头合并冒充原头 |
+| 压缩图像 | gzip；tile 的 RICE_1、GZIP_1、GZIP_2；HCOMPRESS_1、PLIO_1、压缩 null mask 等明确拒绝 |
+| 光谱 | 受支持的 1D FITS、表格型光谱及文本／gzip 文本；显式 X/Flux/Error 选择；不等于通用 FITS 表编辑器 |
+| 显示 | 缩放、平移、自动适应、反转、范围与八种 stretch、右键亮度／对比度、自动显示 |
+| 基础测光 | 圆孔径、背景环、移动／缩放／删除、结果与误差来源；不是 PSF 测光 |
+| 坐标 | 像素、J2000/WCS 和外部 Gaia 校准入口；需要初始场约束，不是无条件全空盲解 |
+| 偏好 | 中英、主题、默认 Minimal/PRO、窗口状态；Full 在 Minimal 时不初始化 PRO 控制器 |
+
+八种 stretch 为 Linear、Log、Power、Sqrt、Squared、Asinh、Sinh、Histogram Equalization。
+ZScale 属于显示范围选择，不是第九个 stretch。自动显示选择查看起点，不进行科学定标。
+
+### 4.2 图像 PRO
+
+图层显隐／顺序／透明度、多图对照与联动；场星相对亮度匹配；高级孔径与模板；简单找星；
+直线与受约束曲线迹线／线型孔径；星表叠加、本地／CDS XMatch；WCS 工具、在线检索与
+SAMP；可视化重投影、RGB、标注及导出。详见 [科学工具](docs/SCIENTIFIC_TOOLS.md)
+和 [图层](docs/IMAGE_LAYERS.md)。
+
+“场星定标”在本实现中估计相对显示比例，不提供已经建立标准星零点的绝对流量／星等。
+重投影主要服务显示，不能当作保流量科研重采样；曲线跟踪不是任意图像中全自动恢复任意曲线。
+
+### 4.3 光谱 PRO
+
+参考线与线组、发射／吸收候选、红移及空气／真空标线；连续谱与归一／扣除预览；EW/pEW、
+净流量、质心、极值、FWHM、显示速度轴；分段平滑；1–4 分量 Gaussian/Voigt；相对黑体；
+多谱原网格显示及显示比例／偏置。**多谱相减与合并尚未实现**。
+
+自动特征检测调用 `specutils.fitting.find_lines_derivative` 或 `find_lines_threshold`。
+先对有效连续段扣滑动中值；阈值法需要有效误差，导数法可使用记录的噪声估计。结果是
+候选极值及邻近参考线，不自动确定元素、红移、超新星类型或吸积盘物理参数。
+
+当前小参考线表并非完整原子数据库。宽线、混叠、速度位移、连续谱选择与分辨率都会影响
+结果。详见 [谱线候选](docs/SPECTRA.md) 和 [光谱分析](docs/SPECTRAL_ANALYSIS.md)。
+
+<a id="source-map"></a>
+## 5. 代码结构与编辑地图
+
+### 5.1 顶层目录及唯一职责
+
+```text
+Cargo.toml / Cargo.lock       Rust workspace、版本、锁定依赖与 fitsrs patch
+crates/core/src/              FITS/光谱读取、物理样本、显示数值、孔径几何
+crates/viewer/src/            native/WASM 共用 egui UI 和文档状态
+crates/server/src/            原生宿主、HTTP、纯 Rust 测量、外部 worker 归属
+web/                         浏览器外壳、共享字体/图标与 web/python 科学适配器
+jupyter/src/                 JupyterLab TypeScript 扩展源码
+jupyter/fitsviewer/           Python CLI、安装管理、proxy、Notebook API
+jupyter/hatch_build.py        wheel 构建 hook
+config/                      模块 registry 与锁定的 Mac 资源输入
+scripts/                     构建、打包、字体、许可、安装及验收入口
+qa/                          小型回归与浏览器测试依赖清单
+vendor/fitsrs/               受控的上游源码及必要兼容补丁
+licenses/                    上游许可证、字体许可与来源
+windows/ / macos/             平台安装器或原生启动器相关源码
+docs/                        架构、协议、使用、科学边界、验收范围
+examples/                    仓库可分发的小型示例；不是私人观测库
+```
+
+`target/`、`web/pkg/`、预构建 Lab 输出、`_vendor/`、`build/`、`dist/`、wheel 和安装器
+都是产物或缓存。**不要修改它们代替修改源码**。目录中有旧 WASM 并不能证明发布包使用它；
+发布时必须根据 manifest 和实际包成员核对。
+
+### 5.2 Rust core：读取与科学数值，不管理 UI
+
+| 文件 | 职责／关键类型 | 修改后追踪 |
+|---|---|---|
+| [`lib.rs`](crates/core/src/lib.rs) | `FitsImage`、`ImageInfo`、`HduInfo`、`RawPixels`、`SpectrumMeta/Data`、`ErrorKind`、`LoadOptions`、统计和基础 stretch | reader、包协议、UI 与 Python 数据消费 |
+| [`reader.rs`](crates/core/src/reader.rs) | 普通 FITS/gzip、选择 HDU 与读取入口 | 空 primary、错误 HDU、尺寸/输入上限 |
+| [`compressed_reader.rs`](crates/core/src/compressed_reader.rs) | 有界 tile 适配，descriptor、边缘 tile、shuffling、gzip fallback、量化 | 原始/物理参考像素与 codec 拒绝分支 |
+| [`spectral_reader.rs`](crates/core/src/spectral_reader.rs) | FITS/表／文本谱、选列、波长及误差约定 | sigma/variance/ivar、log 坐标、单位与缺失值 |
+| [`display.rs`](crates/core/src/display.rs) | 显示映射、直方图相关统计、自动范围所需数据 | 只改显示，不重复应用 BSCALE/BZERO |
+| [`regions.rs`](crates/core/src/regions.rs) | 孔径几何与基础数值 | UI 像素原点、背景环、误差模型 |
+| [`view.rs`](crates/core/src/view.rs) | 视图配置契约与验证 | CLI/API/session 的输入一致性 |
+
+fitsrs 的补丁通过 workspace `[patch.crates-io]` 固定。补丁公开已有 Rice 能力／常量，
+明确小端输出及有符号差值重建的 wrapping arithmetic；tile 兼容工作在本项目适配层。
+升级 fitsrs 应重做参考数据比较并评估移除补丁，不能直接删除 vendor 后假定结果相同。
+详见 [补丁说明](vendor/README.fitsviewer.md)。
+
+### 5.3 Shared viewer：协调层、控制器、绘制和布局分开
+
+| 文件 | 核心职责 | 不应承担 |
+|---|---|---|
+| [`lib.rs`](crates/viewer/src/lib.rs) | `FitsApp` 生命周期、每帧调度、命令入口、当前图像／纹理／generation | 新科学工具的整段算法或整套重复 UI |
+| [`document_lifecycle.rs`](crates/viewer/src/document_lifecycle.rs) | 换图、缓存选中、关闭、引用报告与心跳，共用释放路径 | 按具体分析工具猜测要杀哪个 PID |
+| [`ribbon.rs`](crates/viewer/src/ribbon.rs) | 文件行、任务行、选项行、窄窗布局、动作路由 | 保存第二份业务模型 |
+| [`ui_style.rs`](crates/viewer/src/ui_style.rs) | 主题、控件几何、菜单、窗口标题及正文边距 | 更改科学图像的显示色值或原始数据 |
+| [`controls.rs`](crates/viewer/src/controls.rs) | `Preferences`、模式、语言、默认模式、显示工具及自动显示 | 通过隐藏按钮假装移除编译模块 |
+| [`window_layout.rs`](crates/viewer/src/window_layout.rs) | Minimal 弹窗位置／尺寸／开关／折叠缓存 | 初始化 PRO |
+| [`workspace_ui.rs`](crates/viewer/src/workspace_ui.rs) | PRO 布局 host、`Page`、停靠、浮动组、吸附、保存 | 拥有或复制科学任务控制器 |
+| [`pro.rs`](crates/viewer/src/pro.rs) | PRO `Workspace`、operation 选择、任务状态及结果接收 | 提供极简必需能力 |
+| [`regions_ui.rs`](crates/viewer/src/regions_ui.rs) | 孔径交互、选择、缩放、删除、测量参数和结果失效 | 把编辑后的几何与旧结果 revision 混用 |
+| [`coordinates.rs`](crates/viewer/src/coordinates.rs) | 坐标／Gaia 入口、解的接收与来源检查 | 用屏幕坐标代替像素坐标 |
+| [`wcs_cache.rs`](crates/viewer/src/wcs_cache.rs) | 有界精确像素响应缓存及模型身份 | 近似插值或整图世界坐标数组 |
+| [`header_ui.rs`](crates/viewer/src/header_ui.rs) | 原始单 HDU 头显示／请求 | 把空 primary 自动替换成别的头 |
+| [`science_client.rs`](crates/viewer/src/science_client.rs) | native callback／HTTP、请求归属、代次与结果队列 | 绕过 host 的权限与能力检查 |
+| [`multiview.rs`](crates/viewer/src/multiview.rs) | 多文件槽、选择、原网格对照、缓存 | 将显示叠加当作已重采样共同观测 |
+| [`image_layers.rs`](crates/viewer/src/image_layers.rs) | 图层渲染、纹理与相对显示比例 | 替换原始测量样本 |
+| [`spectral_lines.rs`](crates/viewer/src/spectral_lines.rs) | 标线、线组、候选显示、红移匹配与找线 UI | 高置信度自动物种鉴定 |
+| [`spectral_analysis.rs`](crates/viewer/src/spectral_analysis.rs) | 选区、显示轴、分析参数、请求和模型／残差预览 | 用低分辨率显示曲线执行正式测量 |
+| [`spectrum.rs`](crates/viewer/src/spectrum.rs) | Full 光谱绘制与高级叠加 | 执行外部 Python 科学算法 |
+| [`spectrum_mini.rs`](crates/viewer/src/spectrum_mini.rs) | 非 PRO 编译时的基础光谱渲染 | 依赖被 feature 排除的 PRO 类型 |
+| [`plot_geometry.rs`](crates/viewer/src/plot_geometry.rs) | 基础与 Full 复用的绘图几何 | 再复制一套缩放／映射公式 |
+| [`text_io.rs`](crates/viewer/src/text_io.rs) | 文本与路径显示辅助 | 损坏底层完整 Unicode 字符串 |
+| [`i18n.rs`](crates/viewer/src/i18n.rs) | 中英显示词典 | 用翻译后文本作为持久状态的唯一 key |
+
+`FitsApp` 持有当前 `Arc<FitsImage>`、统计、纹理、显示参数、读取 pending、文档代次、
+坐标与区域控制器。PRO、multi、dock 是按 feature 存在且按运行时模式创建的可选状态。
+`Preferences` 存模式、默认模式、语言、主题、图像／光谱独立 PRO 布局与 Minimal 弹窗布局。
+
+### 5.4 Host、Python 与 Jupyter
+
+| 层／文件 | 职责和接手提示 |
+|---|---|
+| [`server/main.rs`](crates/server/src/main.rs) | CLI 参数、native/HTTP 入口、鉴权、路径与输入边界；检查路由与实际 feature |
+| [`server/measurement.rs`](crates/server/src/measurement.rs) | header／基础测光等纯 Rust 请求；不应为基本查看强制启动 Python |
+| [`server/science.rs`](crates/server/src/science.rs) | `Bridge`，序列化 worker 协议、artifact 注册／pin／回收、生命周期整合 |
+| [`server/science_sessions.rs`](crates/server/src/science_sessions.rs) | View/PRO/Gaia 租约、document/role epoch 与关闭墓碑 |
+| [`server/science_process.rs`](crates/server/src/science_process.rs) | worker 由稳定线程创建、Unix 进程组／Windows Job 归属与等待回收 |
+| [`server/supervisor.rs`](crates/server/src/supervisor.rs) | 观察明确 Jupyter 父进程的生存期，触发自身退出；不向父服务发终止信号 |
+| `server/desktop_unix.rs` / `desktop_windows.rs` | 平台原生窗口及系统入口差异 |
+| [`fitsviewer_science.py`](web/python/fitsviewer_science.py) | `Worker` 调度、lazy import、任务限额／结果历史、core packet 与产物归属 |
+| `fitsviewer_wcs.py` / `fitsviewer_gaia.py` | 完整 Astropy WCS、Gaia 查询与有验证集的解；不重写为简化通用线性公式 |
+| `fitsviewer_detection.py` / `fitsviewer_tap.py` | 基础/Gaia和 PRO 共用的找星、TAP 实现，避免两套复制源码 |
+| `fitsviewer_spectra.py` / `fitsviewer_spectral_analysis.py` | Specutils 候选；NumPy/SciPy 连续谱、测量、平滑、模型拟合 |
+| `fitsviewer_measure.py` / `fitsviewer_image_matching.py` | 高级测量、模板与相对场星亮度 |
+| `fitsviewer_vo.py` / `fitsviewer_network.py` | VO/TAP/下载与共享网络约束 |
+| `fitsviewer_export.py` / `fitsviewer_samp.py` | 导出、可视化派生物与 SAMP 对接 |
+| [`jupyter/fitsviewer/cli.py`](jupyter/fitsviewer/cli.py) | Python 主命令路由；普通导入和管理命令不得急切导入科学包 |
+| `install.py` / `management.py` / `settings.py` / `defaults.py` | 目标环境、端口、服务发现、默认行为与状态输出 |
+| `desktop.py` / `desktop_macos.py` / `platform_support.py` | 关联、桌面入口及平台能力差异 |
+| `runtime.py` / `build_info.py` / `scientific.py` | 已安装资源定位、模块信息、stateless CLI／session 与外部 worker 调用 |
+| [`jupyter/fitsviewer/server.py`](jupyter/fitsviewer/server.py) | Jupyter 扩展与 proxy 启动参数，包括明确 supervisor PID |
+| [`jupyter/fitsviewer/__init__.py`](jupyter/fitsviewer/__init__.py) | 轻量导入与 Notebook `show()` 接口 |
+| [`jupyter/src/index.ts`](jupyter/src/index.ts) | metadata provider、文件类型、document/widget factory、iframe 生命周期、启动器 |
+| [`jupyter/src/icon.ts`](jupyter/src/icon.ts) | LabIcon 定义；图标用于应用标签／命令，不改数据文件列表 |
+
+<a id="flows"></a>
+## 6. 跨模块数据、调用与状态流
+
+### 6.1 打开一个 FITS：从双击到画布
+
+```mermaid
+flowchart LR
+    A[JupyterLab 双击] --> B[文件类型 / document factory]
+    B --> C[iframe + server proxy]
+    C --> D[Rust host 鉴权和文件边界]
+    E[native 文件选择或 CLI] --> D
+    D --> F[core reader / fitsrs]
+    F --> G[FitsImage + 元数据 + 原始样本]
+    G --> H[共享 FitsApp]
+    H --> I[图像纹理 / 光谱绘图]
+```
+
+Lab 注册本身不读取整幅科学文件；其 metadata provider 与 viewer factory 使查看器接管
+目标文件。浏览器通过受鉴权 API 取数据。native 通过同一 core 读入，复用同一 UI。
+底层保留原始样本，物理值解释与显示变换分开。换图即使来自缓存标签，也必须经过文档
+释放与新 generation 绑定；不能只替换 `image` 指针。
+
+### 6.2 请求一次外部科学分析
+
+```mermaid
+flowchart LR
+    A[对应控制器构造参数] --> B[science_client]
+    B --> C[本地 callback 或 /api/science]
+    C --> D[Bridge: 能力 / 归属 / 代次]
+    D --> E[所选外部 Python Worker]
+    E --> F[按需导入科学适配器和包]
+    F --> G[JSON 结果 / 注册产物]
+    G --> H[当前文档与 revision 校验]
+    H --> I[叠加 / 结果 / 模型预览]
+```
+
+典型 request 有 operation、params、文件/HDU/选列、单位，以及 GUI 的 `_viewer_session`、
+`_document_generation`、`_role_epoch`。不是所有 CLI 请求都带 GUI 元数据；旧／stateless
+路径保持自己的验证约定，不能用这个兼容性让新 GUI 漏掉归属校验。
+
+长任务有 job id，状态查询、取消和结果读取检查所有者；开始请求与释放请求可能乱序，
+因此“已经知道哪些 job id”不足以防止关闭后任务重新复活。服务端需用文档／角色关闭栅栏
+拒绝迟到的启动；前端也须拒绝迟到结果。
+
+### 6.3 关键对象与身份
+
+| 身份／对象 | 作用 | 必须失效／释放的时机 |
+|---|---|---|
+| `Arc<FitsImage>` | 多视图共享不可被显示变换覆盖的样本 | 最后一个真实数据引用移除；纹理另有归属 |
+| viewer session | 区分不同查看页 | 查看页关闭／租约失效 |
+| document generation | 区分同一查看页前后文件／HDU上下文 | 换图、重选缓存文档、关闭 |
+| PRO/Gaia role epoch | 区分同一文档的不同科学角色与新一轮使用 | 退出对应角色、角色失效；角色之间不互相误删 |
+| 参数 revision | 防止测量/拟合结果对应旧选区或参数 | 相关参数、几何或输入改变 |
+| WCS model 身份 | 文件、HDU、完整 override 与文件状态 | 文档／HDU／解或源文件改变 |
+| artifact id + pins | 临时派生文件的物理所有权与活引用 | 最后引用移除后允许过期清理 |
+| UI stable id | 语言／重绘后恢复相同控件或窗口 | 不随显示文本翻译而随意变化 |
+
+### 6.4 本次基线的有界资源
+
+| 对象 | 当前上限／时限 | 口径 |
+|---|---|---|
+| core 文件输入 | 512 MiB | 压缩和解压边界分别按实现检查；不承诺任意大文件 |
+| 前端精确像素 WCS 缓存 | 512 点、1 MiB | 不是整图坐标映射或插值表 |
+| 后端 WCS 模型 | 12 个 LRU | 保留完整模型与 owner 释放 |
+| 多视图 LRU | 128 MiB | 不是整个进程／GPU 总内存上限 |
+| viewer／角色 lease | 180 s 无心跳过期 | 独立 reaper 处理丢失的关闭请求 |
+| session 表／关闭墓碑 | 4096；墓碑最长约 30 min | 防止无限积累及迟到请求复活 |
+| active/queued jobs | 32 | 完成任务退出活任务配额 |
+| 完成结果历史 | 32 项、合计 32 MiB；128 个轻量墓碑 | 被移除的结果明确 consumed，不自动重跑 |
+| 注册 artifact | 64 个、合计 512 MiB | 活文档 pin；未 pin 约 15 s 过期 |
+| worker 协议 | 请求 8 MiB、响应 32 MiB、响应等待 120 s | 不等于所有外部函数能立即中断 |
+| core packet 提取 | 60 s deadline 并轮询取消 | 与第三方科学例程的协作式取消分开 |
+
+修改限额需一起检查生产者、协议消费者、错误提示、取消、回收及压力测试，不能只改常量。
+完整规则见 [RESOURCE_LIFECYCLE.md](docs/RESOURCE_LIFECYCLE.md)。
+
+<a id="science"></a>
+## 7. 科学数值与数据约定
+
+1. **FITS 数值**：BSCALE/BZERO 应用一次；BLANK/NaN/非有限掩码保留。整数原始值和物理值
+   都有明确语义，显示 low/high/stretch 不是再做一次物理标定。
+2. **坐标**：内部像素中心为零起点；UI 像素显示为一起点。天球坐标、J2000、角单位、
+   波长单位、空气／真空约定显式传递，不把未知单位猜成埃。
+3. **WCS**：真实 DSS 摄影板可不含常规 CTYPE；曾因仅按普通 TAN 头判断而误拒绝。
+   接收新 override 时要清除旧 DSS/TPD 竞争参数，避免旧模型获得优先级。保留 SIP／DSS
+   所需完整模型和模板元数据，不随意删成看似简单的几张坐标卡。
+4. **误差**：sigma、variance、inverse variance 必须明确。core 光谱 packet 的误差数组为
+   解释后的标准差；缺失／无效值保留不可用，不补零冒充高精度。图像 ERR HDU 与光谱误差列
+   不可混作一个虚构列索引；复制与导出保留实际 HDU、类型和单位。
+5. **光谱轴**：显示 rest／velocity 转换不隐式修改流量；速度采用实现中声明的相对论波长比。
+   log 波长列的解释必须来自元数据／明确选列，原始采样不能被显示降采样代替。
+6. **测量选区**：线区、两侧连续谱窗和掩膜以源横轴坐标保存。显示坐标改变不改选区语义。
+   正式测量读取未平滑源采样；平滑和归一预览不覆盖源文件。
+7. **连续谱与拟合**：当前先拟合连续谱并固定，再拟合有界线形成分；不是联合多参数连续谱
+   与轮廓拟合。显示收敛、权重、χ²/dof、边界／协方差警告与残差，不能只展示好看的曲线。
+8. **黑体与多谱**：黑体是可调相对 `B_lambda` 形状，不推断绝对温度、消光或流量定标。
+   多谱保持原网格；叠加、比例、偏置不是合并或有定义误差传播的相减。
+9. **找星／测光**：简单找星是局部峰和质心方案，不是 PSF 拟合。背景、拥挤、DQ、单位与
+   孔径修正仍需用户解释；不能默认把所有仪器 DQ 位域按一个通用掩膜处理。
+10. **Gaia**：解携带来源、匹配与独立验证残差，需初始场约束。游标缓存只复用已确认模型；
+    不因网络返回一份表就声称完成了可信全空盲解。
+
+真实使用模拟曾覆盖超新星、QSO/星系、星团、标准星和透镜场，但重点是输入语义、UI
+与调用链。没有把混叠最低点认作自动物种分类、局部高斯拟合认作吸积盘参数，或透镜场显示
+认作完成透镜建模。数据来源与截图限制见 [图片来源](docs/images/v0.1.5rc1/README.md)。
+
+<a id="lifecycle"></a>
+## 8. 生命周期故障及修复经验
+
+### 8.1 从“关页后内存会不会释放”到完整所有权
+
+早期只检查普通 FITS／gzip 多开多关。后来 PRO 引入任务、派生文件、SAMP、WCS 和图层，
+单独删除一个 iframe 已不够。历史审计发现或提示的关键问题，及当前对应保护如下。
+
+| 历史风险／失败现象 | 当前保护与修改入口 |
+|---|---|
+| 缓存切换丢旧 job id，最后标签关闭后仍续租或轮询 | `document_lifecycle` 统一 abandon/close，清 pending、释放文档、重新绑定代次 |
+| `job_start` 迟于 release 到达，关闭后又启动任务 | `science_sessions` 文档／角色 epoch 与 tombstone 在 host 端拒绝旧启动 |
+| 只在下一次请求到来时扫 lease，关闭后没有下一次请求 | Bridge 独立后台 reaper，TTL 不依赖新查看请求 |
+| 多 host 共用 science 缓存，清 orphan 误删另一 host 活文件 | 唯一标记子目录；仅清理本 host 拥有目录及已登记产物 |
+| Python 与 Rust 都认为自己拥有同一产物 | 注册后内部 `artifact_detach` 交接，Python 放弃删除权；host 管 pin 和删除 |
+| 退出 PRO 把仍显示的派生图删掉 | View 引用 pin 与 PRO 角色分开；活图层或另一查看页的引用继续保留 |
+| 完成 futures 长期占满 32 任务配额 | 活任务转有界 JSON 历史；明确 consumed/tombstone，而非静默重跑 |
+| 取消／失败留下未登记或部分产物 | 按 job、owner 和登记归属清理；退出路径包含本 host 的标记目录 |
+| 只看到 `worker_pid=null` 就断言没有子进程 | 检查 worker、packet 子进程、launcher/helper 与各自创建时间／归属 |
+| lease 变空与新 acquire 并发，误杀刚获得角色的 worker | 归属检查、序列化关键路径和停止状态一起处理 |
+| PRO 退出时 Gaia 仍活，SAMP 资源跟着全局 worker 被留住 | 按角色释放，不把“worker 仍存活”等同“本角色不需清理” |
+
+### 8.2 平台进程细节
+
+- **Linux creating-thread/PDEATHSIG**：worker 若由短命请求线程创建，线程退出就可能触发
+  parent-death signal。改为专门稳定创建线程，保留到 worker 完成回收；不能重新移回
+  临时 HTTP handler 创建。另管理已拥有进程组。
+- **Windows Job Object**：先 suspended 启动，加入宿主 Job，再恢复；环境 launcher 生成
+  的真实 Python 子进程也受同一树管理。加入／恢复失败须终止并 wait 新建进程。
+- **Jupyter 父进程**：proxy 的 shutdown hook 在某些组合中未能回收 host。明确传
+  `--supervisor-pid`，Windows pin 进程 handle，Linux 核对 PID 和启动时间；父服务退出后
+  host 回收自己的 worker，再结束 HTTP。普通 standalone 不继承短命 CLI 的寿命。
+- **浏览器**：Lab 父 widget 的 disposed 信号可能早于 iframe 子 widget dispose；需要提前
+  release。取消 fetch/poll、销毁 WASM/WebGL 并做 best-effort 通知；网络断开由 lease 兜底。
+
+### 8.3 测试本身造成的假阳性
+
+内存测试中，Playwright iframe ElementHandle 和子 realm 对象曾由 harness 自己持有，
+导致看似产品泄漏。改成父 realm WeakRef、dispose 所有 handles，再重做开关循环。
+轻量 CDP 比较也避免 Network/Debugger/Performance 调试域的保留开销。
+
+应同时记录 live iframe/WASM、owner、artifact、job、纹理／缓存和本程序子进程身份。
+RSS/JS heap/GPU allocator 可能保留预分配空间；RSS 不立即下降不直接证明泄漏，
+有限循环没有持续增长也不构成长期无泄漏保证。不得把不存在的统计字段补成零。
+
+不得在验收脚本最后手工 `kill` 剩余子进程，再把结果写成“自然退出通过”。需要清理时
+照实记为 harness cleanup，并保留清理前证据。
+
+<a id="modules"></a>
+## 9. 模块选择、体积与构建产物
+
+### 9.1 一个源码树，两个不同层次的开关
+
+| 层次 | 含义 |
+|---|---|
+| Full 包中的 Minimal UI | PRO 代码仍在包内；进入 Minimal 不创建其控制器，退出 PRO 释放角色 |
+| 编译 profile `mini` | feature 与资源 registry 不包含 PRO；不是隐藏几排按钮 |
+| 默认打开模式 | 用户偏好；不能把没有编译的模块安装出来 |
+
+当前 registry 在 [`config/build-modules.json`](config/build-modules.json)，driver 在
+[`scripts/build_profiles.py`](scripts/build_profiles.py)。模块为 `base`、`pro`、`desktop`、
+`jupyter`；preset 是 mini、desktop-mini、remote-pro、full。PRO 目前作为整体功能组选择，
+**尚未实现任意按按钮组合的二进制插件体系**。
+
+基础/Gaia共享检测和 TAP 独立成小模块。新增适配器必须在 registry 中恰好归属一次；
+同时检查 Rust client/host feature、Python capability 拒绝、资源清单与 package metadata。
+不能仅把一份 `.py` 从 wheel 删除就宣称模块边界完成。
+
+不编译的计划查看：
+
+```bash
+python scripts/build_profiles.py --profile full --plan
+python scripts/build_profiles.py --profile mini --plan
+```
+
+`--execute` 才启动 profile build；`bash scripts/build.sh` 本身是显式构建入口，
+要只看计划必须加 `--plan`。Cargo check/test 同样会编译。
+
+### 9.2 产物定位与一致性
+
+- driver 的 staging：`build/profiles/<profile>/`，记录 `build-profile.json` 与资源 manifest。
+- wheel assembler 的隔离 staging：`build/python-packages/`；输出：`dist/<profile>/`。
+- `web/pkg/`、Lab 预构建输出和 `_vendor/` 是生成物，不是新增功能的编辑入口。
+- `scripts/build_wheel.py` / `jupyter/hatch_build.py` 负责实际 wheel 输入；
+  `scripts/prepare_release.py` 负责审核后源归档及资产清单，不负责自动公开发布。
+- Mac 的 Linux wheel 输入只供锁定的平台无关 Web 资源；Mac Rust binary 必须原生编译。
+- 发布前比对实际包内 executable、WASM、字体、适配器、模块 metadata 与 hash，避免把
+  某个目录里的旧产物误认作刚刚修改的源码。
+
+### 9.3 体积优化的决定
+
+使用已有 egui helper 和轻量布局 host，而非新增大型 docking 或排版框架；共享数据用
+`Arc<FitsImage>`，避免每层复制整幅原始图。高体积科学包及数据不打包。
+
+中文字库由完整 fallback 改为常用字子集。当前 manifest 为 **677,956 bytes**、4,304 个
+映射码位、3,755 个常用汉字，并保留标点／科学符号及 Apache 许可。罕见／繁体字不保证
+覆盖。新增 UI 字符应核对显示字符串；不要误把源码注释里所有汉字都要求打进字体。
+入口为 [`prepare_cjk_font.py`](scripts/prepare_cjk_font.py)，来源记录在
+[`font-manifest.json`](web/fonts/font-manifest.json)。
+
+本次 14 张界面截图保存原始 JPEG 字节并正确使用 `.jpg`，共 1,558,319 bytes；初期把格式
+或扩展名处理不当会增加数 MB。截图压缩大小、下载压缩包大小、解压大小、native/WASM
+大小及运行 RSS 是不同口径，不要放在同一列比较。
+
+<a id="platforms"></a>
+## 10. 安装、Jupyter 和跨平台问题
+
+### 10.1 Jupyter 绑定的完整路径
+
+`pip install` 成功并不意味着双击接管完成。需同时检查：目标 Python、Lab 预构建扩展、
+server extension、`jupyter-server-proxy`、禁用配置、默认 viewer、Notebook 及 URL prefix。
+运行 Jupyter 的环境与 Notebook 内核环境可能不同；优先安装到实际运行服务的环境。
+
+Plain wheel 只安装 FitsViewer；需要集成依赖时使用 `[jupyter]`。本轮发现 Windows 目标
+环境安装曾漏 extra，随后修复；修复依赖时保留现有受支持 Lab 版本，除非明确允许升级。
+JupyterLab 当前约束 `>=4.4,<5` 是已定义支持范围，不能把未测试 5.x 描述成已证明不兼容。
+
+目标环境接口、默认查看器与管理命令见 [安装](docs/INSTALL.md) 和 [命令](docs/COMMANDS.md)。
+安装成功输出应以英文包含目标环境／Python、配置与运行端口、绑定状态和可复制修复命令。
+不要把当前开发解释器或开发环境覆盖变量当作目标环境检测结果。
+
+### 10.2 端口与部署
+
+Jupyter 端口、独立浏览器服务端口、内部动态 proxy 端口及本地 SSH 映射端口分别管理。
+Linux 命令不能直接改已经运行在用户 Mac/Windows 上的 SSH 隧道；应显示状态并生成在
+浏览器所在机器运行的命令。不要把内部动态 viewer 端口写成永久 SSH 转发目标。
+
+历史一次只替换 viewer 后，旧 `jupyter-server-proxy` 仍记着已退出进程，返回 connection
+refused 而没有重启子进程。恢复先核对目标 Jupyter 的 kernels/sessions，获授权后才重启
+明确的服务，保留其他服务。不能遇到端口故障就 `pkill jupyter`。
+
+远程连接中断时，本地使用缓存、备份与独立测试环境继续；恢复后通过普通命名文件、
+manifest、备份与 hash 同步。运行服务不会因为源码同步自动变成新版本，应另行核对服务的
+实际 WASM／binary。历史断线和后续恢复应分别保留记录。
+
+### 10.3 Unicode 路径与默认程序
+
+路径乱码需要检查粘贴、引号、Unicode 文件 API、JSON、worker stdin/stdout、所选 Python
+及打包入口，不能只在文本框换字体。Windows 长缓存路径用 extended path，启动 worker
+明确 UTF-8。路径缩略只用于视觉，不能把带省略号的字符串传给 reader。
+
+Windows 安装器提供现有 Python/Conda 路径与是否关联默认 FITS 查看器；silent 模式必须
+在拒绝时返回失败码，不能弹阻塞对话框。UserChoice 由系统保护；不能强写绕过其机制。
+卸载恢复原后备注册，不能篡改通用 `.gz`。曾漏检 `.fz` 单独默认项，已修复为完整后缀集合。
+
+应用图标不等于文件图标。Lab Other 分类卡片的 `kernelIconUrl` 曾无效，改用扩展 command
+的 `LabIcon`，同时去掉重复 proxy 卡片。Windows ProgID 不指定数据文件 DefaultIcon；
+其他系统同样不替换关联文件图标。
+
+### 10.4 平台覆盖的实际含义
+
+- Linux wheel 是 x86_64 glibc 2.28 baseline，已做 auditwheel 和 2.28/2.31 loader/backend
+  测试；不等于在全部旧桌面、驱动、musl 或 ARM 上验证。
+- Windows 当前实际验收为 Windows 11 x86_64；不把支持目标 Win10 自动当作实际跑过。
+  Conda 目录输入路径用隔离 venv 验证过，不等于完整真实 Conda 安装矩阵。
+- Mac 提供 arm64/x86_64 原生便携 `.app` ZIP；基础查看不需 Python，科学工具另选外部环境。
+  本次不提供 Mac Python wheel／本机 Jupyter 安装器，不修改 Finder 文件关联。
+- Mac 为 ad-hoc 签名，未经过 Developer ID / Apple notarization；GUI 启动截图不等于
+  完整人工 PRO 工作流或 Gatekeeper／quarantine 验收。编译 target 11.0 不等于验收旧系统。
+- Mac 浏览器通过 SSH 访问 Linux Jupyter 是独立于 Mac 本机 Jupyter 集成的使用路径。
+
+<a id="validation"></a>
+## 11. 测试方法、已有证据与边界
+
+### 11.1 按修改风险选择验证
+
+| 修改 | 应优先检查 | 不能用来替代它的检查 |
+|---|---|---|
+| UI 几何／标题／菜单 | 真 egui 多帧、实际中英窄宽截图和手势、状态恢复 | 只 grep 字号常量或编译成功 |
+| reader／`.fz`／误差语义 | 独立 Astropy 参考 raw/physical/BLANK 与 header，异常 codec | 仅成功打开一张看起来正确的图 |
+| 科学工具 | 参数拒绝、单位、误差、缺包、真实数据与可控数值参考 | 配置面板截图或模型曲线看起来平滑 |
+| 异步／资源 | late-start/late-result、释放、取消、pin、父进程退出与多次开关 | 测试脚本最后强行杀进程后的干净状态 |
+| 模块／打包 | dry plan、两端 feature、registry、实际包成员和 capability | runtime 隐藏按钮后查看包大小 |
+| 安装器／环境 | 隔离 install/import/CLI、绑定、拒绝、卸载及原注册恢复 | 在开发机现有全依赖环境中运行 |
+| 文档 | 文件/锚点、命令参数、源码身份、私密信息、公开 URL | 重跑与文档无关的全平台编译 |
+
+UI 最低矩阵包含：中文／英文，Minimal／PRO，图像／光谱，窄窗／宽窗，浅／深主题，长中文
+路径，以及空、运行、成功、失败和折叠／浮动／停靠。重点展开定标、测光、谱线、测量、
+处理、拟合和比较；不能每次只截默认图层。
+
+真实视觉数据曾用 M67 摄影板、HST NICMOS、SDSS、公开超新星／标准星及透镜场输入。
+小型合成数据仍用于已知真值和损坏边界测试，但不拿极简合成图代替实际科研界面演示。
+公开可下载不自动代表允许重分发；本次公开 README 只使用有来源说明的截图，不上传私人
+观测或受重托管限制的原始科学数据。
+
+### 11.2 可复用验证入口
+
+| 入口 | 覆盖方向 |
+|---|---|
+| `qa/test_build_profiles.py` | registry、feature、资源与计划 |
+| `qa/test_install_release.py` / `test_runtime_entrypoints.py` | 选择正确 Full wheel、轻量导入、安装入口 |
+| `qa/test_icons.py` / `test_wcs_cache.py` | 应用图标边界、精确 WCS 模型／缓存 |
+| `qa/test_macos_packaging.py` | LF/CRLF 源码比较、license 原文／来源与篡改拒绝 |
+| Rust core/viewer/host tests | 数值、状态、布局与协议；这些命令会编译 |
+| `scripts/verify_next.py` / `verify_next.cjs` | 候选包、隔离 Jupyter、真实 UI 操作 |
+| `scripts/verify_memory.py` / `verify_memory_light.cjs` | 多文档开关、对象／进程与内存口径 |
+| `scripts/verify_science.py` / `verify_numerics.py` | 科学输入与 core 参考 |
+| `scripts/verify_spectra.py` / `verify_spectral_analysis.py` | 候选、连续谱、测量、平滑与拟合 |
+| `scripts/verify_image_matching.py` / `verify_vo.py` | 相对亮度与 VO 边界 |
+| `scripts/verify_glibc.py` / `verify_native.py` | ABI loader、原生窗口生命周期 |
+| `scripts/verify_windows.py` / `verify_windows_setup.py` | Windows 包与安装器 |
+| `scripts/verify_macos_full.py` | 重定位 ZIP、native、真实 FITS、API／worker 和 GUI startup |
+| `scripts/verify_privacy.py` | 归档／二进制内个人路径、token/key 等发布扫描 |
+
+脚本参数以实际 `--help` 和函数体为准。许多验收会创建隔离环境／服务或下载测试依赖，
+不能因为名字含 verify 就当成无副作用只读操作。
+
+### 11.3 已发布 Full 的历史验收摘要
+
+这是本次整理复用的已有执行证据，**不是本轮写文档重新执行所有测试**。
+
+| 范围 | 已记录结果 | 明确边界 |
+|---|---|---|
+| 共享 viewer | Full 73/73、Mini feature 35/35；中英布局、标题、孔径编辑与窗口恢复 | 测试数量随版本改变，不是永久覆盖率 |
+| Linux package | auditwheel 2.28；2.28/2.31 loader/backend；隔离导入、原生退出、Python 3.10.12 | 非全部 Linux 桌面矩阵 |
+| Linux JupyterLab 4.4 | 37 参考 API，真实 FITS/gzip/FZ、Unicode、光谱选列、实际 Notebook `show()` | 不外推 Lab 5 或 Safari |
+| 多页关闭 | 四轮每轮三页后 live WASM 回零，无产品 JS 错误；artifact pin 与 worker 退出 | 有限循环不保证永久无泄漏 |
+| Windows package | 37 参考包、6 次 native 加载/退出、中文路径安装、绑定修复及三次卸载恢复 | 实测 Win11；最终英文光谱视觉步骤被用户 Esc 中止，没有记作通过 |
+| Mac 两架构 | macOS 15.7.9 各 33 core tests、6 组打包验收、真实 HorseHead 对照、GUI startup 与退出 | 无完整手工 PRO、Mac Jupyter 或 Apple 公证验收 |
+| 发布 | 8 个公开资产实际匿名下载并逐一核对 SHA256；中英 README 和示例图片匹配源码 | 不等于论文级科学验证 |
+
+完整公开范围在 [VALIDATION-0.1.5rc1.md](docs/releases/VALIDATION-0.1.5rc1.md)，
+早期独立使用模拟在 [VALIDATION_1018001.md](docs/VALIDATION_1018001.md)。不要把早期
+QA binary、优化 dev WASM 或只生成 IFrame 的检查冒充最终发行包／实际 Notebook 执行。
+
+<a id="release-problems"></a>
+## 12. 本次发布中的实际阻塞
+
+### 12.1 Linux／Windows 与资源完整性
+
+- **输出目录迁移**：旧安装器只找 `dist/`，模块化后正确包在 `dist/full/`；修复选择规则，
+  按版本／平台／Full 约束选择，不随机挑目录中最新 wheel。
+- **漏装集成依赖**：Windows 环境关联只装普通 wheel，目标缺 proxy 时绑定失败；增加
+  明确 opt-in 的 `[jupyter]`，并固定已有兼容 Lab 版本。
+- **silent 安装阻塞**：明确静默拒绝仍弹错误窗，自动化卡住；修为退出码 1，无交互和部分注册。
+- **Windows 默认关联**：补 `.fz` 独立默认项检测；不写 UserChoice，不改通用 gzip。
+- **Git 自动换行破坏资源**：为 FITS/FZ、字体、图像等加 binary 属性；比对索引与原文件。
+  许可哈希严格绑定的原文另用 `-text` 防止 checkout 改字节。
+- **截图格式**：原始是 JPEG 时保留原字节与 `.jpg` 后缀，不以错误扩展名或无必要 PNG
+  重编码膨胀。真正截图可作为 UI 证据，原始科学文件另按许可处理。
+- **源归档混进生成锁文件**：一次审核发现 vendored 测试生成 `vendor/fitsrs/Cargo.lock`
+  未跟踪却进入 archive；过滤 vendored 子锁，保留 workspace 根锁。
+- **测试环境故障**：临时目录权限、测试初始化顺序、缺 adapter、Notebook 保存对话框、
+  Conda 动态库冲突等均按实际原因记录，不能把未开始的测试算通过或为迁就 QA 改科学定义。
+
+### 12.2 Mac 五轮构建／验收
+
+1. 草稿资产不是公开下载，read-only CI token 无法读取。改为单独窄权限资源 fetch job，
+   native build 保持 read-only，接收同一次 workflow 的 hash-verified artifact，不传个人 token。
+2. 两架构均编译、core 测试通过后，packager 把 wheel 的 CRLF 与 checkout LF 误判为旧源码。
+   只规范化换行后比较，仍拒绝真实算法差异；加故意修改科学输入边界的拒绝回归。
+3. 功能验收通过后父级复核发现 Mac-only Objective-C/Cocoa 依赖许可覆盖缺口，因此先暂停
+   Mac 上传。Linux/Windows/WASM 的旧许可清单不能冒充新 native Mac 图覆盖。
+4. 新收集器按实际 native normal/build 依赖图保留原始文本、作者／来源与每文件 hash；
+   遇到 `dispatch 0.2.0` 上游缺独立 LICENSE 时正确停止。最终为该精确 crate/版本记录原
+   MIT 声明、作者、VCS 与官方 MIT 标准原文及来源，不编造版权年份，也不放宽成通用绕过。
+5. [最终 run 39124204993](https://github.com/minglinwang86/FitsViewer/actions/runs/39124204993)
+   双架构成功，每架构 251 个 native 依赖记录、462 个审计许可文件逐一验 hash，完整
+   license payload 587 文件。Rust binary 与共享 Web 资源保持原已验收字节；只补许可与签名元数据。
+
+“许可文本收集通过”是工程完整性检查，不是法律认证。Mac 包没有携带 Linux ELF；
+原生 Mach-O 架构、系统动态依赖、可执行权限、`.app` 图标和重定位均单独检查。
+
+### 12.3 本次已发布资产
+
+| 文件 | Bytes |
+|---|---:|
+| `fitsviewer-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl` | 9,892,777 |
+| `fitsviewer-0.1.5rc1-py3-none-win_amd64.whl` | 12,009,070 |
+| `FitsViewer-0.1.5rc1-windows-x86_64-setup.exe` | 25,202,666 |
+| `FitsViewer-0.1.5rc1-windows-x86_64-portable.zip` | 29,870,805 |
+| `FitsViewer-0.1.5rc1-macos-arm64-portable.zip` | 9,771,371 |
+| `FitsViewer-0.1.5rc1-macos-x86_64-portable.zip` | 10,099,509 |
+| `fitsviewer-0.1.5-rc.1-source.tar.gz` | 7,772,987 |
+| `SHA256SUMS` | 780 |
+
+确切校验值以 [公开 SHA256SUMS](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/SHA256SUMS)
+和实际下载为准。本次 release 的源归档含 841 个审核源文件，不含随后新增的本文；
+本文在 main 另行提交，后续源归档选择应包含本文。不得为了补工作记录静默替换已发布文件
+或移动版本 tag。
+
+<a id="agent-workflow"></a>
+## 13. Agent 修改源码的操作规程
+
+### 13.1 开工前
+
+1. 明确目标与操作范围：调研、源码、编译、安装、重启、发布中哪些已授权。
+2. 检查 `git status --short`、基线 commit、当前版本和本文件后续记录，不重置其他人的改动。
+3. 区分源码树、staging、已安装资源和实际运行服务；记录所查对象的 hash/版本。
+4. 用 `rg` 沿入口、状态写入、调用方、取消和退出路径阅读函数体。
+5. 说明此次涉及 base/PRO、图像/光谱、native/WASM、Python/HTTP/Lab 的哪些边界。
+
+### 13.2 如何新增一个工具
+
+先判断是否确有新的状态与依赖边界。轻量共享能力放 base 小模块；PRO 控制器放对应源码
+而非继续堆入 `FitsApp::update`。参数先经类型／单位／限额验证，再进入后台；结果必须携带
+文档和参数身份。共享算法只保留一份，不为 Minimal 复制删除后的版本。
+
+如果使用外部包：更新 registry、capabilities、selected Python、lazy import、缺包提示、
+任务 owner/cancel/result/artifact，以及可选 requirements。前端隐藏按钮和后端拒绝缺失能力
+要同时成立。新复杂 UI 接入 `Page`/Dock 统一 host，保留稳定 ID、两种语言和保存恢复。
+
+### 13.3 如何修改现有 UI
+
+先在三层定位：网页外壳、ribbon、工作区内容。优先改共享 helper；不要在多个面板分别
+硬编码相似高度。保留全路径／全数据，把截断限定在绘制层。辅助说明进入 `…`，错误与
+科学结果警告保留可见。使用真实科研输入验收展开状态，保存截图与实际操作结果。
+
+缩小标题栏、改边距和恢复尺寸的组合尤其容易出现逐帧累积；至少覆盖连续 repaint、
+关闭重开、保存/读取偏好、不同 Context 和窗口缩放。新菜单检查父子 popup 行为。
+
+### 13.4 如何修改资源／异步
+
+列出谁创建、谁引用、谁删除；追踪 document、role、epoch、revision 和 artifact pins。
+按顺序测试启动中取消、旧请求迟到、旧结果迟到、换图、缓存切换、最后页关闭、PRO→Mini、
+关闭 Jupyter、宿主退出。面板折叠不释放科学任务，关闭真正查看页则必须释放。
+仅删除自己的标记目录；检查文件和进程树身份，不依赖模糊 glob 或 PID 单值。
+
+### 13.5 构建／部署／发布时
+
+先做计划和最小适当检查，再由已授权步骤构建。双端 feature、字体、适配器、UI 和 Lab
+资源一起冻结；不要不断同步小文案让平台 Agent 反复编译。最终以实际包验收，并核对
+runtime payload 与已验收候选的一致性。
+
+部署前确认运行服务及用户内核归属。源码同步、wheel 安装和服务刷新分别记录。遇到代理
+缓存旧进程问题，先查状态，不直接重启全套环境。仅在授权范围内操作明确服务。
+
+发布前完成许可、隐私、文件类型／后缀、checksum 和下载说明。只上传审核清单中的文件，
+不上传 token/config、浏览器 profile、私有观测、绝对路径日志和 raw QA 缓存。推送不 force；
+公开后实际无认证下载核对 checksum。旧 release/tag 的删除是另一个明确操作，不顺手清空。
+
+### 13.6 提交与记录模板
+
+```text
+目标与用户授权：
+起始 commit / 版本 / 当前未提交修改：
+影响层：base/pro；image/spectrum；native/WASM；host/Python/Lab
+触发输入与复现步骤：
+根因（源码路径、关键函数、状态）：
+改动（为什么放在该模块）：
+数据/单位/误差/所有权变化：
+实际运行的验证与结果：
+只做静态检查或仍未覆盖的部分：
+产物、输入来源和 hash（不写秘密）：
+服务/进程/临时文件清理及保留项：
+部署/同步/发布状态：
+后续风险或下一步：
+```
+
+文档修改使用相称检查：链接、锚点、命令／源码一致性、Markdown、PII 与 diff；不为一份
+交接文档重编译全平台。若用户授权并希望并行，分配互不重叠的模块文件，主 Agent 整合
+共享生命周期和最终验收。子任务完成声明仍需检查具体文件和证据，不能代替主级复核。
+
+<a id="next"></a>
+## 14. 未完成事项与接手建议
+
+以下是范围边界或建议，**不是本文已实现的新功能**：
+
+- 自动找线入口应更容易发现，明确区分候选检测、手动标线与线形拟合；保留外部包调用。
+- 更完整谱线数据库、自动红移／模板分类、宽线／混叠识别需另行方案与独立验证。
+- 多谱相减／coadd、正式误差传播、分辨率与单位匹配尚未实现，不用显示偏置冒充。
+- HCOMPRESS/PLIO、压缩 null mask、光谱 cube、通用表编辑、任意归档浏览不在当前支持声明。
+- 完整 PSF／时序测光、绝对零点、透镜及吸积盘物理推断应对接专用工具，不能从当前预览结果外推。
+- Mac Developer ID、公证、Gatekeeper、旧系统、完整交互和本机 Jupyter wheel 待独立工作。
+- Linux musl/ARM、Windows ARM/Win10 实际矩阵、Safari、真实 X2Go、所有输入法/剪贴板和
+  JupyterLab 5 尚未全面验收。
+- 在线 Gaia/CDS/VO/SAMP 配置面板出现不证明远端服务成功；需记录真实响应、超时、离线、
+  取消与访问策略，不能把网络演示凭据写入日志。
+- 更长期／大文件资源压力、异常退出和驱动差异需持续检查；当前有限开关测试不是永久保证。
+- 当前 `pro` 仍是整体构建组。将来如按功能细分，应先画依赖／状态边界，再扩 registry；
+  不要恢复“复制一份源码再删掉不需要函数”的打包方式。
+
+<a id="references"></a>
+## 15. 可公开复核的文档与记录更新规则
+
+| 主题 | 当前参考 |
+|---|---|
+| 上手与产品界面 | [中文 README](README.zh-CN.md)、[English README](README.md) |
+| 源码修改准则 | [AGENTS](AGENTS.md)、[AI guide](docs/AI_DEVELOPMENT_GUIDE.md)、[Architecture](docs/ARCHITECTURE.md) |
+| 协议／数值 | [API](docs/API.md)、[Scientific tools](docs/SCIENTIFIC_TOOLS.md)、[Resource lifecycle](docs/RESOURCE_LIFECYCLE.md) |
+| 光谱 | [Spectra](docs/SPECTRA.md)、[Spectral analysis](docs/SPECTRAL_ANALYSIS.md) |
+| 图层与相对亮度 | [Image layers](docs/IMAGE_LAYERS.md) |
+| 构建／安装／操作 | [Building](docs/BUILDING.md)、[Install](docs/INSTALL.md)、[Commands](docs/COMMANDS.md)、[Releasing](docs/RELEASING.md) |
+| Mac 与许可补丁 | [macOS](docs/MACOS.md)、[fitsrs patch](vendor/README.fitsviewer.md)、[Notices](THIRD_PARTY_NOTICES.md) |
+| 当前／历史验收 | [0.1.5rc1](docs/releases/VALIDATION-0.1.5rc1.md)、[1018001](docs/VALIDATION_1018001.md)、[早期内存记录](docs/releases/MEMORY-0.1.4rc1.md) |
+| 图片来源 | [Credits](docs/images/v0.1.5rc1/README.md) |
+
+整理时还核对了以下**私有开发记录的主题与结论**，这里仅列文件名便于项目持有人定位；
+它们不作为仓库中应存在的公开链接，也不意味着可公开其中原始路径、配置或科学数据：
+
+- `FUTURE_FEATURES_WORK_LOG_20261017.md`、`NEXT_VERSION_IMPLEMENTATION_WORK_LOG_20261017.md`
+- `UI_DESIGN_RESEARCH_20261018.md`、`CURRENT_UI_VISUAL_REVIEW_1018001.md`
+- `PRO_DOCK_SOURCE_AUDIT_1018001.md`、`RESOURCE_LIFECYCLE_AUDIT_1018001.md`
+- `OVERNIGHT_RESULT_1018001.md`、`UI_SYNC_20261018.md`
+- `UI_FEEDBACK_IMPLEMENTATION_20261018.md`、`ICON_BROWSER_QA_20261018.md`
+- `WINDOW_TITLES_COMPACT_20261018.md`、`CONTROL_FONT_UNIFICATION_20261018.md`
+- `FULL_RELEASE_WORK_LOG_20261018.md`、Linux/Windows/macOS 分平台最终报告及公开下载校验 JSON
+
+后续 Agent 在本文末尾追加日期、基线、需求、根因、文件、执行证据和未验收边界，必要时
+同步更新结构地图。旧结论如果被新实现取代，应明确标注并指向替代记录，不抹掉失败经过。
+当前任务只补文档时，不更改已发布 tag、资产和运行服务，不把文档提交写成一次新的产品发布。

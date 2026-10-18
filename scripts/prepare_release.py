@@ -49,7 +49,7 @@ scripts = ["bootstrap.sh", "env.sh", "build.sh", "build_windows.sh", "build_wind
            "verify_wheel.py", "verify_wheel.cjs", "verify_windows.py", "verify_windows_setup.py", "verify_memory.py", "verify_memory.cjs", "verify_memory_light.cjs", "verify_privacy.py", "check_management.py", "check_desktop.py", "check_interactive_install.py", "verify_native.py", "verify_glibc.py", "verify_numerics.py", "make_fixtures.py", "make_next_fixtures.py", "prepare_cjk_font.py", "verify_next.py", "verify_next.cjs"]
 files.extend(root / "scripts" / name for name in scripts)
 files.append(root / "scripts/build_profiles.py")
-files.append(root / "AGENTS.md")
+files.extend(root / name for name in ["AGENTS.md", "AgentWorkLog.md"])
 files.extend(root / "scripts" / name for name in ["verify_science.py","verify_spectra.py","verify_spectral_analysis.py","verify_image_matching.py","verify_vo.py","verify_interactive.cjs","build_static.py"])
 files.extend(root / "scripts" / name for name in ["build_macos_full.py", "verify_macos_full.py", "macos_licenses.py"])
 files.extend(root / name for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "requirements-build.txt", "requirements.txt", "requirements-spectra.txt", "DEPENDENCIES.txt",

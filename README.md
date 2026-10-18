@@ -1,6 +1,6 @@
 # FitsViewer
 
-[简体中文](README.zh-CN.md) · [Download 0.1.5rc1](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.5-rc.1) · [Install](docs/INSTALL.md) · [Commands](docs/COMMANDS.md) · [Architecture](docs/ARCHITECTURE.md)
+[简体中文](README.zh-CN.md) · [Download 0.1.5rc1](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.5-rc.1) · [Install](docs/INSTALL.md) · [Commands](docs/COMMANDS.md) · [Architecture](docs/ARCHITECTURE.md) · [Agent work log (中文)](AgentWorkLog.md)
 
 A lightweight viewer for quickly opening and inspecting astronomical FITS images and spectra on remote servers, in local containers, and on Linux, Windows or macOS desktops. Double-click a file in JupyterLab, open it from a terminal, or embed it in a Notebook.
 
