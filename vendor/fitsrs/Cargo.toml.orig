@@ -1,0 +1,66 @@
+[package]
+name = "fitsrs"
+version = "0.4.1"
+authors = ["Matthieu Baumann <matthieu.baumann@astro.unistra.fr>"]
+edition = "2018"
+description = "Implementation of the FITS image parser"
+license = "Apache-2.0 OR MIT"
+readme = "README.md"
+categories = ["science", "algorithms"]
+keywords = ["fits"]
+documentation = "https://docs.rs/fitsrs"
+homepage = "https://github.com/cds-astro/fitsrs/"
+repository = "https://github.com/cds-astro/fitsrs/"
+exclude = [
+    "samples/*",
+]
+
+[workspace]
+members = [
+    "crates/cli"
+]
+
+[workspace.dependencies]
+log = "0.4"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dependencies]
+log = { workspace = true }
+byteorder = "1.4.2"
+serde = { version = "1.0.152", features = ["derive"] }
+futures = "0.3.31"
+async-trait = "0.1.66"
+quick-error = "2.0.1"
+flate2 = "1.0.35"
+wcs = "0.4.2"
+indexmap = { version = "2.9.0", features = ["serde"] }
+serde_repr = "0.1.20"
+
+[dev-dependencies]
+test-case = "3.0.0"
+tokio = { version = "1.26.0", features = ["rt", "macros"]}
+image = { version = "0.25.5" }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "iterate_over_headers"
+harness = false
+
+[[bench]]
+name = "decompress"
+harness = false
+
+[profile.release]
+lto = true
+opt-level = 3
+
+[profile.test]
+incremental = true
+opt-level = 0
+debug = 1
+lto = true
+debug-assertions = true
+overflow-checks = true
+rpath = false
+codegen-units = 512

@@ -1,0 +1,35 @@
+# CHANGELOG.md
+
+## 0.4.0
+
+- Create a workspace to accept sub-crates
+- Add a CLI tool in the workspace
+- Add a few getters in header structs
+- Add HIERARCH support
+- Enhance pixels retrieval API for binary table extensions
+- Several fixes on the parsing of binary table extensions
+
+## 0.3.0
+
+Features:
+
+- Provide an iterator over the HDU list
+- #16: Parsing of comments, history, continued, card as enum.
+- #20 Basic support of Bintable
+- #20 Faster parsing using the benefit of the Seek trait to skip data block not wanted
+- Seek to a specific pixel in the ImageData struct
+- Possibility to access the raw bytes of a binary table for cursor typed readers
+- Fits is cloneable as long as the provided reader is cloneable
+- #20 Tiled image convention for storing compressed images in FITS binary tables
+    * Compression supported, GZIP, GZIP2 and RICE on u8, i16, i32 and f32. H_compress and PLI0 are not supported
+    * Dithering techniques for floating point texture not well tested (test samples are welcome)
+    * `NULL_PIXEL_MASK` column and `ZMASKCMP` keyword is not supported
+
+Breaking changes:
+
+- The iterator over HDUs is more rust idiomatic but introduces a different usage of the API
+- `Header.get` method now takes a `&str` instead of a `[u8; 8]` slice.
+
+Bugfixes:
+
+- Be more safe about UB [https://github.com/cds-astro/fitsrs/issues/5]. BITPIX > 8 needs to be read from BigEndian scheme. It is thus necessary to create a new owned vector from the reading bytes. For BITPIX = 8, data can be directly read from the memory without allocating anything.

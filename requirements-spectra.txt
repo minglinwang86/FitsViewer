@@ -1,0 +1,8 @@
+# Optional PRO spectral tools in the selected environment only.
+# 可选：仅安装到用户明确选择的科学环境；基础查看器不自动安装。
+# Continuum/measurement/smoothing/profile fitting use NumPy + SciPy.
+# Astropy + Specutils are additionally needed for provisional candidate finding.
+numpy>=1.26
+astropy>=6
+scipy>=1.11
+specutils>=2,<3

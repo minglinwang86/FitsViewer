@@ -3054,3 +3054,9 @@ The MinGW build includes compiler/CRT runtime components outside Cargo metadata.
 
 - [MinGW-w64 CRT notices](licenses/windows/MinGW-w64-CRT.txt)
 - [GCC runtime notices and Runtime Library Exception](licenses/windows/GCC-runtime-copyright.txt)
+
+## Shared CJK fallback and fitsrs compatibility adapter
+
+Droid Sans Fallback from Android Open Source Project tag android-4.4.4_r2 is used under Apache-2.0. The default font is a common-character subset, renamed FitsViewer CJK Common, generated with fontTools and retaining hinting. It includes 3,755 GB2312 level-one Chinese characters plus punctuation and scientific symbols. Rare/traditional character coverage is not guaranteed. See web/fonts/font-manifest.json for source/asset checksums and modifications, and licenses/fonts/droid/NOTICE.txt and LICENSE-APACHE.txt for attribution and terms. One external font file is shared by native and web viewers.
+
+The vendored fitsrs 0.4.1 keeps its MIT/Apache-2.0 terms. Local changes expose its Rice/dithering helpers and use explicit wrapping arithmetic/little-endian Rice output. The viewer supplies bounded tile framing; see vendor/README.fitsviewer.md and licenses/rust/fitsrs-0.4.1/.

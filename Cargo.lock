@@ -818,8 +818,6 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 [[package]]
 name = "fitsrs"
 version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f882ef4d0334f5fc1f1f23a0a8eb51c67207a58d69e0ed17039dfdc66e8a107a"
 dependencies = [
  "async-trait",
  "byteorder",
@@ -835,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "fitsviewer"
-version = "0.1.4-rc.2"
+version = "0.1.5-rc.1"
 dependencies = [
  "axum",
  "clap",
@@ -854,7 +852,7 @@ dependencies = [
 
 [[package]]
 name = "fitsviewer-core"
-version = "0.1.4-rc.2"
+version = "0.1.5-rc.1"
 dependencies = [
  "fitsrs",
  "flate2",
@@ -865,12 +863,14 @@ dependencies = [
 
 [[package]]
 name = "fitsviewer-web"
-version = "0.1.4-rc.2"
+version = "0.1.5-rc.1"
 dependencies = [
  "eframe",
  "ehttp",
  "fitsviewer-core",
+ "image",
  "js-sys",
+ "serde",
  "serde_json",
  "urlencoding",
  "wasm-bindgen",

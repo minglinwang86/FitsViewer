@@ -7,12 +7,19 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["pro"]
+pro = []
+offline = ["fitsviewer-core/offline"]
+
 [dependencies]
 fitsviewer-core = { path = "../core" }
 eframe = { version = "=0.32.3", default-features = false, features = ["default_fonts", "glow"] }
 ehttp = "0.5"
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 urlencoding = "2"
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 eframe = { version = "=0.32.3", default-features = false, features = ["x11"] }
@@ -21,4 +28,4 @@ eframe = { version = "=0.32.3", default-features = false, features = ["x11"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["HtmlCanvasElement", "Window", "Location"] }
+web-sys = { version = "0.3", features = ["HtmlCanvasElement", "Window", "Location", "Storage"] }

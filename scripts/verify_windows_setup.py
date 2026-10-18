@@ -14,7 +14,7 @@ import winreg
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--setup',required=True,type=Path)
 parser.add_argument('--python',required=True,type=Path)
-parser.add_argument('--conda-prefix',required=True,type=Path)
+parser.add_argument('--conda-prefix',type=Path,help='Optional dedicated Conda environment; omitted tests are reported explicitly')
 parser.add_argument('--scratch',required=True,type=Path)
 parser.add_argument('--payload',type=Path,help='Optional source payload for installed-file integrity checks')
 args=parser.parse_args()
@@ -39,7 +39,7 @@ def value(key,name=''):
 def defaults():
     return {e:{'fallback':value('Software\\Classes\\'+e),
                'protected':value('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\'+e+'\\UserChoice','ProgId')}
-            for e in ['.fits','.fit','.fts','.gz']}
+            for e in ['.fits','.fit','.fts','.fz','.gz']}
 assert value('Software\\RegisteredApplications','FitsViewer') is None, 'Use a Windows account without an existing FitsViewer registration'
 before=defaults()
 report={}
@@ -56,7 +56,7 @@ def uninstall():
     assert defaults()==before, 'Previous defaults were not restored'
     assert value('Software\\RegisteredApplications','FitsViewer') is None
     assert value('Software\\Classes\\FitsViewer.FITS\\shell\\open\\command') is None
-    for e in ['.fits','.fit','.fts']:
+    for e in ['.fits','.fit','.fts','.fz']:
         assert value('Software\\Classes\\'+e+'\\OpenWithProgids','FitsViewer.FITS') is None
     report['uninstall_restores_defaults']=True
 def inspect(python):
@@ -105,11 +105,14 @@ try:
     assert defaults()==before
     report['default_toggle_and_protected_choices']=True
     uninstall()
-    install('conda-environment',['/TASKS=','/CONDAENV='+str(args.conda_prefix.resolve()),'/WITHJUPYTER=yes','/JUPYTERDEFAULT=yes'])
-    details=inspect(args.conda_prefix.resolve()/'python.exe')
-    assert details['binding']['enabled'] and details['state']['configured']['default_viewer']
-    assert Path(details['state']['prefix']).resolve()==args.conda_prefix.resolve()
-    uninstall()
+    if args.conda_prefix:
+        install('conda-environment',['/TASKS=','/CONDAENV='+str(args.conda_prefix.resolve()),'/WITHJUPYTER=yes','/JUPYTERDEFAULT=yes'])
+        details=inspect(args.conda_prefix.resolve()/'python.exe')
+        assert details['binding']['enabled'] and details['state']['configured']['default_viewer']
+        assert Path(details['state']['prefix']).resolve()==args.conda_prefix.resolve()
+        uninstall()
+    else:
+        report['conda-environment']={'tested':False,'reason':'No dedicated Conda prefix supplied'}
     report['passed']=True
 finally:
     if value('Software\\RegisteredApplications','FitsViewer') is not None and (app/'unins000.exe').exists(): uninstall()

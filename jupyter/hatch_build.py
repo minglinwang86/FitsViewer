@@ -2,6 +2,7 @@
 from pathlib import Path
 import platform
 import os
+import json
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 
@@ -12,9 +13,18 @@ class CustomBuildHook(BuildHookInterface):
         root = Path(self.root)
         windows = os.environ.get('FITSVIEWER_PACKAGE_TARGET')=='windows'
         executable = 'fitsviewer.exe' if windows else 'fitsviewer'
-        for name in ["fitsviewer/_vendor/bin/"+executable,
-                     "fitsviewer/_vendor/web/pkg/fitsviewer_web_bg.wasm",
-                     "fitsviewer/labextension/package.json"]:
+        profile = json.loads((root / "fitsviewer/build-profile.json").read_text(encoding="utf-8"))
+        web_profile = json.loads((root / "fitsviewer/_vendor/web/build-profile.json").read_text(encoding="utf-8"))
+        if profile != web_profile:
+            raise RuntimeError("Python and web build profiles differ")
+        required = ["fitsviewer/_vendor/bin/"+executable,
+                    "fitsviewer/_vendor/web/pkg/fitsviewer_web_bg.wasm",
+                    "fitsviewer/_vendor/web/icons/fitsviewer.svg",
+                    "fitsviewer/_vendor/web/icons/fitsviewer.png",
+                    "fitsviewer/_vendor/web/icons/fitsviewer.icns"]
+        if profile["jupyter"]:
+            required.append("fitsviewer/labextension/package.json")
+        for name in required:
             if not (root / name).is_file():
                 raise RuntimeError("Missing prebuilt assets. Run scripts/build.sh before packaging.")
         binary = (root / ('fitsviewer/_vendor/bin/'+executable)).read_bytes()

@@ -2,8 +2,10 @@ import { JupyterFrontEnd, JupyterFrontEndPlugin } from '@jupyterlab/application'
 import { IDocumentManager } from '@jupyterlab/docmanager';
 import { ABCWidgetFactory, DocumentRegistry, DocumentWidget } from '@jupyterlab/docregistry';
 import { PageConfig, URLExt } from '@jupyterlab/coreutils';
+import { ILauncher } from '@jupyterlab/launcher';
 import { ContentsManager, Drive, IContentProvider, ServerConnection } from '@jupyterlab/services';
 import { Widget } from '@lumino/widgets';
+import { fitsviewerIcon } from './icon';
 
 const PROVIDER = 'fitsviewer-metadata';
 const FACTORY = 'FitsViewer';
@@ -51,6 +53,7 @@ class FitsFactory extends ABCWidgetFactory<DocumentWidget<FitsContent>> {
     const content = new FitsContent(context);
     void context.ready.then(() => { context.model.readOnly = true; context.model.dirty = false; });
     const widget = new DocumentWidget({content, context});
+    widget.title.icon = fitsviewerIcon;
     // The parent's disposed signal precedes DOM detachment; child disposal is later.
     // 父窗口先发 disposed 信号再移除 DOM，必须在这里释放 iframe 内部资源。
     widget.disposed.connect(content.release, content);
@@ -63,7 +66,8 @@ const plugin: JupyterFrontEndPlugin<void> = {
   id: 'fitsviewer:viewer',
   autoStart: true,
   requires: [IDocumentManager],
-  activate: async (app: JupyterFrontEnd, documents: IDocumentManager) => {
+  optional: [ILauncher],
+  activate: async (app: JupyterFrontEnd, documents: IDocumentManager, launcher: ILauncher | null) => {
     const settings = ServerConnection.makeSettings();
     const response = await ServerConnection.makeRequest(URLExt.join(settings.baseUrl, 'fitsviewer-settings'), {method: 'GET'}, settings);
     if (!response.ok && response.status !== 404) { throw new Error('FitsViewer settings could not be loaded'); }
@@ -80,13 +84,27 @@ const plugin: JupyterFrontEndPlugin<void> = {
     ((app.serviceManager.contents as ContentsManager).defaultDrive as Drive).contentProviderRegistry.register(PROVIDER, provider);
     app.docRegistry.addFileType({
       name: 'fitsviewer-fits', displayName: 'FITS image',
-      extensions: ['.fits', '.fit', '.fts', '.fits.gz', '.fit.gz', '.fts.gz', '.FITS', '.FIT', '.FTS', '.FITS.GZ', '.fz', '.fits.fz'],
+      extensions: ['.fits', '.fit', '.fts', '.fits.gz', '.fit.gz', '.fts.gz', '.FITS', '.FIT', '.FTS', '.FITS.GZ', '.FIT.GZ', '.FTS.GZ', '.fz', '.fits.fz', '.fit.fz', '.fts.fz', '.FZ', '.FITS.FZ', '.FIT.FZ', '.FTS.FZ'],
       mimeTypes: ['application/fits', 'image/fits'], contentType: 'file', fileFormat: 'text'
     });
+    app.docRegistry.addFileType({name:'fitsviewer-spectrum',displayName:'Spectrum data',extensions:['.dat','.txt','.csv','.ascii','.dat.gz','.txt.gz','.csv.gz'],mimeTypes:['text/plain'],contentType:'file',fileFormat:'text'});
     app.docRegistry.addWidgetFactory(new FitsFactory({
-      name: FACTORY, label: FACTORY, fileTypes: ['fitsviewer-fits'], defaultFor: preferences.default_viewer ? ['fitsviewer-fits'] : [],
+      name: FACTORY, label: FACTORY, fileTypes: ['fitsviewer-fits','fitsviewer-spectrum','text','csv'], defaultFor: preferences.default_viewer ? ['fitsviewer-fits'] : [],
       modelName: 'text', readOnly: true, contentProviderId: PROVIDER
     }));
+
+    // Non-kernel launcher cards use their command's LabIcon, not kernelIconUrl.
+    // 普通启动卡片直接使用命令图标，代理只负责按需启动服务。
+    const openViewer = 'fitsviewer:open-window';
+    app.commands.addCommand(openViewer, {
+      label: 'FitsViewer',
+      caption: 'Open FitsViewer in a window',
+      icon: fitsviewerIcon,
+      execute: () => {
+        window.open(URLExt.join(PageConfig.getBaseUrl(), 'fitsviewer/'), '_blank', 'noopener');
+      }
+    });
+    launcher?.add({command: openViewer, category: 'Other'});
 
     // CLI requests open a document in the connected Lab window. A user click on
     // "Open in window" creates a popup without bypassing browser popup policies.

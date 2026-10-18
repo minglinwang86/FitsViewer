@@ -1,5 +1,8 @@
 //! FITS numeric data and display transformations. / FITS 数值与显示变换。
 use serde::{Deserialize, Serialize};
+pub mod display;
+pub mod regions;
+pub mod view;
 
 /// Maximum image size accepted by this MVP.
 pub const MAX_PIXELS: usize = 32 * 1024 * 1024;
@@ -30,6 +33,81 @@ pub struct ImageInfo {
     pub blank: Option<i64>,
     pub hdus: Vec<HduInfo>,
     pub header: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spectrum: Option<SpectrumMeta>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SpectrumMeta {
+    pub x_label: String,
+    pub x_unit: String,
+    pub y_label: String,
+    pub y_unit: String,
+    pub columns: Vec<String>,
+    pub x_column: usize,
+    pub y_column: usize,
+    pub error_column: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_hdu: Option<usize>,
+    pub uncertainty_kind: String,
+    pub note: String,
+}
+
+impl SpectrumMeta {
+    /// The packet stores sigma for either an uncertainty column or image HDU.
+    /// 误差列或误差图像 HDU 均在封包末尾保存标准差，不伪造列索引。
+    pub fn has_error(&self) -> bool { self.error_column.is_some() || self.error_hdu.is_some() }
+    pub fn source_error_kind(&self)->ErrorKind{match self.uncertainty_kind.as_str(){"standard deviation"|"sigma"=>ErrorKind::Sigma,"variance"=>ErrorKind::Variance,"inverse variance"=>ErrorKind::Ivar,_=>ErrorKind::Auto}}
+}
+
+#[derive(Clone, Debug)]
+pub struct SpectrumData {
+    pub x: Vec<f64>,
+    /// Standard deviations after interpreting the source uncertainty convention.
+    /// 按源文件的误差约定转换后的标准差，缺失或无效值保留为 NaN。
+    pub error: Option<Vec<f64>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all="lowercase")]
+pub enum ErrorKind {
+    #[default]
+    Auto,
+    Sigma,
+    Variance,
+    Ivar,
+}
+
+impl ErrorKind {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto), "sigma" => Some(Self::Sigma),
+            "variance" => Some(Self::Variance), "ivar" => Some(Self::Ivar), _ => None,
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self { Self::Auto => "auto", Self::Sigma => "sigma", Self::Variance => "variance", Self::Ivar => "ivar" }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LoadOptions {
+    pub hdu: Option<usize>,
+    pub x_column: Option<usize>,
+    pub y_column: Option<usize>,
+    pub error_column: Option<usize>,
+    pub error_hdu: Option<usize>,
+    pub error_kind: ErrorKind,
+    #[serde(rename="no_error",alias="ignore_errors")]
+    pub ignore_errors: bool,
+}
+impl LoadOptions{
+    pub fn validate(&self)->Result<(),String>{
+        if [self.hdu,self.error_hdu].iter().flatten().any(|index|*index>=4096) || [self.x_column,self.y_column,self.error_column].iter().flatten().any(|index|*index>=256){return Err("Input HDU/column mapping exceeds supported limits".into());}
+        if self.ignore_errors && (self.error_column.is_some() || self.error_hdu.is_some()) || self.error_column.is_some() && self.error_hdu.is_some(){return Err("Choose one uncertainty source or no errors".into());}
+        Ok(())
+    }
 }
 
 /// Keep storage types intact; only the display uses floating-point values.
@@ -96,6 +174,7 @@ impl RawPixels {
 pub struct FitsImage {
     pub info: ImageInfo,
     pub pixels: RawPixels,
+    pub spectrum: Option<SpectrumData>,
 }
 
 impl FitsImage {
@@ -107,6 +186,13 @@ impl FitsImage {
     /// Binary framing preserves i64/f64 and NaNs across HTTP, without JSON arrays.
     /// 二进制封包保留 i64/f64 和 NaN，避免把像素数组转换成 JSON。
     pub fn to_packet(&self) -> Result<Vec<u8>, String> {
+        match (&self.spectrum, &self.info.spectrum) {
+            (Some(data), Some(meta)) if data.x.len() == self.pixels.len()
+                && data.error.as_ref().map_or(true, |e| e.len() == data.x.len())
+                && data.error.is_some() == meta.has_error() => {},
+            (None, None) => {},
+            _ => return Err("Inconsistent spectrum arrays or uncertainty source".into()),
+        }
         let header = serde_json::to_vec(&self.info).map_err(|e| e.to_string())?;
         let mut packet = Vec::with_capacity(4 + header.len() + self.pixels.len() * 8);
         packet.extend_from_slice(&(header.len() as u32).to_le_bytes());
@@ -126,6 +212,12 @@ impl FitsImage {
             RawPixels::F32(v) => write!(v),
             RawPixels::F64(v) => write!(v),
         }
+        if let Some(spectrum) = &self.spectrum {
+            write!(&spectrum.x);
+            if let Some(error) = &spectrum.error {
+                write!(error);
+            }
+        }
         Ok(packet)
     }
     pub fn from_packet(packet: &[u8]) -> Result<Self, String> {
@@ -139,11 +231,13 @@ impl FitsImage {
         let info: ImageInfo =
             serde_json::from_slice(&packet[4..4 + n]).map_err(|e| e.to_string())?;
         let count = checked_pixels(info.width, info.height)?;
-        let bytes = &packet[4 + n..];
+        let payload = &packet[4 + n..];
         let size = (info.bitpix.unsigned_abs() / 8) as usize;
-        if size == 0 || bytes.len() != count * size {
+        let spectral_bytes = info.spectrum.as_ref().map_or(0, |s| count * 8 * if s.has_error() { 2 } else { 1 });
+        if size == 0 || payload.len() != count * size + spectral_bytes {
             return Err("Incomplete pixel data".into());
         }
+        let (bytes, spectral) = payload.split_at(count * size);
         macro_rules! read {
             ($ty:ty, $variant:ident, $n:literal) => {
                 RawPixels::$variant(
@@ -163,7 +257,14 @@ impl FitsImage {
             -64 => read!(f64, F64, 8),
             _ => return Err("Unsupported BITPIX".into()),
         };
-        Ok(Self { info, pixels })
+        let spectrum = info.spectrum.as_ref().map(|meta| {
+            let values = |bytes: &[u8]| bytes.chunks_exact(8).map(|b| f64::from_le_bytes(b.try_into().unwrap())).collect();
+            SpectrumData {
+                x: values(&spectral[..count * 8]),
+                error: meta.has_error().then(|| values(&spectral[count * 8..])),
+            }
+        });
+        Ok(Self { info, pixels, spectrum })
     }
 }
 
@@ -179,10 +280,21 @@ fn checked_pixels(width: usize, height: usize) -> Result<usize, String> {
     Ok(count)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"),feature="offline"))]
 mod reader;
 #[cfg(not(target_arch = "wasm32"))]
-pub use reader::load_file;
+pub use reader::{load_file, load_file_with_options, load_header};
+#[cfg(any(not(target_arch = "wasm32"),feature="offline"))]
+pub use reader::load_bytes_with_options;
+
+/// Remove only a paired outer quote; preserve meaningful spaces and Unicode.
+/// 仅移除粘贴路径的一对外层引号，保留有效空格和 Unicode 字符。
+pub fn pasted_path(value: &str) -> &str {
+    if value.len() >= 2 && ((value.starts_with('"') && value.ends_with('"'))
+        || (value.starts_with('\'') && value.ends_with('\''))) {
+        &value[1..value.len() - 1]
+    } else { value }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Algorithms for selecting the displayed physical-value interval.
@@ -208,26 +320,49 @@ impl Limits {
 pub enum Stretch {
     Linear,
     Log,
+    Power,
     Sqrt,
+    Squared,
     Asinh,
+    Sinh,
+    HistogramEqualization,
 }
 impl Stretch {
-    pub const ALL: [Self; 4] = [Self::Linear, Self::Log, Self::Sqrt, Self::Asinh];
+    pub const ALL: [Self; 8] = [Self::Linear, Self::Log, Self::Power, Self::Sqrt, Self::Squared, Self::Asinh, Self::Sinh, Self::HistogramEqualization];
     pub fn name(self) -> &'static str {
         match self {
             Self::Linear => "Linear",
             Self::Log => "Log",
+            Self::Power => "Power",
             Self::Sqrt => "Sqrt",
+            Self::Squared => "Squared",
             Self::Asinh => "Asinh",
+            Self::Sinh => "Sinh",
+            Self::HistogramEqualization => "Histogram Equalization",
+        }
+    }
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "pow" => Some(Self::Power),
+            "histequ" => Some(Self::HistogramEqualization),
+            _ => Self::ALL.into_iter().find(|s| s.name().eq_ignore_ascii_case(name)),
         }
     }
     pub fn apply(self, x: f64) -> f64 {
+        self.apply_with_exponent(x, 1000.)
+    }
+    /// Histogram equalization needs image context; without it the fallback is linear.
+    /// 直方图均衡由 display::ScaleMapping 提供图像统计；无统计时回退线性。
+    pub fn apply_with_exponent(self, x: f64, exponent: f64) -> f64 {
         let x = x.clamp(0.0, 1.0);
         match self {
-            Self::Linear => x,
-            Self::Log => (1000.0 * x).ln_1p() / 1001.0_f64.ln(),
+            Self::Linear | Self::HistogramEqualization => x,
+            Self::Log => (exponent * x).ln_1p() / exponent.ln_1p(),
+            Self::Power => (exponent.ln() * x).exp_m1() / (exponent - 1.),
             Self::Sqrt => x.sqrt(),
+            Self::Squared => x*x,
             Self::Asinh => (10.0 * x).asinh() / 10.0_f64.asinh(),
+            Self::Sinh => (3.0*x).sinh() / 3.0_f64.sinh(),
         }
     }
 }
@@ -419,24 +554,5 @@ pub fn render_rgba_with_tone(
     invert: bool,
     tone: DisplayTone,
 ) -> Vec<u8> {
-    let mut out = Vec::with_capacity(image.pixels.len() * 4);
-    let span = (high - low).max(f64::MIN_POSITIVE);
-    // FITS y increases upwards; screen y increases downwards. / FITS 与屏幕纵轴方向相反。
-    for screen_y in 0..image.info.height {
-        let y = image.info.height - 1 - screen_y;
-        for x in 0..image.info.width {
-            let i = y * image.info.width + x;
-            if let Some(value) = image.physical(i) {
-                let mut t = tone.apply(stretch.apply((value - low) / span));
-                if invert {
-                    t = 1.0 - t;
-                }
-                let c = (t * 255.0).round() as u8;
-                out.extend_from_slice(&[c, c, c, 255]);
-            } else {
-                out.extend_from_slice(&[95, 45, 110, 255]);
-            }
-        }
-    }
-    out
+    display::render(image, low, high, stretch, invert, tone, &display::RenderOptions::default())
 }

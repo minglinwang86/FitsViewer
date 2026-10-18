@@ -16,6 +16,9 @@ from .platform_support import alive
 
 
 def jupyter_info():
+    from .build_info import build_info
+    if not build_info()["jupyter"]:
+        return None
     directory = runtime_dir()
     browser_port = None
     try:
@@ -33,7 +36,7 @@ def jupyter_info():
         server = json.loads(info.read_text())
         server["fitsviewer_browser_port"] = browser_port
         return server
-    except (OSError, ValueError, KeyError): return None
+    except (OSError, ValueError, KeyError, ImportError): return None
 
 
 def snapshot():

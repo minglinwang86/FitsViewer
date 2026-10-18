@@ -24,11 +24,13 @@ jobs:
           source scripts/env.sh
           bash scripts/build.sh --portable --repair
           cargo test --locked -p fitsviewer-core
-          python -m twine check --strict dist/*.whl
+          python -m twine check --strict dist/full/*.whl
+          python -B qa/test_build_profiles.py
+          python -B qa/test_install_release.py
       - uses: actions/upload-artifact@v5
         with:
           name: candidate-wheel
-          path: dist/*.whl
+          path: dist/full/*.whl
   integration:
     needs: build
     runs-on: ubuntu-22.04

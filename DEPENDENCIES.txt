@@ -1,4 +1,4 @@
-FitsViewer 0.1.4rc2 - Linux / Windows - environment dependencies / 环境依赖清单
+FitsViewer 0.1.5rc1 - Full release - environment dependencies / 环境依赖清单
 Repository / 仓库: https://github.com/minglinwang86/FitsViewer
 
 This is an environment checklist, not a pip requirements file.
@@ -14,8 +14,8 @@ This is an environment checklist, not a pip requirements file.
 
    Python dependencies / Python 依赖安装:
      python -m pip install -r requirements.txt
-   Install the FitsViewer wheel separately; pip also installs its declared dependencies.
-   FitsViewer 自身需要安装 wheel；直接安装 wheel 时 pip 会自动处理上述 Python 依赖。
+   Install wheel[jupyter] for these integration dependencies; a plain wheel installs only FitsViewer.
+   使用 wheel[jupyter] 安装集成依赖；普通 wheel 只安装 FitsViewer。
    Use the JupyterLab server's environment. A separate Notebook kernel needs the
    importable package for show(). / 服务与内核分属两个环境时，按 README 分别安装。
 
@@ -53,7 +53,15 @@ This is an environment checklist, not a pip requirements file.
    - wasm-bindgen-cli 0.2.129 (must match Cargo.lock / 必须匹配锁文件).
    - cargo-zigbuild 0.23.4 and ziglang 0.13.0 for the glibc 2.28 build.
    - Python build tools: exact versions in requirements-build.txt.
-   - Rust dependencies: Cargo.lock, including fitsrs 0.4.1.
+   - Rust dependencies: Cargo.lock, including the small vendored fitsrs 0.4.1 patch.
+     See vendor/README.fitsviewer.md. No CFITSIO, Astropy or plotting framework is
+     needed at runtime for tiled FITS or basic spectra.
+   - Shared Apache-2.0 Chinese fallback: web/fonts/cjk.ttf (common-character subset).
+     Installed once as a shared native/browser asset. Its source/hash/license are
+     recorded in web/fonts/font-manifest.json and licenses/fonts/droid/.
+     Includes 3,755 GB2312 level-one Chinese characters plus punctuation/symbols.
+     Optional regeneration uses fontTools; --charset full or --text-file extends
+     coverage without adding a second font to the normal installation.
    - Frontend dependencies: jupyter/package-lock.json.
    - Bootstrap installs development tools under .tools/; see docs/BUILDING.md.
      bootstrap 将开发工具安装到项目 .tools/，不会替代所选的运行环境。
@@ -71,7 +79,9 @@ This is an environment checklist, not a pip requirements file.
      NumPy 2.5.2, Astropy 8.0.1). These are optional validation dependencies.
    - Archived glibc loader checks: dpkg-deb (dpkg), xz support, network access.
 
-6. Verified scope / 已验证范围
+6. Earlier platform validation / 历史平台验收
+   These are earlier P0 checks; current Full evidence: docs/releases/VALIDATION-0.1.5rc1.md.
+   以下为较早 P0 检查，当前 Full 验收见 docs/releases/VALIDATION-0.1.5rc1.md。
    - Ubuntu 22.04 x86_64 container; current wheel is manylinux_2_28_x86_64.
    - Python 3.10.12 + JupyterLab 4.4.0; Python 3.14.6 + JupyterLab 4.6.4.
    - glibc 2.28 and 2.31 isolated loader/backend checks, not full distribution tests.
@@ -95,3 +105,23 @@ This is an environment checklist, not a pip requirements file.
    - Windows packaging: Python >=3.11 and Inno Setup 6.7.3 (compiler only).
      Icons are included; regenerating them with windows/make_icon.py needs Pillow.
    - Detailed setup and uninstall behavior: docs/WINDOWS.md.
+
+8. On-demand scientific tools / 按需科学工具
+   These packages stay in the selected existing Python/Conda environment; the
+   viewer does not bundle or automatically install them. See docs/SCIENTIFIC_TOOLS.md.
+   下列包由所选已有环境提供，不内嵌或自动安装。
+   - NumPy + Astropy: J2000, WCS, catalogues, sky templates and SAMP.
+   - SciPy: detection, local spherical XMatch, line profiles and Gaia fitting.
+   - Specutils >=2,<3 + Astropy + SciPy + NumPy: optional PRO spectral candidates.
+     requirements-spectra.txt is an opt-in install list, never a viewer dependency.
+   - NumPy + SciPy: optional spectral continuum, EW/pEW, smoothing and bounded
+     Gaussian/Voigt profiles. Coordinate/display overlays and relative blackbody
+     references use the existing viewer; no additional scientific runtime is bundled.
+   - scikit-image: probabilistic Hough straight-line detection.
+   - Shapely: sky transformation of finite-width line/curve apertures.
+   - Matplotlib: PNG/JPG/PDF/SVG figures, RGB previews and MathText subset.
+     text.usetex is disabled; no TeX engine is embedded.
+   - PyVO: SIA v1, SSA, TAP and ESA Gaia reference queries.
+   - Astroquery: CDS XMatch. Astroalign: optional Gaia field pattern fallback.
+   - Select with --python /path/to/env/bin/python or FITSVIEWER_PYTHON.
+     Jupyter defaults to its server environment; a separate kernel is independent.

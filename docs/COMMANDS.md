@@ -17,6 +17,49 @@ fitsviewer ports --json
 
 `status` / `ports` 只检查已有服务，不启动查看器。输出包含当前 Python 环境、配置文件位置、Jupyter 端口、内部查看器端口、浏览器地址和下次启动的配置。输出不包含登录 token。
 
+## 0.1.5 的科学与批处理命令
+
+以下命令适用于 0.1.5rc1 Full，科学包按需调用所选环境，不内嵌到安装包。
+细节及数值边界见[科学工具说明](SCIENTIFIC_TOOLS.md)。
+
+```bash
+fitsviewer inspect image.fits --json
+fitsviewer features --python /path/to/env/bin/python --json
+fitsviewer measure image.fits --regions apertures.json --error-path errors.fits
+fitsviewer science wcs --params wcs.json --python /path/to/env/bin/python
+fitsviewer science gaia_solve --params gaia.json --python /path/to/env/bin/python
+fitsviewer render image.fits --view view.json --output figure.png --python /path/to/env/bin/python
+fitsviewer batch --input requests.jsonl
+fitsviewer session validate session.json
+fitsviewer session apply session.json --native
+fitsviewer session apply session.json --no-browser --port 8765
+```
+
+`inspect`、`measure`、`batch` 的基础数值由 Rust 处理。`batch` 每行一条 JSON，支持
+`inspect`、`measure`、`view.validate`；逐条返回 `id/ok/result` 或 `error`，任一失败时退出码为 1。
+JSON 参数路径用 `-` 可从标准输入读取。会话路径相对会话 JSON 所在目录解释；
+`session apply` 真正启动原生窗口或返回待浏览器打开的会话地址。
+
+`view.json` 的 `stretch` 可选 Linear、Log、Power、Sqrt、Squared、Asinh、Sinh、
+Histogram Equalization。`render.stretch_exponent` 控制 Log/Power，默认 1000。
+光谱读取的 `--no-error` 明确禁用误差列；错误的 `--error-column` 会返回错误。
+光谱界面可以显式选择误差列，或为 1D FITS 指定不同的误差 HDU；类型可选
+`auto`、`sigma`、`variance`、`ivar`。无明确列名/EXTNAME 时必须手动指定类型。
+Rust 程序的无窗口接口示例（HDU/列下标均从 0 开始）：
+
+```bash
+fitsviewer --packet spectrum.fits --hdu 0 --error-hdu 1 --error-kind variance > spectrum.packet
+fitsviewer --packet spectrum.dat --error-column 2 --error-kind variance > spectrum.packet
+fitsviewer --header-json image.fits --hdu 0
+```
+
+packet 是程序接口的二进制数据；GUI 则通过光谱工具栏选择相同参数。
+孔径测光参数 JSON 可填写 `error_path`、`error_hdu`、`error_kind`，同文件误差必须明确
+选择不同的二维 HDU，误差图与科学图必须已经位于同一像素网格。输出记录实际来源，
+不能以科学图本身代替误差图。
+GUI 中左键/中键拖动平移，右键拖动调亮度与对比度，滚轮缩放；快捷键 1–4 保留原有四种拉伸，
+5/6/7/8 分别为 Power/Squared/Sinh/Histogram Equalization。
+
 ## 端口含义
 
 | 层级 | 示例 | 选择方式 |
@@ -95,7 +138,7 @@ fitsviewer install --prefix /path/to/env --wheel /path/to/fitsviewer.whl
 `fitsviewer install` 成功后返回英文提示，显示目标环境、Python、目标端口配置、已连接的运行端口，以及 JupyterLab 扩展绑定状态。例如：
 
 ```text
-FitsViewer installation successful (version 0.1.4rc2).
+FitsViewer installation successful (version 0.1.5rc1).
 Installation environment: /path/to/env
 Python executable: /path/to/env/bin/python
 JupyterLab port: 8082 (configured)
@@ -142,7 +185,7 @@ fitsviewer install --python /path/to/env/bin/python --default-viewer no --deskto
 pip 的目标环境通过 Python 或 Conda 选择，应用配置由程序命令完成：
 
 ```bash
-conda run -n astro python -m pip install ./fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl
+conda run -n astro python -m pip install ./fitsviewer-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl
 conda run -n astro fitsviewer defaults set --jupyter yes --desktop no
 ```
 

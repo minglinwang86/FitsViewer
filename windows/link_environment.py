@@ -57,7 +57,8 @@ if not args.with_jupyter:
         if not version(name): raise SystemExit(name+' is missing; enable dependency installation in Setup.')
 command=[sys.executable,'-m','pip','install','--upgrade']
 if not args.with_jupyter: command.append('--no-deps')
-run([*command,str(args.wheel)])
+requirement = str(args.wheel) + ('[jupyter]' if args.with_jupyter else '')
+run([*command,requirement])
 # A fresh subprocess sees newly installed package files without import caches.
 # 使用新的解释器进程读取新安装的模块，避免复用安装前的导入缓存。
 for name in ['fitsviewer','jupyter_server_proxy']:

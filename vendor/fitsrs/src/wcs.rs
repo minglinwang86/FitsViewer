@@ -1,0 +1,45 @@
+use crate::hdu::header::extension::image::Image;
+use crate::hdu::header::Header;
+use crate::{error::Error, hdu::header::extension::bintable::BinTable};
+use std::convert::TryFrom;
+
+pub type ImgXY = wcs::ImgXY;
+pub type LonLat = wcs::LonLat;
+
+use crate::fits::HDU;
+use serde::de::IntoDeserializer;
+use serde::Deserialize;
+use std::convert::TryInto;
+pub use wcs::{WCSParams, WCS};
+
+impl HDU<Image> {
+    /// Try to look for a WCS in the image header and return a [WCS](https://crates.io/crates/wcs) object
+    pub fn wcs(&self) -> Result<WCS, Error> {
+        self.get_header().try_into()
+    }
+}
+
+impl<'a> TryFrom<&'a Header<Image>> for WCS {
+    type Error = Error;
+
+    fn try_from(h: &'a Header<Image>) -> Result<Self, Self::Error> {
+        let params = WCSParams::deserialize(h.into_deserializer())?;
+        WCS::new(&params).map_err(|e| e.into())
+    }
+}
+// In case of a tile compressed image, a WCS can be found in the header keywords of a binary table
+impl HDU<BinTable> {
+    /// Try to look for a WCS in the image header and return a [WCS](https://crates.io/crates/wcs) object
+    pub fn wcs(&self) -> Result<WCS, Error> {
+        self.get_header().try_into()
+    }
+}
+
+impl<'a> TryFrom<&'a Header<BinTable>> for WCS {
+    type Error = Error;
+
+    fn try_from(h: &'a Header<BinTable>) -> Result<Self, Self::Error> {
+        let params = WCSParams::deserialize(h.into_deserializer())?;
+        WCS::new(&params).map_err(|e| e.into())
+    }
+}

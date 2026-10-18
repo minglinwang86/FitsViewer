@@ -18,6 +18,9 @@ def command(arguments):
     setter.add_argument("--desktop", choices=["yes", "no"])
     args = parser.parse_args(arguments)
     if args.action == "set":
+        from .build_info import require_module
+        if args.jupyter == "yes": require_module("jupyter")
+        if args.desktop == "yes": require_module("desktop")
         if args.jupyter is None and args.desktop is None: parser.error("Choose --jupyter and/or --desktop yes|no")
         if args.jupyter is not None: save_settings({"default_viewer": args.jupyter == "yes"})
         if args.desktop == "yes": desktop.install()

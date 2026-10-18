@@ -2,7 +2,9 @@
 use std::{env, fs, path::PathBuf, process::Command};
 
 fn main() {
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+    // A browser/CLI-only host has no native desktop resources or RC dependency.
+    // 纯浏览器/命令行宿主不包含桌面资源，不应要求安装 Windows 资源编译器。
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") || env::var_os("CARGO_FEATURE_DESKTOP").is_none() {
         return;
     }
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");

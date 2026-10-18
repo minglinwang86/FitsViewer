@@ -1,85 +1,146 @@
-# pip 安装与 JupyterLab 默认打开 FITS
+# Install FitsViewer 0.1.5rc1 / 安装指南
 
-安装包包含 Rust 程序、WASM 网页、JupyterLab 预编译扩展和 Notebook 内嵌接口。使用 wheel 不需要 Rust、Node.js，也不需要执行 `jupyter lab build`。
+The Full distribution includes Minimal and PRO interfaces, the native desktop, browser viewer, prebuilt JupyterLab extension and Notebook API. No Rust/Node toolchain or `jupyter lab build` is needed when installing a wheel. Scientific Python packages remain external.
 
-当前提供 Linux x86_64 wheel（glibc 2.28 及以上）和 Windows x64 wheel、Setup 安装器、免安装 ZIP，下载链接和逐步命令见 [当前版本安装说明](releases/v0.1.4-rc.2.md)。Linux 原生 `--native` 窗口另需 X11/OpenGL 系统库，浏览器入口不需要桌面显示环境。Jupyter 集成需要 Python 3.10+、JupyterLab 4.4 及以上且低于 5。
+全功能包包含极简／PRO、原生桌面、浏览器查看器、预编译 JupyterLab 扩展和 Notebook 接口。安装 wheel 不需要 Rust、Node 或 `jupyter lab build`，科学包仍使用所选外部环境。
 
-## 安装到运行 JupyterLab 的环境
+## Download / 下载
 
-先激活实际启动 JupyterLab 的 Conda 或 venv 环境，然后安装下载的 wheel：
+[Release assets and checksums](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.5-rc.1)
+
+| Platform / 平台 | File / 文件 |
+|---|---|
+| GNU/Linux x86_64, glibc 2.28+ | [Linux wheel](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/fitsviewer-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl) |
+| Windows x86_64 desktop | [Setup EXE](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/FitsViewer-0.1.5rc1-windows-x86_64-setup.exe) · [Portable ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/FitsViewer-0.1.5rc1-windows-x86_64-portable.zip) |
+| Windows Python/Jupyter | [Windows wheel](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/fitsviewer-0.1.5rc1-py3-none-win_amd64.whl) |
+
+The project is not on PyPI; use these wheel files, not an unrelated similarly named package. Select Python 3.10+ and JupyterLab 4.4–4.x. The environment installer rejects JupyterLab 5 rather than silently downgrading it. Direct pip commands use pip's resolver, so choose the intended environment first.
+
+本项目未发布 PyPI，请使用上述 wheel。选择 Python 3.10+、JupyterLab 4.4–4.x 的环境。环境安装器会拒绝 5.x，不自动降级；直接 pip 命令则由 pip 解析依赖，应先选好目标环境。
+
+## Linux pip and Conda / Linux 安装与环境选择
+
+Activate the environment that starts the Jupyter server. Install the downloaded wheel with `[jupyter]`, which adds Lab, server-proxy and IPython integration dependencies. Installing a plain wheel only installs FitsViewer.
+
+激活真正启动 Jupyter 服务的环境，使用 `[jupyter]` 安装集成依赖。普通 wheel 不会自动安装 Jupyter 软件栈。
 
 ```bash
-python -m pip install --upgrade "https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.4-rc.2/fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl"
+python -m pip install --upgrade "./fitsviewer-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl[jupyter]"
+fitsviewer defaults set --jupyter yes --desktop no
+fitsviewer jupyter start --root "$HOME/data" --port 8082
+```
+
+The root directory must exist. Restart an already running Jupyter service after installing, then refresh the browser. Double-click FITS, FITS.gz and supported FZ files. Text spectra retain their normal editor: select **Open With → FitsViewer**.
+
+数据目录须存在。安装后重启已有 Jupyter 服务并刷新浏览器，FITS、FITS.gz、支持的 FZ 可双击打开；普通文本光谱通过 **Open With → FitsViewer** 打开。
+
+Install directly into an existing Conda environment without activating it:
+
+```bash
+conda run -n astro python -m pip install "./fitsviewer-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl[jupyter]"
+conda run -n astro fitsviewer defaults set --jupyter yes --desktop no
+```
+
+Once installed, FitsViewer can copy its complete package into another existing environment:
+
+```bash
+fitsviewer install --python /path/to/env/bin/python --check
+fitsviewer install --python /path/to/env/bin/python --default-viewer yes --desktop-default no
+fitsviewer install --conda-env astro --with-jupyter --default-viewer yes --desktop-default no
+```
+
+Without `--with-jupyter`, the installer requires a supported Lab and pins its existing version while adding missing integration dependencies. `--with-jupyter` permits installing/updating Lab within the supported range. `--no-deps` is for an already prepared environment. Interactive `fitsviewer install` asks for the Python/Conda target and default choices. Success output reports the environment, configured/live ports, binding and repair commands in English.
+
+不加 `--with-jupyter` 时要求目标已有兼容 Lab，并固定其版本补齐集成依赖；加该参数才允许安装或升级 Lab。`--no-deps` 适用于依赖已齐备的环境。交互安装会询问环境和默认关联，成功后用英文报告环境、端口、绑定状态及修复命令。
+
+## SSH, desktop and ports / 远程、桌面和端口
+
+On the server / 服务端：
+
+```bash
+fitsviewer jupyter start --root "$HOME/data" --port 8082 --browser-port 18082
+```
+
+On the client computer, including Windows or macOS / 本地电脑：
+
+```bash
+ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L 127.0.0.1:18082:127.0.0.1:8082 user@server.example.com
+```
+
+Open the Jupyter login URL using local port 18082. Keep tokens private. Only Jupyter needs forwarding; its internal viewer proxy chooses a separate automatic loopback port.
+
+在登录链接中使用本地端口 18082；登录令牌须保密。仅转发 Jupyter 端口，内部查看器代理自动分配回环端口。
+
+```bash
+fitsviewer image.fits --no-browser
+fitsviewer --native image.fits
+fitsviewer ports
+fitsviewer ports set --jupyter 8084 --browser 18084
+fitsviewer desktop install
 fitsviewer defaults set --jupyter yes --desktop no
 ```
 
-安装完成后重新启动该环境中的 JupyterLab，并刷新浏览器。扩展会自动注册 `.fits`、`.fit`、`.fts`、对应 gzip 文件及主要大写后缀。双击 FITS 文件就会默认使用 FitsViewer，支持缩放、scale 切换和右键亮度/对比度调节。`.fz` 会识别为 FITS，但当前内核仍不支持其压缩图像格式。
+Native Linux needs X11/XWayland and usable OpenGL. A configured X2Go session can provide a display, but actual forwarding is not certified by this release. `desktop install --no-default` adds only an Open With entry. Port changes apply to future starts and do not rewrite running SSH tunnels.
 
-已有 FitsViewer 的 Linux 环境也可直接运行 `fitsviewer install --python /目标环境/bin/python` 或 `fitsviewer install --conda-env 环境名`。端口管理及这些命令的完整参数见 [基础命令](COMMANDS.md)。
+Linux 原生窗口需要显示服务和 OpenGL；X2Go 需单独配置，本版未认证实际转发。`desktop install --no-default` 只注册打开方式。端口修改用于下次启动，不会改写当前 SSH 隧道。
 
-`fitsviewer install` 安装成功后会用英文显示目标安装环境、端口配置、JupyterLab 是否绑定，并给出使用目标 Python 的绑定命令。端口配置与实际运行端口分别标明；扩展被禁用时显示原因。直接 `pip install` 使用 pip 自带的安装输出。
+## Windows / Windows 安装
 
-后端跟随当前 Jupyter 的文件根目录启动。Jupyter 的 URL 前缀也会用于查看器接口。
+Use Setup for per-user installation or extract the portable ZIP. The native viewer works without Python. Setup independently offers Python/Conda binding and a default FITS viewer checkbox; enable Jupyter dependency installation if that environment lacks the integration packages. [Detailed Windows guide](WINDOWS.md).
 
-确认前后端扩展：
+Setup 可按用户安装，或解压 portable ZIP 直接运行。独立桌面无需 Python。安装界面分别提供 Python/Conda 绑定及默认 FITS 查看器选项；目标缺集成依赖时，勾选允许安装 Jupyter 依赖。
 
-```bash
-jupyter labextension list
-jupyter server extension list
+For an existing Windows Jupyter environment / 已有 Windows Jupyter 环境：
+
+```powershell
+python -m pip install --upgrade ".\fitsviewer-0.1.5rc1-py3-none-win_amd64.whl[jupyter]"
+fitsviewer defaults set --jupyter yes --desktop no
 ```
 
-前端应显示 `fitsviewer` 已启用，后端应显示 `fitsviewer` 和 `jupyter_server_proxy` 已启用。若 FITS 的默认打开方式曾被用户改过，在文件列表中右键文件，选择 **Open With → FitsViewer**；再检查 JupyterLab 的默认查看器设置。若另一扩展也声明 FITS 为默认类型，需要选择一次所需查看器。
+The app, launcher and viewer tabs have the FitsViewer icon. Associated data files keep generic icons.
 
-## Notebook 内嵌
+## Git source installation / Git 源码安装
+
+```bash
+git clone --branch v0.1.5-rc.1 https://github.com/minglinwang86/FitsViewer.git
+cd FitsViewer
+python3 scripts/install.py --from-source --build-python python3.11 --conda-env astro --with-jupyter --default-viewer yes --desktop-default no
+```
+
+This compiles the Full Linux package and needs [build prerequisites](BUILDING.md). To avoid compilation, use `scripts/install.py --wheel /path/to/downloaded.whl --python /path/to/env/bin/python --with-jupyter`. The source tarball is a source checkout, not a pip-installable sdist.
+
+源码安装会编译全功能 Linux 包。使用 `--wheel` 可直接安装预编译包。源码 tar 包不是可直接 pip 安装的 sdist。
+
+## Verify, Notebook and removal / 验证、内嵌和卸载
+
+```bash
+fitsviewer build-info
+fitsviewer status
+jupyter server extension list
+jupyter labextension list
+```
+
+Enable the `fitsviewer` and `jupyter_server_proxy` server extensions and the `fitsviewer` Lab extension. For an explicitly disabled installation, run these in the target environment:
+
+```bash
+python -m jupyter server extension enable --py fitsviewer --sys-prefix
+python -m jupyter server extension enable --py jupyter_server_proxy --sys-prefix
+python -m jupyter labextension enable fitsviewer fitsviewer:viewer --level=sys_prefix
+```
 
 ```python
 from fitsviewer import show
-show("image.fits", height=650)
+show("data/image.fits", height=650)
 ```
 
-路径相对于 Jupyter 文件根目录。Notebook 内核与 JupyterLab 服务若处于不同 Python 环境，服务环境必须安装完整包以启用文件查看器，内核环境也要能导入 `fitsviewer` 才能调用 `show()`。仅在其他内核里执行 `%pip install` 不会给 JupyterLab 服务注册扩展。URL 前缀未由内核继承时，可显式传入 `base_url`。
+Paths are relative to the server root. A separate kernel environment needs the importable package; installing in the kernel alone does not register the server extension. WCS/science tools default to the server's Python; use `--python` or `FITSVIEWER_PYTHON` to select another existing science environment.
 
-## 命令行与远程访问
+路径相对于服务根目录；只在另一个 Notebook 内核安装，不会注册服务扩展。科学工具默认使用服务端 Python，可通过 `--python` 或 `FITSVIEWER_PYTHON` 指定已有科研环境。
 
-```bash
-fitsviewer image.fits
-fitsviewer --native image.fits
-```
-
-第一条命令优先连接同一 Python 环境中正在运行的 Jupyter 服务；没有服务时会启动独立查看器，并输出访问链接。第二条使用原生 Linux 窗口，需要已配置的显示环境。
-
-SSH 端口转发方式保持不变。若本地浏览器端口与服务端 Jupyter 端口不同，可在启动 Jupyter 前设置 `FITSVIEWER_BROWSER_ORIGIN`，使命令行输出本地可用的链接，例如：
-
-```bash
-export FITSVIEWER_BROWSER_ORIGIN=http://127.0.0.1:18082
-jupyter lab --no-browser --ip=127.0.0.1 --port=8082
-```
-
-## 发布和卸载
-
-GitHub Releases 可以上传构建好的 wheel，用户下载后直接 `pip install`。当前尚未发布到 PyPI，因此 `pip install fitsviewer` 不能作为已发布软件的安装命令。将来发布 PyPI 后，同名命令即可使用。
+Before uninstalling a registered desktop entry, run `fitsviewer desktop remove`. Then:
 
 ```bash
 python -m pip uninstall fitsviewer
 ```
 
-卸载会删除程序入口和已安装的扩展资源。用户缓存保留在 `XDG_CACHE_HOME/fitsviewer` 或 `~/.cache/fitsviewer`，其中不复制 Jupyter 登录 token。卸载后重新启动 JupyterLab。
-
-## 维护者构建
-
-先按照 [构建说明](BUILDING.md) 准备开发环境，再运行 `scripts/build.sh --repair` 构建资源并生成 wheel。构建不自动安装到当前环境。已有构建产物时，可独立打包，不安装到当前环境：
-
-```bash
-python scripts/build_wheel.py
-python scripts/build_wheel.py --repair
-```
-
-`--repair` 需要 `auditwheel` 和 `patchelf`，会检查 ELF 动态库兼容性并生成 manylinux wheel。平台标签由实际产物决定，不把包含 Linux 程序的包标记成通用 `py3-none-any`。
-
-用隔离环境验证安装、默认打开、内嵌、命令行和卸载：
-
-```bash
-python scripts/verify_wheel.py dist/fitsviewer-0.1.4rc2-py3-none-manylinux_2_28_x86_64.whl
-```
-
-参考：[JupyterLab 预编译扩展分发](https://jupyterlab.readthedocs.io/en/stable/extension/extension_dev.html#distributing-a-prebuilt-extension)、[Jupyter Server Proxy 的 Python 包注册](https://jupyter-server-proxy.readthedocs.io/en/latest/server-process.html#specifying-config-from-python-packages)。
+Restart Jupyter afterward. User preferences/cache are retained; observation files are not removed.

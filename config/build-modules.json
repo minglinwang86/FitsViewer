@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "modules": {
+    "base": {
+      "description": "FITS/core display, basic spectra/apertures, WCS/Gaia, HTTP/CLI",
+      "requires": [],
+      "python": ["fitsviewer_science.py", "fitsviewer_build_profile.py", "fitsviewer_wcs.py", "fitsviewer_gaia.py", "fitsviewer_network.py", "fitsviewer_detection.py", "fitsviewer_tap.py"]
+    },
+    "pro": {
+      "description": "PRO workspaces, layers, advanced spectra and scientific adapters",
+      "requires": ["base"],
+      "python": ["fitsviewer_spectra.py", "fitsviewer_spectral_analysis.py", "fitsviewer_measure.py", "fitsviewer_image_matching.py", "fitsviewer_vo.py", "fitsviewer_export.py", "fitsviewer_samp.py"]
+    },
+    "desktop": {
+      "description": "Native desktop entry, platform dialogs and file association helpers",
+      "requires": ["base"],
+      "python": []
+    },
+    "jupyter": {
+      "description": "JupyterLab prebuilt extension, server proxy and Notebook interface",
+      "requires": ["base"],
+      "python": []
+    }
+  },
+  "profiles": {
+    "mini": ["base", "jupyter"],
+    "desktop-mini": ["base", "desktop", "jupyter"],
+    "remote-pro": ["base", "pro", "jupyter"],
+    "full": ["base", "pro", "desktop", "jupyter"]
+  }
+}

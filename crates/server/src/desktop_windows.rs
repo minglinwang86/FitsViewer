@@ -9,7 +9,7 @@ use windows_sys::Win32::{
 
 const APP: &str = "Software\\FitsViewer";
 const PROGID: &str = "FitsViewer.FITS";
-const EXTENSIONS: [&str; 3] = [".fits", ".fit", ".fts"];
+const EXTENSIONS: [&str; 4] = [".fits", ".fit", ".fts", ".fz"];
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
 }
@@ -34,8 +34,8 @@ pub fn set_app_id() {
 pub fn pick_file() -> Option<PathBuf> {
     let mut buffer = vec![0u16; 32768];
     let filter =
-        wide("FITS images\0*.fits;*.fit;*.fts;*.fits.gz;*.fit.gz;*.fts.gz\0All files\0*.*\0");
-    let title = wide("Open FITS image");
+        wide("FITS images and spectra\0*.fits;*.fit;*.fts;*.fz;*.fits.gz;*.fit.gz;*.fts.gz;*.dat;*.txt;*.csv;*.ascii\0All files\0*.*\0");
+    let title = wide("Open FITS image or spectrum");
     let mut dialog: OPENFILENAMEW = unsafe { std::mem::zeroed() };
     dialog.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
     dialog.lpstrFilter = filter.as_ptr();
@@ -157,17 +157,10 @@ fn register() -> io::Result<()> {
     let executable = std::env::current_exe()?;
     let executable = executable.to_string_lossy();
     write(&classes(PROGID), "", "FITS image")?;
-    let icon = std::env::current_exe()?.parent().unwrap().join("app.ico");
-    let icon = if icon.is_file() {
-        icon.to_string_lossy().into_owned()
-    } else {
-        executable.to_string()
-    };
-    write(
-        &classes(&format!("{PROGID}\\DefaultIcon")),
-        "",
-        &format!("\"{icon}\",0"),
-    )?;
+    // Keep the program icon without branding associated data files. Remove only
+    // our own older registration; other applications' file icons stay intact.
+    // 程序保留图标，数据文件不指定品牌图标；仅移除本程序旧版本的设置。
+    delete_tree(&classes(&format!("{PROGID}\\DefaultIcon")))?;
     write(
         &classes(&format!("{PROGID}\\shell\\open\\command")),
         "",

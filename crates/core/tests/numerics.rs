@@ -14,8 +14,10 @@ fn fixture(pixels: RawPixels, bitpix: i32) -> FitsImage {
             blank: None,
             hdus: vec![],
             header: String::new(),
+            spectrum: None,
         },
         pixels,
+        spectrum: None,
     }
 }
 #[test]

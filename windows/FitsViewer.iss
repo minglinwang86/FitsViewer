@@ -1,11 +1,11 @@
 #ifndef AppVersion
-  #define AppVersion "0.1.4rc2"
+  #define AppVersion "0.1.5rc1"
 #endif
 #ifndef PayloadDir
   #define PayloadDir "payload"
 #endif
 #ifndef ReleaseDir
-  #define ReleaseDir "..\release\0.1.4rc2"
+  #define ReleaseDir "..\release\0.1.5rc1"
 #endif
 #define WheelName "fitsviewer-" + AppVersion + "-py3-none-win_amd64.whl"
 
@@ -33,20 +33,20 @@ SolidCompression=yes
 WizardStyle=modern
 OutputDir={#ReleaseDir}
 OutputBaseFilename=FitsViewer-{#AppVersion}-windows-x86_64-setup
-VersionInfoVersion=0.1.4.2
+VersionInfoVersion=0.1.5.1
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
-Name: "associate"; Description: "Use FitsViewer as the default for .fits, .fit and .fts files"; Flags: unchecked
+Name: "associate"; Description: "Use FitsViewer as the default for .fits, .fit, .fts and .fz files"; Flags: unchecked
 
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\FitsViewer"; Filename: "{app}\fitsviewer.exe"; AppUserModelID: "FitsViewer.Desktop"
-Name: "{group}\FITS default app settings"; Filename: "{app}\fitsviewer.exe"; Parameters: "--desktop-default settings"
-Name: "{group}\Uninstall FitsViewer"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\FitsViewer"; Filename: "{app}\fitsviewer.exe"; Tasks: desktopicon; AppUserModelID: "FitsViewer.Desktop"
+Name: "{group}\FitsViewer"; Filename: "{app}\fitsviewer.exe"; IconFilename: "{app}\fitsviewer.exe"; AppUserModelID: "FitsViewer.Desktop"
+Name: "{group}\FITS default app settings"; Filename: "{app}\fitsviewer.exe"; Parameters: "--desktop-default settings"; IconFilename: "{app}\fitsviewer.exe"
+Name: "{group}\Uninstall FitsViewer"; Filename: "{uninstallexe}"; IconFilename: "{app}\fitsviewer.exe"
+Name: "{autodesktop}\FitsViewer"; Filename: "{app}\fitsviewer.exe"; IconFilename: "{app}\fitsviewer.exe"; Tasks: desktopicon; AppUserModelID: "FitsViewer.Desktop"
 
 [Run]
 Filename: "{app}\fitsviewer.exe"; Description: "Launch FitsViewer"; Flags: nowait postinstall skipifsilent unchecked
@@ -195,7 +195,7 @@ begin
   Result := True;
   if CurPageID = EnvPage.ID then begin
     Problem := ValidateEnvironment;
-    if Problem <> '' then begin MsgBox(Problem, mbError, MB_OK); Result := False; end;
+    if Problem <> '' then begin SuppressibleMsgBox(Problem, mbError, MB_OK, IDOK); Result := False; end;
   end;
 end;
 
@@ -209,8 +209,8 @@ var I: Integer; Owner: String; Extensions: TArrayOfString;
 begin
   Result := False;
   if not WizardIsTaskSelected('associate') then Exit;
-  Extensions := ['.fits', '.fit', '.fts'];
-  for I := 0 to 2 do
+  Extensions := ['.fits', '.fit', '.fts', '.fz'];
+  for I := 0 to GetArrayLength(Extensions)-1 do
     if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\' + Extensions[I] + '\UserChoice', 'ProgId', Owner) then
       if Owner <> 'FitsViewer.FITS' then Result := True;
 end;

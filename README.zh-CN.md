@@ -1,185 +1,170 @@
 # FitsViewer
 
-[English](README.md) · [基础命令](docs/COMMANDS.md) · [构建说明](docs/BUILDING.md) · [发行文件](https://github.com/minglinwang86/FitsViewer/releases)
+[English](README.md) · [下载 0.1.5rc1](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.5-rc.1) · [安装](docs/INSTALL.md) · [基础命令](docs/COMMANDS.md) · [代码架构](docs/ARCHITECTURE.md)
 
-FitsViewer 是一款轻量化、快速启动的 FITS 文件查看器，为科研中使用远程服务器、本地容器等环境时的人工查看和数据检查提供便捷的解决方案。支持 FITS 文件及 gzip 压缩 FITS（如 `.fits.gz`）。
+一款轻量、快速启动的天文 FITS 图像与光谱查看器，为科研中使用远程服务器、本地容器时的人工查看和检查提供便捷方案，也支持 Linux 图形化桌面和 Windows。可在 JupyterLab 文件列表中双击打开，通过命令行调用，或内嵌到 Notebook。
 
-可在 JupyterLab 文件列表中双击打开，通过 Linux 命令行调用，或在 Notebook 中内嵌查看；也支持 Linux 图形化桌面和 Windows 独立窗口。
+> **科学使用说明：** 本工具识别、推算或测量得到的坐标、流量、星等等结果，建议仅用于快速检查和参考，不应直接作为论文中的科学测量数据。用于科研发表前，请通过适当的专业科学流程独立验证、校准，并评估不确定度与系统误差。
 
-## 界面预览
+**一个全功能包，两种界面。** 日常检查使用**极简**模式，需要图层和科学工具时切换到 **PRO**。PRO 工作区在选择后初始化；科学计算调用所选 Python/Conda 环境中的外部包，不把科学软件栈装进程序本体。
 
-![FitsViewer 显示 JWST NIRCam F277W 波段的 SMACS 0723 引力透镜星系团 FITS 图像](docs/images/jwst-smacs0723-interface.png)
+![FitsViewer 中的 JWST SMACS 0723 引力透镜视场](docs/images/jwst-smacs0723-interface.png)
 
-程序实际运行截图，显示[韦布首张深场](https://science.nasa.gov/asset/webb/webbs-first-deep-field-nircam-image/)中的 SMACS 0723 引力透镜区。采用 NIRCam F277W 单波段 FITS 灰度图，裁剪视场约 1.4 角分，使用 Asinh 拉伸。滚轮缩放、左键拖动平移、右键拖动调整亮度和对比度。
+JWST/NIRCam F277W 的 SMACS 0723 视场；这张较早界面的截图保留为项目天文预览，下方展示当前 0.1.5 界面。观测：NASA、ESA、CSA、STScI；拼接数据：[Gabriel Brammer (2022)](https://doi.org/10.5281/zenodo.6874301)，CC BY 4.0。[裁剪、署名与复现说明](docs/images/README.md)。
 
-观测来源：NASA、ESA、CSA、STScI。FITS 拼接数据：[Gabriel Brammer（2022）](https://doi.org/10.5281/zenodo.6874301)，采用 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 许可。参见[预览数据和截图记录](docs/images/README.md)。
+## 极简模式
 
-## 环境要求
+### 打开文件、检查图像、调整显示
 
-| 组件 | 要求 |
+支持普通 FITS、gzip FITS、支持编码的分块压缩 `.fz` 图像和基础光谱。切换 HDU、查看原始文件头；滚轮缩放、左键／中键拖动平移、右键拖动调亮度与对比度。**自动显示**一键选择便于检查的显示范围和拉伸，原始像素不变。
+
+提供八种拉伸：**线性、对数、幂函数、平方根、平方、反双曲正弦、双曲正弦、直方图均衡**。可手动设置上下限、更换色表、反色、显示紧凑直方图与色标。底部信息栏高度固定，游标数值变化不会挤动图像。
+
+![使用公开 M67 星团数据的当前极简图像界面](docs/images/v0.1.5rc1/mini-image.jpg)
+
+### 基础孔径测光与坐标
+
+创建圆孔径和背景环，选择后可移动、修改半径或拖动边缘调整大小。未编辑文本时，**Delete / Backspace** 删除选中的孔径。测量使用原始物理像素；误差和 SNR 需要适用的误差图或明确噪声模型。
+
+共用的**坐标**面板显示从 1 开始的像素坐标及 FK5 J2000 坐标。**一键识别／校准 Gaia 坐标**利用已有或近似天区位置、角尺度，生成通过验证的 WCS 覆盖层；缓存映射用于底部游标坐标。这是有限天区解算，不能当作全天盲解；不会改写 FITS 文件头。
+
+![极简模式孔径测量及孔径尺寸编辑](docs/images/v0.1.5rc1/mini-aperture.jpg)
+
+### 基础光谱和设置
+
+查看一维 FITS、已识别列结构的二进制表光谱，或数值文本光谱。选择波长、流量、误差列，显示不确定度，缩放平移并读出最近的原始采样点。无效采样会断线显示，不跨缺口连线。
+
+**设置**可切换英文／简体中文、主题和默认启动模式。打开及复制保留完整中文路径；弹窗的位置、大小和收起状态会保存。
+
+![使用公开 SDSS 数据的极简光谱界面](docs/images/v0.1.5rc1/mini-spectrum.jpg)
+
+## PRO 模式：逐模块介绍
+
+PRO 提供带边框的工作区，子页面可移动、调大小、停靠、组合与收起；图像和光谱使用各自的工具。辅助说明收进 **…** 菜单，结果、单位、任务进度和错误保持可见。切回极简会释放 PRO 任务和可重建缓存。
+
+### 1. 图像图层与对照
+
+每个图层独立加框，管理显隐、顺序、透明度、标签及显示比例／偏移；可在对照视图查看另一文件或叠加多图。**按场星匹配亮度**调用外部 NumPy/SciPy/Astropy，根据匹配源获得稳健的相对计数比例。
+
+它调整的是显示亮度，不等于绝对测光零点定标，不进行 PSF 匹配，也不保证配准过程通量守恒。[图层约定](docs/IMAGE_LAYERS.md)。
+
+![PRO 图层与场星相对亮度匹配控件](docs/images/v0.1.5rc1/pro-layers.jpg)
+
+### 2. 测量、孔径模板和剖面
+
+提供更多孔径形状、背景与误差设置、增长曲线／剖面工具、直线及曲线迹线孔径。可复制孔径模板到其他图像，预览像素或 WCS 定位后，在目标原图重新测量。结果保留物理单位和误差来源。
+
+![HST 图像上的 PRO 测量页面](docs/images/v0.1.5rc1/pro-photometry.jpg)
+
+### 3. 坐标与 Gaia 校准
+
+极简中的坐标／Gaia 功能也能停靠到 PRO 工作区，与其他工具并排使用。通过验证的坐标解供星表叠加、天球视角联动、孔径模板和图片导出使用。可保存 JSON 追溯解算来源，也可切回原始 WCS。发送至 Gaia TAP 的是天区／查询，图像像素留在本地。
+
+![停靠在 PRO 工作区的坐标页面](docs/images/v0.1.5rc1/pro-coordinates.jpg)
+
+### 4. 找星与迹线
+
+检测简单星点候选、检查质量标记并手动修正；检测直线、跟踪指定起点的曲线，查看线／带状剖面。找星工具不是 PSF 测光；迹线检查不会自动完成波长定标或最优光谱提取。
+
+![真实 M67 视场上的 PRO 找星控件](docs/images/v0.1.5rc1/pro-detection.jpg)
+
+### 5. 星表、交叉匹配与互操作
+
+叠加本地星表、本地交叉匹配，或显式调用 CDS XMatch；查询 SIA v1、SSA、TAP 服务并下载选中的资源。SAMP 可与外部 Hub／客户端交换信息，远程环境可使用可选本机桥接。
+
+本地匹配不上传数据。CDS 接收行标识、J2000 坐标及明确选中的附加列。在线功能需要相应外部依赖和可访问的服务。
+
+![PRO 星表与交叉匹配工作区](docs/images/v0.1.5rc1/pro-catalogues.jpg)
+
+### 6. 重投影、RGB 与导出
+
+准备可视化重投影、RGB 合成和带标注的图片导出。数学标注通过外部 Matplotlib MathText 实现，强制 `usetex=False`，不内嵌 TeX。重投影使用显示用途的重采样，科学测量仍应基于原始图像。
+
+![PRO 导出控件](docs/images/v0.1.5rc1/pro-export.jpg)
+
+### 7. 光谱参考线与候选识别
+
+光谱使用专属工作区。按单条、双线或组线开关参考标线，调整红移和标线宽度，并添加自定义参考线。可调用外部 Specutils 寻找待检查的发射／吸收候选；邻近参考线标签表示候选关联，不是自动完成物理谱线鉴定。
+
+![SDSS 光谱及 PRO 参考标线控件](docs/images/v0.1.5rc1/pro-spectrum-lines.jpg)
+
+### 8. 光谱测量、处理与拟合
+
+设置线区、连续谱窗口与掩膜，拟合线性或低阶多项式连续谱；查看归一化／扣连续谱预览，测量有定义的 EW/pEW、净积分流量、质心、最低点和半高全宽。可按指定参考线切换观测、静止及相对论速度横轴。
+
+Boxcar、Gaussian、Savitzky–Golay 平滑按有效段处理。可做有界 Gaussian／Voigt 分量拟合，或用温度与幅度滑块查看相对黑体曲线。正式测量仍读取未平滑源采样；缺失误差不会被伪造。[数值约定](docs/SPECTRAL_ANALYSIS.md)。
+
+![PRO 光谱分析控件](docs/images/v0.1.5rc1/pro-spectrum-analysis.jpg)
+
+### 9. 光谱图层与多历元对照
+
+最多启用八条对照谱，保留各自原始采样网格；分别管理显隐、层序、透明度、比例、偏移及历元／相位标签。单位和红移需要明确设置。本版不提供多谱重采样合并，也不支持两个光谱之间直接相减。
+
+![PRO 光谱图层对照](docs/images/v0.1.5rc1/pro-spectrum-compare.jpg)
+
+新增截图使用公开科学数据。[数据署名和截图说明](docs/images/v0.1.5rc1/README.md)。展示配置界面的截图不代表在线检索或定标已经成功运行。
+
+## 安装
+
+在 [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.5-rc.1) 下载对应平台的 **Full 全功能包**。本次不单独发布 Mini-only 包，也未发布到 PyPI。
+
+| 安装方式 | 适用场景 |
 |---|---|
-| Linux 服务端 / wheel | x86_64，glibc 2.28 及以上 |
-| Windows 桌面 / wheel | Windows 10/11 x86_64，需可用的 OpenGL；见 [Windows 说明](docs/WINDOWS.md) |
-| Python | Jupyter 集成需要 3.10 及以上；Windows 独立桌面无需 Python |
-| JupyterLab | 4.4 及以上、低于 5；安装到启动服务的环境 |
-| 浏览器 | 支持 WebAssembly、WebGL；已验证 Linux Chromium |
-| 原生窗口 | 可选；需要已配置的 X11/OpenGL 显示或转发环境 |
+| Linux wheel | 已有 Python/Conda 环境、命令行、Jupyter 与原生桌面 |
+| Windows Setup | 桌面安装，可选绑定 Python/Conda 和默认 FITS 查看器 |
+| Windows portable ZIP | 解压运行，不自动修改环境或文件关联 |
+| Windows wheel | 已有 Windows Python/Conda 与 Jupyter 环境 |
+| 源码包／Git | 开发者构建，需要构建工具链 |
 
-JupyterLab 的范围表示 `4.4 <= 版本 < 5`。5.x 尚未做兼容验证，当前 Python 安装依赖和前端扩展版本范围暂时排除了 5.x；完成主版本升级的适配测试后才能放宽。原生桌面窗口独立运行，不受 JupyterLab 版本限制。
-
-Windows、macOS 也可以通过 SSH 通道，在本机浏览器使用 Linux 服务，无需在本机安装 Linux wheel。Safari 和真实 X2Go/X11 转发尚未验证。安装 wheel 无需 Rust、Node.js 或 `jupyter lab build`。
-
-完整环境清单见 [DEPENDENCIES.txt](DEPENDENCIES.txt)，pip 运行依赖见 [requirements.txt](requirements.txt)，固定版本的构建工具见 [requirements-build.txt](requirements-build.txt)。
-
-预编译 wheel 需要使用 glibc 的 GNU/Linux，不涵盖 Alpine/musl 或 ARM。源码构建会选择当前主机的 x86_64/aarch64 目标，但 ARM 尚未验证。manylinux 标签表示库兼容基线，并不表示已在每种发行版或桌面上测试。
-
-## Windows 桌面安装
-
-Windows 构建产物包括 Setup 安装器、免安装 ZIP 和 Python wheel。已发布文件列在 [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases)，源码构建步骤见 [Windows 说明](docs/WINDOWS.md)。安装界面可选已有 Python/Conda 环境，用于绑定 JupyterLab/Notebook，并独立选择是否设为默认 FITS 查看器。独立桌面窗口无需 Python，也不占用服务端口。
-
-## Linux：安装并双击打开 FITS
-
-使用从 [GitHub Releases](https://github.com/minglinwang86/FitsViewer/releases) 获取或从源码构建的 Linux wheel。Python 包名和终端命令均为 `fitsviewer`；本项目尚未发布到 PyPI。将对应 wheel 放入当前目录，激活实际启动 JupyterLab 的 Conda 或虚拟环境，再安装本地文件：
+Linux 上先激活**运行 Jupyter 服务本身**的环境，再安装下载的 wheel 及其集成依赖：
 
 ```bash
-python -m pip install --upgrade ./fitsviewer-*-py3-none-manylinux_2_28_x86_64.whl
+python -m pip install --upgrade "./fitsviewer-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl[jupyter]"
+fitsviewer defaults set --jupyter yes --desktop no
 fitsviewer jupyter start --root "$HOME/data" --port 8082
 ```
 
-数据目录需已存在。打开命令输出的登录链接，在 JupyterLab 文件列表双击 `.fits`、`.fit`、`.fts` 或对应 gzip 文件。FitsViewer 会注册为默认查看器。安装时已有 JupyterLab 正在运行，需要从同一环境重新启动服务，再刷新浏览器。
-
-检查扩展：
+数据目录须已存在。安装后重启已有 Jupyter 服务并刷新浏览器。FITS/FZ 可双击打开，普通文本光谱使用 **Open With → FitsViewer**。程序、启动器和查看标签带图标，关联数据文件保留普通图标。
 
 ```bash
-jupyter server extension list
-jupyter labextension list
-fitsviewer status
-```
-
-后端 `fitsviewer`、`jupyter_server_proxy` 和前端 `fitsviewer` 应启用。若此前指定过其他默认查看器，使用 **Open With → FitsViewer**，或修改默认查看器设置。绑定命令和排错见[基础命令](docs/COMMANDS.md)。
-
-已有完整安装时，可复制到另一个环境：
-
-```bash
-fitsviewer install --python /path/to/env/bin/python --check
-fitsviewer install --python /path/to/env/bin/python
-```
-
-也可选择 `--prefix /path/to/env` 或 `--conda-env astro`。目标缺少 JupyterLab 时添加 `--with-jupyter`。成功后用英文显示目标环境、端口、绑定状态和绑定命令。直接 `pip install` 使用 pip 自带输出。
-
-### 选择环境及默认查看器
-
-终端运行 `fitsviewer install`，可交互选择当前 Python、指定 Python 路径或 Conda 环境，再选择是否设为 Jupyter 和桌面默认查看器。SSH 自动安装可显式传参：
-
-```bash
+fitsviewer image.fits
+fitsviewer --native image.fits
+fitsviewer install --python /path/to/env/bin/python --with-jupyter --default-viewer yes --desktop-default no
 fitsviewer install --conda-env astro --default-viewer yes --desktop-default no
-fitsviewer install --python /path/to/env/bin/python --default-viewer no --desktop-default no
+fitsviewer features --python /path/to/science-env/bin/python --json
 ```
 
-首次通过 pip 安装到已有 Conda 环境：
+环境安装命令默认保留已兼容的 JupyterLab 版本，只有 `--with-jupyter` 才允许升级。科学依赖在所选环境另行安装。详见[安装与 SSH 转发](docs/INSTALL.md)、[Windows 安装](docs/WINDOWS.md)、[端口和默认关联](docs/COMMANDS.md)、[外部科学依赖](docs/SCIENTIFIC_TOOLS.md)。
 
-```bash
-conda run -n astro python -m pip install ./fitsviewer-*-py3-none-manylinux_2_28_x86_64.whl
-conda run -n astro fitsviewer defaults set --jupyter yes --desktop no
-```
-
-Python/venv 环境则使用其 `bin/python -m pip install ...` 和 `bin/fitsviewer defaults set ...`。将 `yes` 改为 `no` 可取消 Jupyter 默认关联，同时保留 Open With 入口。此流程不需要图形桌面。
-
-从 Git 源码安装：
-
-```bash
-git clone https://github.com/minglinwang86/FitsViewer.git
-cd FitsViewer
-python3 scripts/install.py --from-source --build-python python3.11 --conda-env astro --default-viewer yes --desktop-default no
-```
-
-源码安装器也接受 `--python`、`--prefix`，以及 `--wheel ./file.whl`；wheel 模式不构建 Rust/Node。构建依赖见 [BUILDING.md](docs/BUILDING.md)。目标需要安装 JupyterLab 时加 `--with-jupyter`。
-
-## SSH 远程访问 Linux
-
-在 Linux 服务端执行：
-
-```bash
-fitsviewer jupyter start --root "$HOME/data" --port 8082 --browser-port 18082
-fitsviewer tunnel --ssh-host user@server.example.com --ssh-port 22 --local-port 18082 --remote-port 8082
-```
-
-第二条命令输出 SSH 命令。将它复制到浏览器所在电脑的终端执行，并保持终端运行。上述例子对应：
-
-```bash
-ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L 127.0.0.1:18082:127.0.0.1:8082 -p 22 user@server.example.com
-```
-
-使用打印的 Jupyter 登录链接，本机浏览器端口为 `18082`。把示例用户名、域名替换为本机可连接的 SSH 地址。Rust 内部代理自动分配端口，无需额外转发。登录链接含认证 token，应仅供自己使用。
-
-## 终端和 Notebook
-
-```bash
-fitsviewer /path/to/image.fits
-fitsviewer /path/to/image.fits --hdu 1
-fitsviewer /path/to/image.fits --no-browser
-fitsviewer --native /path/to/image.fits
-fitsviewer ports
-fitsviewer ports set --jupyter 8084 --browser 18084
-```
-
-普通命令优先使用同一环境中已连接的 Jupyter；没有可用服务时启动独立浏览器查看器。点击 **Open in window** 可创建浏览器弹窗，后续终端请求可切换文件。原生模式需要已有显示连接。端口修改用于后续启动，不改动正在运行的 SSH 通道。
-
-### Linux 桌面或 X2Go 中双击打开
-
-```bash
-fitsviewer desktop install
-fitsviewer defaults status
-fitsviewer defaults set --jupyter yes --desktop no
-```
-
-`desktop install` 为当前 Linux 用户注册 FITS/FITS.gz 文件关联和原生启动项。需要 `xdg-utils`、`shared-mime-info`、X11/XWayland 及可用 OpenGL；可安装 desktop-file-utils 刷新缓存。X2Go 也需要具备相应显示/GLX 能力。保留注册时使用的 Python/Conda 环境。桌面默认设置按用户保存，Jupyter 默认设置按环境保存。
-
-`--no-default` 只注册 Open With 入口。`defaults set --desktop no` 恢复此前记录的默认查看器；此前没有默认项时交给桌面系统选择。卸载包或环境前运行 `fitsviewer desktop remove`。修改 `--jupyter yes|no` 后刷新 JupyterLab。
-
-Notebook 中执行：
+Notebook 内嵌：
 
 ```python
 from fitsviewer import show
-show("image.fits", height=650)
+show("data/image.fits", height=650)
 ```
 
-路径相对于 Jupyter 服务的文件根目录。内核与服务使用不同环境时，服务环境安装完整包以支持双击，内核环境也要安装包以调用 `show()`。内核未继承 URL 前缀时，可使用 `show(..., base_url="/user/name/")` 明确指定。
+路径相对于 Jupyter 文件根目录。若内核与服务端不在同一环境，服务环境需要 Jupyter 集成，内核环境需要能够导入 Python 包。
 
-## 操作
+## 环境要求和边界
 
-| 功能 | 操作 |
+| 组件 | 支持范围 |
 |---|---|
-| 缩放 / 平移 | 滚轮或 `+` / `-`；按住左键拖动 |
-| 亮度 | 右键左右拖动，向右更亮 |
-| 对比度 | 右键上下拖动，向上增强 |
-| 重置亮度和对比度 | **Reset B/C** 或 `R` |
-| 适应窗口 / 原始比例 | **Fit** 或 `F`；**1:1** |
-| stretch | Linear、Log、Sqrt、Asinh；快捷键 `1`–`4` |
-| 显示范围 | ZScale、99.5%、Min/Max、Manual；修改 **Low** / **High** |
-| 反转 / HDU / Header | **Invert** 或 `I`；**HDU** 菜单；**Header** |
-| 像素值 | 悬停显示从 1 开始的 FITS 坐标、物理值和精确 raw 存储值 |
+| Linux 发行包 | x86_64、glibc 2.28+ 的 GNU/Linux；原生窗口另需 X11/XWayland 和可用 OpenGL |
+| Windows 发行包 | Windows 10/11 x86_64、可用 OpenGL；独立桌面不要求 Python |
+| Python／Jupyter | Python 3.10+；JupyterLab `>=4.4,<5`、jupyter-server-proxy `>=4.4,<5` |
+| 浏览器 | 支持 WebAssembly、WebGL；Windows/macOS 浏览器可通过 SSH 访问 Linux |
+| 科学功能 | 使用所选环境的外部包，见[依赖列表](DEPENDENCIES.txt) |
 
-显示变换复用已加载像素，不修改 FITS 文件。亮度/对比度作用在 stretch 后，与 Low/High 独立。ZScale 使用 IRAF 风格采样拟合，尚未承诺与 DS9 数值完全一致。
+JupyterLab 5、ARM/musl 包、Safari 和真实 X2Go 转发不在本轮验收范围。manylinux 基线不等于每个发行版均经过认证。
 
-## 数据支持及限制
+FITS 图像支持 BITPIX 8/16/32/64/−32/−64 和 BSCALE/BZERO/BLANK。分块压缩支持 RICE/GZIP/GZIP2，暂不支持 HCOMPRESS、PLIO 和压缩空值掩膜列。基础光谱支持一维数组、已识别的标量／定长向量二进制表及 UTF-8 数值文本。
 
-- 普通二维 Primary/Image HDU、多 HDU、外部 gzip 压缩 FITS。
-- 可直接打开 `.fits.gz`、`.fit.gz`、`.fts.gz`；ZIP、TAR 归档需先解压，再查看其中的 FITS 文件。
-- BITPIX 8、16、32、64、-32、-64，保留原始存储类型。
-- 处理 `BSCALE`、`BZERO`、整数 `BLANK` 和非有限浮点值。物理值和显示采用 f64；raw 大整数读数保留精度。
-- 单文件及解压后上限 512 MiB，二维图像上限 32 Mi 像素。这些是容量限制，不代表始终流畅。
+`.fits.gz` 可以直接打开；ZIP/TAR 多文件归档请先解压再打开其中 FITS。暂不支持数据立方、通用表格编辑、变长／多阶光谱和完整非线性光谱 WCS。输入／解压后文件上限 512 MiB、图像 32 Mi 像素、文本光谱 32 MiB、光谱一百万采样点；这些不是总内存上限。
 
-尚未实现分块压缩 `.fz`、数据立方切片、FITS 表格、WCS 天球坐标、区域、测光，也没有分块渲染、图像金字塔或浏览器 Worker。不支持的数据会报错或禁用对应 HDU。`examples/` 全部为合成样本，包括故意构造的无效测试文件。
+关闭页面会释放对应渲染器及其任务／临时结果。内存分配器与浏览器缓存仍可能使进程内存高于启动值。实际测试范围见[发行验收记录](docs/releases/VALIDATION-0.1.5rc1.md)。
 
-`.fits.gz` 由 Rust 读取端解压；浏览器内存取决于解压后的像素、WASM 缓冲区及显示纹理。关闭 FITS 页签会在移除 iframe 前主动销毁渲染器。普通 FITS 与 gzip FITS 已各自独立测试：6 个 2048x2048 float32 图像反复开关 8 轮，以及单文件反复开关、加载中关闭，关闭后无存活的 WASM 内存实例；额外的对象检查确认无存活的查看器或 iframe。浏览器、Jupyter 缓存和分配器仍可能保留部分进程内存。详见[内存验证报告](docs/releases/MEMORY-0.1.4rc1.md)；最大尺寸图像和长时间会话不在此次验证范围内。
+## 开发和许可
 
-## 构建与贡献
+[构建](docs/BUILDING.md) · [架构](docs/ARCHITECTURE.md) · [AI 修改指南](docs/AI_DEVELOPMENT_GUIDE.md) · [接口](docs/API.md) · [更新记录](CHANGELOG.md) · [贡献](CONTRIBUTING.md)
 
-[BUILDING.md](docs/BUILDING.md) 提供不依赖特定容器路径的步骤。源码使用 Cargo/npm 锁文件、固定构建工具和独立 QA 锁文件。构建产出发行物，安装另行执行。
-
-另见[参与开发](CONTRIBUTING.md)、[安全问题](SECURITY.md)和[公开 API](docs/API.md)。
-
-## 许可
-
-项目源码采用 [MIT](LICENSE)，版权归 FitsViewer contributors。随包依赖保留各自许可；wheel 和源码发行物包含 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 `licenses/`。Python 许可元数据描述包含字体等依赖的组合分发。
+项目源码采用 [MIT](LICENSE)。随包依赖、字体保留各自许可，发行包附带[第三方声明](THIRD_PARTY_NOTICES.md)及许可文本；截图中的科学数据保留原提供者署名。

@@ -50,13 +50,18 @@ def _command(port, base_url):
     else:
         public_url = base_url.rstrip("/") + "/fitsviewer/"
     return [str(binary), "--serve", "--port", str(port), "--root", str(root),
-            "--web-dir", str(web), "--jupyter", "--public-url", public_url]
+            "--web-dir", str(web), "--jupyter", "--public-url", public_url,
+            "--supervisor-pid", str(os.getpid())]
 
 
 def setup_server():
     """Jupyter Server Proxy starts the packaged viewer on demand with matching roots."""
+    _, _, web = resources()
     config = {"command": _command, "environment": process_environment, "timeout": 30,
-              "launcher_entry": {"title": "FitsViewer", "category": "Other"}}
+              # The Lab extension owns the card and its icon; avoid a duplicate.
+              # Lab 扩展注册带图标的卡片，避免代理再显示重复入口。
+              "launcher_entry": {"enabled": False, "title": "FitsViewer", "category": "Other",
+                                 "icon_path": str(web / "icons/fitsviewer.svg")}}
     if load_settings()["proxy_port"]:
         config["port"] = load_settings()["proxy_port"]
     return config

@@ -40,4 +40,5 @@ def runtime_dir():
 def process_environment():
     """Environment shared by the CLI and the Jupyter-supervised Rust process."""
     root, _, _ = resources()
-    return {"FITSVIEWER_HOME": str(root), "FITSVIEWER_RUNTIME_DIR": str(runtime_dir())}
+    return {"FITSVIEWER_HOME": str(root), "FITSVIEWER_RUNTIME_DIR": str(runtime_dir()),
+            "FITSVIEWER_PYTHON": os.environ.get("FITSVIEWER_PYTHON") or sys.executable}

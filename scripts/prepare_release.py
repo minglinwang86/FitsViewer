@@ -16,18 +16,26 @@ args = parser.parse_args()
 project = tomllib.loads((root / "jupyter/pyproject.toml").read_text())["project"]
 version = project["version"]
 tag = "v" + tomllib.loads((root / "Cargo.toml").read_text())["workspace"]["package"]["version"]
-candidates = list((root / "dist").glob("fitsviewer-" + version + "-*.whl"))
-wheels = [p.resolve() for p in args.wheel] if args.wheel else [max(candidates, key=lambda p: p.stat().st_mtime)]
+candidates = list((root / "dist/full").glob("fitsviewer-" + version + "-*.whl"))
+if not candidates:
+    candidates = list((root / "dist").glob("fitsviewer-" + version + "-*.whl"))
+if not args.wheel and len(candidates) != 1:
+    parser.error("Pass --wheel for each reviewed platform wheel; expected one unambiguous Full artifact")
+wheels = [p.resolve() for p in args.wheel] if args.wheel else candidates
 for wheel in wheels:
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
         assert len(names) == len(set(names)) and archive.testzip() is None
         assert any(".dist-info/licenses/LICENSE" in p for p in names), "Primary license missing"
+        font=archive.read('fitsviewer/_vendor/web/fonts/cjk.ttf')
+        font_manifest=json.loads(archive.read('fitsviewer/_vendor/web/fonts/font-manifest.json'))
+        assert len(font)==font_manifest['bytes'] and hashlib.sha256(font).hexdigest()==font_manifest['asset_sha256'], 'Shared font checksum mismatch'
+        assert any(p.endswith('/droid/LICENSE-APACHE.txt') for p in names), 'Chinese font license missing'
         for font_notice in ["OFL.txt", "UFL.txt", "Hack-Regular.txt", "emoji-icon-font-mit-license.txt"]:
             assert any(p.endswith("/" + font_notice) for p in names), "Font notice missing: " + font_notice
 files = []
 skip = {"node_modules", "lib", "__pycache__", "_vendor", "labextension", ".ipynb_checkpoints", "pkg"}
-for directory in ["crates", "jupyter", "web", "qa", "docs", "examples", "licenses", ".github", "bin", "windows"]:
+for directory in ["config", "crates", "jupyter", "web", "qa", "docs", "examples", "licenses", ".github", "bin", "windows", "macos", "vendor"]:
     for path in (root / directory).rglob("*"):
         rel = path.relative_to(root)
         if path.is_file() and not path.is_symlink() and not skip.intersection(rel.parts):
@@ -35,9 +43,13 @@ for directory in ["crates", "jupyter", "web", "qa", "docs", "examples", "license
             if rel.as_posix().startswith("jupyter/") and len(rel.parts)==2 and rel.name in {"README.md","README.zh-CN.md","LICENSE","THIRD_PARTY_NOTICES.md"}: continue
             files.append(path)
 scripts = ["bootstrap.sh", "env.sh", "build.sh", "build_windows.sh", "build_windows_installer.py", "build_wheel.py", "license_notices.py", "prepare_release.py", "install.py",
-           "verify_wheel.py", "verify_wheel.cjs", "verify_windows.py", "verify_windows_setup.py", "verify_memory.py", "verify_memory.cjs", "verify_memory_light.cjs", "verify_privacy.py", "check_management.py", "check_desktop.py", "check_interactive_install.py", "verify_native.py", "verify_glibc.py", "verify_numerics.py", "make_fixtures.py"]
+           "verify_wheel.py", "verify_wheel.cjs", "verify_windows.py", "verify_windows_setup.py", "verify_memory.py", "verify_memory.cjs", "verify_memory_light.cjs", "verify_privacy.py", "check_management.py", "check_desktop.py", "check_interactive_install.py", "verify_native.py", "verify_glibc.py", "verify_numerics.py", "make_fixtures.py", "make_next_fixtures.py", "prepare_cjk_font.py", "verify_next.py", "verify_next.cjs"]
 files.extend(root / "scripts" / name for name in scripts)
-files.extend(root / name for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "requirements-build.txt", "requirements.txt", "DEPENDENCIES.txt",
+files.append(root / "scripts/build_profiles.py")
+files.append(root / "AGENTS.md")
+files.extend(root / "scripts" / name for name in ["verify_science.py","verify_spectra.py","verify_spectral_analysis.py","verify_image_matching.py","verify_vo.py","verify_interactive.cjs","build_static.py"])
+files.extend(root / "scripts" / name for name in ["build_macos_full.py", "verify_macos_full.py"])
+files.extend(root / name for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "requirements-build.txt", "requirements.txt", "requirements-spectra.txt", "DEPENDENCIES.txt",
              ".gitignore", ".gitattributes", "README.md", "README.zh-CN.md", "LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md",
              "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md"])
 files = sorted(set(files))

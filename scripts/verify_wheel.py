@@ -48,7 +48,7 @@ with tempfile.TemporaryDirectory(prefix="fitsviewer-pip-") as temporary:
                        JUPYTER_RUNTIME_DIR=str(scratch / "runtime"), JUPYTER_PREFER_ENV_PATH="1")
     downloaded = scratch / wheel.name
     shutil.copy2(wheel, downloaded)
-    subprocess.run([python, "-m", "pip", "install", str(downloaded), "jupyterlab" + args.jupyterlab], env=environment, check=True)
+    subprocess.run([python, "-m", "pip", "install", str(downloaded) + "[jupyter]", "jupyterlab" + args.jupyterlab], env=environment, check=True)
     assert not any(shutil.which(tool, path=environment["PATH"]) for tool in ["cargo", "rustc", "node", "npm"])
     report["install_without_rust_node"] = True
     data = scratch / "independent data"

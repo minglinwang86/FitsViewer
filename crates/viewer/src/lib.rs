@@ -1,11 +1,47 @@
 use eframe::egui::{self, Color32, Pos2, Rect, Vec2};
-use fitsviewer_core::{DisplayTone, FitsImage, Limits, Statistics, Stretch};
+use fitsviewer_core::{DisplayTone, ErrorKind, FitsImage, Limits, LoadOptions, Statistics, Stretch};
 use std::sync::{Arc, Mutex};
+#[cfg_attr(not(feature="pro"),path="spectrum_mini.rs")]
+mod spectrum;
+mod plot_geometry;
+#[cfg(feature="pro")]
+mod spectral_lines;
+#[cfg(feature="pro")]
+mod spectral_analysis;
+#[cfg(feature="pro")]
+mod image_layers;
+mod controls;
+mod ui_style;
+mod window_layout;
+mod ribbon;
+mod science_client;
+mod regions_ui;
+#[cfg(feature="pro")]
+mod pro;
+#[cfg(feature="pro")]
+mod multiview;
+#[cfg(feature="pro")]
+mod workspace_ui;
+mod text_io;
+mod i18n;
+mod coordinates;
+mod wcs_cache;
+mod document_lifecycle;
+mod header_ui;
 
-type Pending = Arc<Mutex<Option<Result<FitsImage, String>>>>;
+pub fn install_cjk_font(ctx: &egui::Context, bytes: Vec<u8>) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert("cjk".into(), egui::FontData::from_owned(bytes).into());
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts.families.entry(family).or_default().push("cjk".into());
+    }
+    ctx.set_fonts(fonts);
+}
+
+type Pending = Arc<Mutex<(u64,Option<Result<FitsImage, String>>)>>;
 /// The egui viewer shared by desktop and browser builds.
 pub struct FitsApp {
-    image: Option<FitsImage>,
+    image: Option<Arc<FitsImage>>,
     stats: Statistics,
     texture: Option<egui::TextureHandle>,
     path: String,
@@ -16,6 +52,8 @@ pub struct FitsApp {
     error: String,
     limits: Limits,
     stretch: Stretch,
+    scale_mapping:Option<fitsviewer_core::display::ScaleMapping>,
+    stretch_histogram_builds:u64,
     low: f64,
     high: f64,
     invert: bool,
@@ -27,9 +65,38 @@ pub struct FitsApp {
     header_open: bool,
     cursor: String,
     requested_hdu: Option<usize>,
-    #[cfg(windows)]
+    load_options: LoadOptions,
+    plot: spectrum::Plot,
+    status_height: f32,
+    ribbon_height: f32,
+    view_rect: [f32; 4],
+    tools: controls::Tools,
+    popup_windows:window_layout::Runtime,
+    science: science_client::Client,
+    generation:u64,
+    lifecycle:document_lifecycle::State,
+    header:header_ui::Headers,
+    cursor_pixel:Option<[f64;2]>,
+    wcs_pixel:Option<[f64;2]>,
+    wcs_text:String,
+    wcs_pending:bool,
+    wcs_disabled:bool,
+    wcs_requested_at:f64,wcs_cache:wcs_cache::PixelCache,
+    regions:regions_ui::Regions,
+    last_export:std::cell::Cell<f64>,
+    #[cfg(feature="pro")]
+    pro:Option<pro::Workspace>,
+    #[cfg(feature="pro")]
+    pro_dock:Option<(bool,workspace_ui::Dock)>,
+    wcs_result:Option<serde_json::Value>,
+    coordinates:coordinates::Coordinates,
+    wcs_override:Option<String>,
+    #[cfg(feature="pro")]
+    multi:Option<multiview::Workspace>,
+    saved_multi:serde_json::Value,pending_view:Option<serde_json::Value>,
+    #[cfg(not(target_arch = "wasm32"))]
     file_picker: Option<fn() -> Option<std::path::PathBuf>>,
-    #[cfg(windows)]
+    #[cfg(not(target_arch = "wasm32"))]
     started: std::time::Instant,
 }
 impl FitsApp {
@@ -39,13 +106,16 @@ impl FitsApp {
             stats: Statistics::default(),
             texture: None,
             path,
+            science:science_client::Client::new(api.clone(),token.clone()),
             api,
             token,
-            pending: Arc::new(Mutex::new(None)),
+            pending: Arc::new(Mutex::new((0,None))),
             loading: false,
             error: String::new(),
             limits: Limits::ZScale,
             stretch: Stretch::Linear,
+            scale_mapping:None,
+            stretch_histogram_builds:0,
             low: 0.0,
             high: 1.0,
             invert: false,
@@ -57,9 +127,27 @@ impl FitsApp {
             header_open: false,
             cursor: String::new(),
             requested_hdu: hdu,
-            #[cfg(windows)]
+            load_options: LoadOptions::default(),
+            plot: spectrum::Plot::default(),
+            status_height: 0.,
+            ribbon_height: 0.,
+            view_rect: [0.; 4],
+            tools: controls::Tools::default(),
+            popup_windows:Default::default(),
+            generation:0,lifecycle:Default::default(),header:Default::default(),cursor_pixel:None,wcs_pixel:None,wcs_text:String::new(),wcs_pending:false,wcs_disabled:false,wcs_requested_at:-100.,wcs_cache:Default::default(),
+            regions:regions_ui::Regions::default(),last_export:std::cell::Cell::new(-100.),
+            #[cfg(feature="pro")]
+            pro:None,
+            #[cfg(feature="pro")]
+            pro_dock:None,
+            wcs_result:None,
+            coordinates:coordinates::Coordinates::default(),wcs_override:None,
+            #[cfg(feature="pro")]
+            multi:None,
+            saved_multi:serde_json::Value::Null,pending_view:None,
+            #[cfg(not(target_arch = "wasm32"))]
             file_picker: None,
-            #[cfg(windows)]
+            #[cfg(not(target_arch = "wasm32"))]
             started: std::time::Instant::now(),
         }
     }
@@ -73,12 +161,35 @@ impl FitsApp {
         app.accept(image);
         app
     }
-    #[cfg(windows)]
+    pub fn with_science(mut self,callback:science_client::LocalScience)->Self{self.science.local=Some(callback);self}
+    pub fn with_session(mut self,value:serde_json::Value)->Result<Self,String>{
+        let views=value["views"].as_array().filter(|v|!v.is_empty() && v.len()<=32).ok_or("Session requires one to 32 views")?;
+        if value["schema"].as_u64().unwrap_or(1)!=1 || value.to_string().len()>1024*1024{return Err("Unsupported or oversized session".into());}
+        for entry in views{
+            entry["path"].as_str().ok_or("Session view requires path")?;
+            fitsviewer_core::view::View::parse(&entry["view"].to_string())?;
+            let apertures:Vec<fitsviewer_core::regions::Aperture>=serde_json::from_value(entry.get("apertures").cloned().unwrap_or(serde_json::json!([]))).map_err(|e|e.to_string())?;
+            if apertures.len()>64{return Err("Session exceeds 64 apertures per view".into());}for aperture in apertures{aperture.shape.validate()?;}
+        }
+        let selected=match value.get("selected").filter(|selected|!selected.is_null()) {
+            None=>0,
+            Some(selected)=>selected.as_u64().and_then(|selected|usize::try_from(selected).ok()).filter(|&selected|selected<views.len()).ok_or("Session selected view is out of range")?,
+        };
+        let mode=value["mode"].as_str().unwrap_or(if views.len()>1{"PRO"}else{"Minimal"});
+        if !["Minimal","PRO"].contains(&mode){return Err("Unknown session mode".into());}
+        #[cfg(not(feature="pro"))] if mode!="Minimal" || views.len()!=1 || views[0]["view"]["annotations"].as_array().is_some_and(|v|!v.is_empty()){return Err("PRO is not included in this Mini build".into());}
+        #[cfg(not(feature="pro"))] for entry in views {if let Some(apertures)=entry["apertures"].as_array(){for aperture in apertures{mini_aperture(aperture)?;}}}
+        self.tools.prefs.mode=mode.into();self.path=views[selected]["path"].as_str().unwrap().into();self.requested_hdu=views[selected]["hdu"].as_u64().map(|v|v as usize);
+        self.pending_view=Some(serde_json::json!({"view":views[selected]["view"],"apertures":views[selected].get("apertures").cloned().unwrap_or(serde_json::json!([]))}));self.saved_multi=value;
+        if let Some(image)=self.image.take().filter(|image|image.info.path==self.path && self.requested_hdu==Some(image.info.hdu)){self.accept_shared(image);}
+        Ok(self)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn with_file_picker(mut self, picker: fn() -> Option<std::path::PathBuf>) -> Self {
         self.file_picker = Some(picker);
         self
     }
-    #[cfg(windows)]
+    #[cfg(not(target_arch = "wasm32"))]
     fn browse(&mut self, ctx: &egui::Context) {
         if self.loading {
             return;
@@ -88,31 +199,103 @@ impl FitsApp {
             self.request(ctx, None);
         }
     }
+    fn popup_context(&self)->Option<window_layout::Context>{
+        if self.image.is_none(){Some(window_layout::Context::Empty)}
+        else if cfg!(feature="pro") && self.tools.prefs.mode=="PRO"{None}
+        else if self.image.as_ref().is_some_and(|image|image.spectrum.is_some()){Some(window_layout::Context::Spectrum)}
+        else{Some(window_layout::Context::Image)}
+    }
+    fn popup_open_flags(&self)->[bool;6]{[self.tools.settings_open,self.tools.histogram_open,self.coordinates.open,self.regions.open,self.regions.growth_open,self.header_open]}
+    fn prepare_popup_windows(&mut self){
+        let context=self.popup_context();
+        if let Some(open)=self.popup_windows.begin(&self.tools.prefs.window_layouts,context){
+            [self.tools.settings_open,self.tools.histogram_open,self.coordinates.open,self.regions.open,self.regions.growth_open,self.header_open]=open;
+        }
+    }
+    fn remember_popup_windows(&mut self){
+        let context=self.popup_context();let open=self.popup_open_flags();self.popup_windows.finish(&mut self.tools.prefs.window_layouts,context,open);
+    }
     fn accept(&mut self, image: FitsImage) {
+        self.accept_shared(Arc::new(image));
+    }
+    #[cfg(feature="pro")]
+fn cache_current(&mut self){
+        let view=self.view_configuration();#[cfg(feature="pro")]
+if let (Some(multi),Some(image))=(&mut self.multi,&self.image){multi.remember(image.clone(),view,self.regions.apertures.clone());}
+    }
+#[cfg(not(feature="pro"))]
+fn cache_current(&mut self){}
+    fn accept_shared(&mut self, image: Arc<FitsImage>) {
+        self.cache_current();
+        let was_spectrum=self.image.as_ref().is_some_and(|image|image.spectrum.is_some());
+        if was_spectrum!=image.spectrum.is_some(){
+            self.tools.prefs.ribbon_tab=if image.spectrum.is_some() && self.tools.prefs.mode=="PRO"{"Analysis"}else{"View"}.into();
+            self.tools.prefs.ribbon_collapsed=false;
+        }
+        self.regions.on_image(&image);
         self.stats = Statistics::new(&image);
         (self.low, self.high) = self.stats.bounds(self.limits);
         self.path = image.info.path.clone();
+        self.dirty = image.spectrum.is_none();
+        if let Some(meta)=&image.info.spectrum{
+            self.load_options.x_column=(!meta.columns.is_empty()).then_some(meta.x_column);self.load_options.y_column=(!meta.columns.is_empty()).then_some(meta.y_column);
+            self.load_options.error_column=meta.error_column;self.load_options.error_hdu=meta.error_hdu;self.load_options.ignore_errors=!meta.has_error();
+            if meta.has_error(){self.load_options.error_kind=meta.source_error_kind();}
+        }
         self.image = Some(image);
-        self.dirty = true;
+        self.texture = None;
+        self.scale_mapping=None;
+        self.plot = spectrum::Plot::default();
         self.auto_fit = true;
         self.pan = Vec2::ZERO;
         self.error.clear();
         self.cursor.clear();
+        self.tools.histogram=None;
+        self.generation+=1;self.science.bind_document(self.generation);self.header=Default::default();self.cursor_pixel=None;self.wcs_pixel=None;self.wcs_text.clear();self.wcs_pending=false;self.wcs_disabled=false;self.wcs_result=None;
+        self.wcs_override=None;self.regions.wcs_override=None;
+        #[cfg(feature="pro")]
+if let Some(pro)=&mut self.pro{pro.clear_document_results();}
+        if let Some(snapshot)=self.pending_view.take(){
+            if let Ok(view)=fitsviewer_core::view::View::parse(&snapshot["view"].to_string()){
+                self.low=view.low;self.high=view.high;self.stretch=Stretch::parse(&view.stretch).unwrap_or(Stretch::Linear);self.tone=DisplayTone{bias:view.bias,contrast:view.contrast};self.invert=view.invert;self.zoom=view.zoom as f32;self.pan=Vec2::new(view.pan[0] as f32,view.pan[1] as f32);self.tools.prefs.render=view.render;self.auto_fit=false;
+            }
+            if let Ok(apertures)=serde_json::from_value(snapshot["apertures"].clone()){self.regions.replace_apertures(apertures);}
+            if let Ok(bounds)=serde_json::from_value::<[f64;4]>(snapshot["view"]["plot_bounds"].clone()){if bounds.iter().all(|n|n.is_finite()) && bounds[0]<bounds[1] && bounds[2]<bounds[3]{self.plot.bounds=bounds;self.plot.fit=false;}}
+            #[cfg(feature="pro")]
+if let Some(pro)=&mut self.pro{pro.annotations=snapshot["view"]["annotations"].as_array().cloned().unwrap_or_default();}
+            self.wcs_override=snapshot["view"]["wcs_override"].as_str().filter(|s|s.len()<=65536).map(str::to_string);
+        }
+        self.cache_current();
     }
     fn request(&mut self, ctx: &egui::Context, hdu: Option<usize>) {
         if self.loading || self.path.trim().is_empty() {
             return;
         }
+        let preserve=self.path.clone();self.abandon_document(ctx,Some(&preserve));
         self.loading = true;
         self.error.clear();
         self.requested_hdu = hdu;
+        if self.image.as_ref().is_none_or(|image| image.info.path != self.path || hdu != Some(image.info.hdu)) {
+            self.load_options = LoadOptions::default();
+        }
+        if let Some(value)=self.pending_view.as_ref().map(|v|&v["view"]["load_options"]).filter(|v|v.is_object()){
+            self.load_options=LoadOptions{hdu,x_column:value["x_column"].as_u64().map(|v|v as usize),y_column:value["y_column"].as_u64().map(|v|v as usize),error_column:value["error_column"].as_u64().map(|v|v as usize),error_hdu:value["error_hdu"].as_u64().map(|v|v as usize),error_kind:ErrorKind::parse(value["error_kind"].as_str().unwrap_or("auto")).unwrap_or_default(),ignore_errors:value["no_error"].as_bool().unwrap_or(false)};
+        }
+        let options = LoadOptions {hdu, ..self.load_options};
         let pending = self.pending.clone();
+        let serial={let mut slot=pending.lock().unwrap();slot.0+=1;slot.1=None;slot.0};
         let ctx = ctx.clone();
         if let Some(base) = &self.api {
             let mut url = format!("{base}/api/image?path={}", urlencoding::encode(&self.path));
+            url.push_str(&format!("&session={}&generation={}",urlencoding::encode(&self.science.session),self.generation));
             if let Some(hdu) = hdu {
                 url.push_str(&format!("&hdu={hdu}"));
             }
+            for (key, value) in [("xcol",options.x_column),("ycol",options.y_column),("ecol",options.error_column),("ehdu",options.error_hdu)] {
+                if let Some(value)=value {url.push_str(&format!("&{key}={value}"));}
+            }
+            url.push_str(&format!("&ekind={}",options.error_kind.as_str()));
+            if options.ignore_errors{url.push_str("&no_error=true");}
             let mut request = ehttp::Request::get(url);
             if !self.token.is_empty() {
                 request.headers.insert("X-Fitsviewer-Token", &self.token);
@@ -125,16 +308,20 @@ impl FitsApp {
                         Err(String::from_utf8_lossy(&r.bytes).into_owned())
                     }
                 });
-                *pending.lock().unwrap() = Some(result);
+                let mut slot=pending.lock().unwrap();if slot.0==serial{slot.1=Some(result);}
                 ctx.request_repaint();
             });
         } else {
+            #[cfg(all(target_arch="wasm32",feature="offline"))]
+            {let result=WEB_OFFLINE_SOURCE.with(|slot|{let source=slot.borrow();let (name,bytes)=source.as_ref().ok_or("Choose a local file using the file picker")?;if fitsviewer_core::pasted_path(&self.path)!=name{return Err("Browser paths cannot access local files; choose a file using the picker".into());}fitsviewer_core::load_bytes_with_options(bytes,name,options)});let mut slot=pending.lock().unwrap();if slot.0==serial{slot.1=Some(result);}ctx.request_repaint();}
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let path = self.path.clone();
                 std::thread::spawn(move || {
-                    let result = fitsviewer_core::load_file(std::path::Path::new(&path), hdu);
-                    *pending.lock().unwrap() = Some(result);
+                    let literal = std::path::Path::new(&path);
+                    let path = if literal.exists() {literal} else {std::path::Path::new(fitsviewer_core::pasted_path(&path))};
+                    let result = fitsviewer_core::load_file_with_options(path, options);
+                    let mut slot=pending.lock().unwrap();if slot.0==serial{slot.1=Some(result);}
                     ctx.request_repaint();
                 });
             }
@@ -144,12 +331,20 @@ impl FitsApp {
         if ctx.wants_keyboard_input() {
             return;
         }
+        if self.image.as_ref().is_some_and(|image| image.spectrum.is_some()) {
+            ctx.input(|i| {if i.key_pressed(egui::Key::F) {self.plot.fit=true;}});
+            return;
+        }
         ctx.input(|i| {
             for (key, stretch) in [
                 (egui::Key::Num1, Stretch::Linear),
                 (egui::Key::Num2, Stretch::Log),
                 (egui::Key::Num3, Stretch::Sqrt),
                 (egui::Key::Num4, Stretch::Asinh),
+                (egui::Key::Num5, Stretch::Power),
+                (egui::Key::Num6, Stretch::Squared),
+                (egui::Key::Num7, Stretch::Sinh),
+                (egui::Key::Num8, Stretch::HistogramEqualization),
             ] {
                 if i.key_pressed(key) {
                     self.stretch = stretch;
@@ -206,10 +401,400 @@ impl FitsApp {
             }
         });
     }
+    #[cfg(feature="pro")]
+    fn sync_pro(&mut self,ctx:&egui::Context){
+        let is_pro=self.tools.prefs.mode=="PRO";
+        // An empty PRO window retains its mode without recreating a released owner.
+        // 空白 PRO 窗口保留模式；关闭文件后不重新创建已释放的后台会话。
+        if is_pro && self.image.is_some() && self.pro.is_none(){
+            let mut pro=pro::Workspace::default();if let (Some(views),Some(image))=(self.saved_multi["views"].as_array(),self.image.as_ref()){if let Some(view)=views.iter().find(|v|v["path"]==image.info.path && v["hdu"].as_u64()==Some(image.info.hdu as u64)){pro.annotations=view["view"]["annotations"].as_array().cloned().unwrap_or_default();}}
+            self.pro=Some(pro);self.multi=Some(multiview::Workspace::from_json(&self.saved_multi));self.cache_current();self.science.request(ctx,self.generation,"pro_acquire",serde_json::json!({}));
+        }
+        if (!is_pro || self.image.is_none()) && self.pro.is_some(){self.cache_current();self.pro=None;self.pro_dock=None;if let Some(multi)=self.multi.take(){self.saved_multi=multi.configuration();}self.science.request(ctx,self.generation,"release_pro",serde_json::json!({}));}
+    }
+    #[cfg(feature="pro")]
+    fn prepare_pro_dock(&mut self,ctx:&egui::Context,force:bool){
+        use workspace_ui::{Dock,Page};
+        self.sync_pro(ctx);if self.pro.is_none(){return;}
+        let image=self.image.clone();let spectrum=image.as_ref().is_some_and(|image|image.spectrum.is_some());
+        if !force && self.pro_dock.as_ref().is_some_and(|(context,_)|*context==spectrum){return;}
+        let keep_open=!force && self.pro_dock.is_none() && self.tools.prefs.pro_layout(spectrum).is_null();
+        let dock=Dock::restore(self.tools.prefs.pro_layout(spectrum));
+        let pro=self.pro.as_mut().unwrap();pro.sync_spectrum(image.as_deref());
+        if !keep_open {
+            self.coordinates.open=!spectrum && dock.was_open(Page::Coordinates);
+            self.regions.open=!spectrum && dock.was_open(Page::Photometry);
+            self.regions.growth_open=!spectrum && dock.was_open(Page::Growth);
+            pro.preview_open=dock.was_open(Page::Preview);
+            self.multi.as_mut().unwrap().set_files_open(dock.was_open(Page::Files));
+            self.tools.histogram_open=!spectrum && dock.was_open(Page::Histogram);
+            self.tools.settings_open=dock.was_open(Page::Settings);self.header_open=dock.was_open(Page::Header);
+        }
+        let (operation,task)=dock.operation().split_once(':').unwrap_or((dock.operation(),""));
+        if !pro.busy && pro::OPERATIONS.iter().any(|(candidate,_)|*candidate==operation) && (if spectrum{pro::spectrum_operation(operation)}else{!["spectral_candidates","spectral_analysis"].contains(&operation)}){
+            pro.select(operation);if let Some(analysis)=&mut pro.spectral_analysis{if ["Display","Measure","Process","Fit","Compare"].contains(&task){analysis.task=task.into();}}
+        }
+        self.pro_dock=Some((spectrum,dock));
+    }
+    #[cfg(feature="pro")]
+    fn pro_workspace(&mut self,ctx:&egui::Context,view:&serde_json::Value,available:bool){
+        use workspace_ui::Page;
+        self.prepare_pro_dock(ctx,false);if self.pro.is_none(){return;}
+        let image=self.image.clone();let spectrum=image.as_ref().is_some_and(|image|image.spectrum.is_some());
+        let pro=self.pro.as_mut().unwrap();let multi=self.multi.get_or_insert_with(multiview::Workspace::default);
+        pro.tick(ctx,&self.science,self.generation,image.as_deref(),view,multi);
+        let (_,mut dock)=self.pro_dock.take().unwrap();let mut requested=vec![Page::Tool];
+        if self.coordinates.open && !spectrum{requested.push(Page::Coordinates);}
+        if self.regions.open && !spectrum{requested.push(Page::Photometry);}
+        if self.regions.growth_open && !spectrum{requested.push(Page::Growth);}
+        if self.pro.as_ref().is_some_and(|pro|pro.preview_open){requested.push(Page::Preview);}
+        if self.multi.as_ref().is_some_and(|multi|multi.files_open()){requested.push(Page::Files);}
+        if !spectrum && (self.multi.as_ref().is_some_and(|multi|multi.secondary_open()) || dock.was_open(Page::Secondary)){requested.push(Page::Secondary);}
+        if self.tools.histogram_open && !spectrum{requested.push(Page::Histogram);}
+        if self.tools.settings_open{requested.push(Page::Settings);}
+        if self.header_open{requested.push(Page::Header);}
+        let pro=self.pro.as_ref().unwrap();let operation=format!("{}:{}",pro.operation,if pro.operation=="spectral_analysis"{pro.spectral_analysis.as_ref().map_or("",|analysis|analysis.task.as_str())}else{""});
+        let width=self.tools.prefs.pro_width(spectrum);let collapsed=self.tools.prefs.pro_collapsed(spectrum);let saved_layout=self.tools.prefs.pro_layout(spectrum).clone();
+        let result=dock.show(ctx,spectrum,&requested,&operation,width,collapsed,|ui,page|match page{
+            Page::Tool=>{let pro=self.pro.as_mut().unwrap();let multi=self.multi.as_mut().unwrap();pro.ui(ui,ctx,&self.science,self.generation,image.as_deref(),view,multi);},
+            Page::Coordinates=>self.coordinates.ui(ui,ctx,&self.science,self.generation,image.as_deref(),self.wcs_result.as_ref(),self.cursor_pixel,available),
+            Page::Photometry=>self.regions.ui(ui,ctx,image.as_deref(),true),
+            Page::Growth=>self.regions.growth_ui(ui,ctx),
+            Page::Preview=>self.pro.as_mut().unwrap().preview_ui(ui),
+            Page::Files=>self.multi.as_mut().unwrap().files_ui(ui),
+            Page::Secondary=>{if let Some(image)=image.as_deref(){let center=[(image.info.width as f64-1.)/2.-f64::from(self.pan.x/self.zoom),(image.info.height as f64-1.)/2.+f64::from(self.pan.y/self.zoom)];self.multi.as_mut().unwrap().secondary_ui(ui,ctx,&self.science,self.generation,image,center,self.zoom,self.wcs_override.as_deref());}},
+            Page::Histogram=>self.tools.histogram_ui(ui,image.as_deref(),self.low,self.high),
+            Page::Settings=>self.tools.settings_ui(ui,ctx,self.stats.max),
+            Page::Header=>self.header_ui(ui,ctx),
+        });
+        if self.tools.prefs.pro_layout(spectrum)!=&saved_layout{self.pro_dock=None;self.prepare_pro_dock(ctx,true);return;}
+        for page in result.closed{match page {
+            Page::Coordinates=>self.coordinates.open=false,Page::Photometry=>self.regions.open=false,Page::Growth=>self.regions.growth_open=false,Page::Preview=>self.pro.as_mut().unwrap().preview_open=false,Page::Files=>self.multi.as_mut().unwrap().set_files_open(false),
+            Page::Secondary=>self.multi.as_mut().unwrap().close_secondary(),
+            Page::Histogram=>self.tools.histogram_open=false,Page::Settings=>self.tools.settings_open=false,Page::Header=>self.header_open=false,Page::Tool=>{},
+        }}
+        if !result.collapsed{self.tools.prefs.set_pro_width(spectrum,result.width);}
+        self.tools.prefs.set_pro_collapsed(spectrum,result.collapsed);self.pro.as_mut().unwrap().panel_width=result.width;
+        // Persist after a completed gesture, not once per pointer-motion frame.
+        // 手势完成后保存，避免拖动每一帧写入偏好；科学任务本身不序列化。
+        let pro=self.pro.as_ref().unwrap();dock.remember_operation(format!("{}:{}",pro.operation,if pro.operation=="spectral_analysis"{pro.spectral_analysis.as_ref().map_or("",|analysis|analysis.task.as_str())}else{""}));
+        if !ctx.input(|input|input.pointer.primary_down()){self.tools.prefs.set_pro_layout(spectrum,dock.summary());}
+        self.pro_dock=Some((spectrum,dock));
+    }
+    fn action(&mut self, action:&str, ctx:&egui::Context){
+        match action {
+            "Auto display"=>{if self.image.as_ref().is_some_and(|image|image.spectrum.is_none()){if let Some(preset)=controls::auto_display(&self.stats){self.limits=Limits::Manual;self.low=preset.low;self.high=preset.high;self.stretch=preset.stretch;self.tone=DisplayTone::default();self.dirty=true;}}},
+            "Fit"=>{self.auto_fit=true;self.pan=Vec2::ZERO;self.plot.fit=true;},
+            "1:1"=>{self.auto_fit=false;self.zoom=1./ctx.pixels_per_point();self.pan=Vec2::ZERO;},
+            "Zoom +"=>{self.auto_fit=false;self.zoom*=1.25;self.pan*=1.25;},
+            "Zoom -"=>{self.auto_fit=false;self.zoom/=1.25;self.pan/=1.25;},
+            "ZScale"=>{self.limits=Limits::ZScale;(self.low,self.high)=self.stats.bounds(self.limits);self.dirty=true;},
+            "Min/Max"=>{self.limits=Limits::MinMax;(self.low,self.high)=self.stats.bounds(self.limits);self.dirty=true;},
+            "Reset B/C"=>{self.tone=DisplayTone::default();self.dirty=true;},
+            "Invert"=>{self.invert=!self.invert;self.dirty=true;},
+            "Header"=>self.header_open=!self.header_open,
+            _=>{},
+        }
+    }
+    fn science_updates(&mut self,ctx:&egui::Context){
+        for reply in self.science.drain(){
+            if reply.generation!=self.generation {continue;}
+            if ["view_heartbeat","artifact_refs","release_document","release_view"].contains(&reply.operation.as_str()){continue;}
+            if let Some(hdu)=reply.operation.strip_prefix("header.").and_then(|h|h.parse::<usize>().ok()){self.header.accept(hdu,reply.result);continue;}
+            if reply.operation.starts_with("gaia.") {
+                self.coordinates.reply(ctx,&self.science,self.generation,reply);
+            }else if reply.operation.starts_with("wcs.") {
+                let Some(requested_pixel)=self.wcs_cache.pending_pixel(&reply.operation) else{continue;};
+                match reply.result {
+                    Ok(value)=>{
+                        if let Err(error)=self.wcs_cache.accept(&reply.operation,value){self.wcs_text=format!("J2000 unavailable: {error}");self.wcs_result=None;self.wcs_pixel=Some(requested_pixel);}
+                        // Read the current cursor, never flash the position of a late reply.
+                        // 迟到的像素结果只进缓存，不覆盖新光标读数。
+                        if let Some(pixel)=self.wcs_target(){self.show_cached_wcs(pixel);}
+                    },
+                    Err(error)=>{
+                        self.wcs_cache.fail(&reply.operation);self.wcs_text=format!("J2000 unavailable: {error}");self.wcs_result=None;self.wcs_pixel=Some(requested_pixel);
+                        self.wcs_disabled=error.contains("No usable celestial WCS") || error.contains("No module named") || error.contains("Python environment is unavailable");
+                    },
+                }
+                self.wcs_pending=self.wcs_cache.is_pending();ctx.request_repaint();
+            }else if reply.operation=="region_transform" {
+                match reply.result {Ok(value)=>self.regions.accept_sky_template(value),Err(error)=>self.regions.message=error,}
+            }else if reply.operation=="view_link" {
+                #[cfg(feature="pro")]
+                if let Some(multi)=&mut self.multi {match reply.result {Ok(value)=>{multi.linked_center=value["center"].as_array().and_then(|a|Some([a.first()?.as_f64()?,a.get(1)?.as_f64()?]));multi.linked_ratio=value["ratio"].as_f64().unwrap_or(1.);},Err(error)=>multi.message=error,}}
+            }else if reply.operation=="measure.growth" {
+                self.regions.measurement_pending=false;
+                match reply.result{Ok(value)=>{if value["revision"].as_u64()==Some(self.regions.revision){self.regions.accept_growth(value);}},Err(error)=>self.regions.message=error,}
+            }else if reply.operation=="measure" {
+                self.regions.measurement_pending=false;
+                match reply.result{Ok(value)=>{
+                    if value["revision"].as_u64()!=Some(self.regions.revision){continue;}
+                    if let (Ok(results),Ok(indices))=(serde_json::from_value::<Vec<fitsviewer_core::regions::Measurement>>(value["measurements"].clone()),serde_json::from_value::<Vec<usize>>(value["indices"].clone())){
+                        self.regions.uncertainty_source=value["uncertainty_source"].clone();
+                        self.regions.results.resize(self.regions.apertures.len(),None);for (index,result) in indices.into_iter().zip(results){if let Some(slot)=self.regions.results.get_mut(index){*slot=Some(result);}}
+                        self.regions.message.clear();
+                    }
+                },Err(error)=>self.regions.message=error,}
+            }else {
+                #[cfg(feature="pro")] #[cfg(feature="pro")]
+if let Some(pro)=&mut self.pro {pro.reply(reply);}
+            }
+        }
+    }
+    fn view_configuration(&self)->serde_json::Value{
+        #[cfg(feature="pro")] let annotations=self.pro.as_ref().map(|p|p.annotations.clone()).unwrap_or_default();
+        #[cfg(not(feature="pro"))] let annotations:Vec<serde_json::Value>=vec![];
+        let crop=self.image.as_ref().filter(|i|i.spectrum.is_none()).and_then(|image|{
+            let width=f64::from(self.view_rect[2]-self.view_rect[0])/f64::from(self.zoom);
+            let height=f64::from(self.view_rect[3]-self.view_rect[1])/f64::from(self.zoom);
+            let cx=(image.info.width as f64-1.)/2.-f64::from(self.pan.x/self.zoom);let cy=(image.info.height as f64-1.)/2.+f64::from(self.pan.y/self.zoom);
+            let bounds=[(cx-width/2.).max(-0.5),(cy-height/2.).max(-0.5),(cx+width/2.).min(image.info.width as f64-0.5),(cy+height/2.).min(image.info.height as f64-0.5)];
+            (width>0. && height>0. && bounds[0]<bounds[2] && bounds[1]<bounds[3]).then_some(bounds)
+        });
+        serde_json::json!({"schema":1,"path":self.image.as_ref().map_or(self.path.as_str(),|i|i.info.path.as_str()),"hdu":self.image.as_ref().map(|i|i.info.hdu),"low":self.low,"high":self.high,"stretch":self.stretch.name(),"invert":self.invert,"bias":self.tone.bias,"contrast":self.tone.contrast,"zoom":self.zoom,"pan":[self.pan.x,self.pan.y],"crop":crop,"render":self.tools.prefs.render,"plot_bounds":self.plot.bounds,"apertures":self.regions.apertures,"load_options":{"x_column":self.load_options.x_column,"y_column":self.load_options.y_column,"error_column":self.load_options.error_column,"error_hdu":self.load_options.error_hdu,"error_kind":self.load_options.error_kind.as_str(),"no_error":self.load_options.ignore_errors},"annotations":annotations,"wcs_override":self.wcs_override})
+    }
+    fn state(&self)->serde_json::Value{
+        let image=self.image.as_deref();
+        let mut state=serde_json::json!({"schema":1,"loaded":image.is_some(),"loading":self.loading,"error":self.error,"path":self.path,"hdu":image.map(|m|m.info.hdu),"width":image.map(|m|m.info.width),"height":image.map(|m|m.info.height),"spectrum":image.and_then(|m|m.info.spectrum.as_ref()),"plot_bounds":self.plot.bounds,"status_height":self.status_height,"view_rect":self.view_rect,"stretch":self.stretch.name(),"limits":self.limits.name(),"low":self.low,"high":self.high,"bias":self.tone.bias,"contrast":self.tone.contrast,"zoom":self.zoom,"pan":[self.pan.x,self.pan.y],"cursor":self.cursor,"texture":self.texture.is_some(),"mode":self.tools.prefs.mode,"theme":self.tools.prefs.theme,"preferences":self.tools.prefs,"histogram_builds":self.tools.histogram_builds,"histogram_loaded":self.tools.histogram.is_some(),"science_session":self.science.session,"generation":self.generation,"j2000":self.wcs_text,"wcs":self.wcs_result,"apertures":self.regions.apertures,"measurements":self.regions.results,"region_message":self.regions.message,"measurement_pending":self.regions.measurement_pending,"measurement_revision":self.regions.revision});
+        state["ribbon_height"]=serde_json::json!(self.ribbon_height);
+        state["wcs_cache"]=self.wcs_cache.summary();
+        state["wcs_pixel"]=serde_json::json!(self.wcs_pixel);
+        state["cursor_pixel"]=serde_json::json!(self.cursor_pixel);
+        state["selected_aperture"]=serde_json::json!(self.regions.selected);
+        state["aperture_tool"]=serde_json::json!(format!("{:?}",self.regions.tool));
+        state["ribbon_tab"]=serde_json::json!(self.tools.prefs.ribbon_tab);
+        state["ribbon_collapsed"]=serde_json::json!(self.tools.prefs.ribbon_collapsed);
+        state["stretch_histogram_builds"]=serde_json::json!(self.stretch_histogram_builds);
+        let spectrum=image.is_some_and(|image|image.spectrum.is_some());
+        #[cfg(feature="pro")] {
+            state["pro_initialized"]=serde_json::json!(self.pro.is_some());
+            state["pro_result"]=serde_json::json!(self.pro.as_ref().map(|p|p.summary()));
+            state["pro_message"]=serde_json::json!(self.pro.as_ref().map(|p|&p.message));
+            state["pro_busy"]=serde_json::json!(self.pro.as_ref().map(|p|p.busy));
+            state["multi"]=serde_json::json!(self.multi.as_ref().map(|m|m.configuration()));
+            state["cache_bytes"]=serde_json::json!(self.multi.as_ref().map(|m|m.bytes()));
+        state["image_layer_renderer"]=self.pro.as_ref().and_then(|pro|pro.image_layers.as_ref()).map(|renderer|renderer.summary()).unwrap_or(serde_json::Value::Null);
+        state["spectral_lines"]=self.pro.as_ref().and_then(|pro|pro.spectral_lines.as_ref()).map(|lines|lines.summary()).unwrap_or(serde_json::Value::Null);
+        state["spectral_analysis"]=self.pro.as_ref().and_then(|pro|pro.spectral_analysis.as_ref()).map(|analysis|analysis.summary()).unwrap_or(serde_json::Value::Null);
+        state["pro_operation"]=self.pro.as_ref().map(|pro|serde_json::json!(pro.operation)).unwrap_or(serde_json::Value::Null);
+        state["pro_panel"]=serde_json::json!({"width":self.pro.as_ref().map(|pro|pro.panel_width),"collapsed":self.tools.prefs.pro_collapsed(spectrum),"context":if spectrum{"spectrum"}else{"image"},"layout":self.pro_dock.as_ref().map(|(_,dock)|dock.summary())});
+        }
+        #[cfg(not(feature="pro"))] {
+            state["pro_initialized"]=serde_json::json!(false);
+            for key in ["pro_result","pro_message","pro_busy","multi","cache_bytes","image_layer_renderer","spectral_lines","spectral_analysis","pro_operation"]{state[key]=serde_json::Value::Null;}
+            state["pro_panel"]=serde_json::json!({"width":null,"collapsed":self.tools.prefs.pro_collapsed(spectrum),"context":if spectrum{"spectrum"}else{"image"},"layout":null});
+        }
+        state["stretch_histogram_cached"]=serde_json::json!(self.scale_mapping.is_some() && self.stretch==Stretch::HistogramEqualization);
+        state.as_object_mut().unwrap().extend(serde_json::json!({"coordinates_open":self.coordinates.open,"gaia_busy":self.coordinates.busy,"gaia_message":self.coordinates.message,"gaia_result":self.coordinates.result,"gaia_wcs_active":self.coordinates.header().is_some(),"region_preview_count":self.regions.preview_template.as_ref().map_or(0,|t|t.apertures.len())}).as_object().unwrap().clone());
+        state["build_features"]=serde_json::json!({"pro":cfg!(feature="pro")});
+        state
+    }
+    fn command(&mut self,ctx:&egui::Context,input:serde_json::Value)->Result<serde_json::Value,String>{
+        use serde_json::json;
+        #[cfg(feature="pro")] self.prepare_pro_dock(ctx,false);
+        let operation=input["operation"].as_str().ok_or("Command requires operation")?;
+        let params=&input["params"];
+        match operation {
+            "state"=>return Ok(self.state()),
+            #[cfg(not(feature="pro"))]
+            "session.export"=>return Ok(json!({"schema":1,"mode":"Minimal","views":[{"path":self.path,"hdu":self.image.as_ref().map(|i|i.info.hdu),"view":self.view_configuration(),"apertures":self.regions.apertures}]})),
+            #[cfg(feature="pro")]
+            "session.export"=>{self.cache_current();return Ok(if let Some(multi)=&self.multi{let mut value=multi.configuration();value["mode"]=json!(self.tools.prefs.mode);value}else{json!({"schema":1,"mode":self.tools.prefs.mode,"views":[{"path":self.path,"hdu":self.image.as_ref().map(|i|i.info.hdu),"view":self.view_configuration(),"apertures":self.regions.apertures}]})});},
+            "session.apply"=>{
+                if self.loading{return Err("Wait for the current file load before applying a session".into());}
+                let replacement=Self::new(String::new(),self.api.clone(),self.token.clone(),None).with_session(params.clone())?;
+                self.coordinates.cancel(ctx,&self.science,self.generation);self.science.request(ctx,self.generation,"release_pro",json!({}));
+                self.path=replacement.path;self.requested_hdu=replacement.requested_hdu;self.pending_view=replacement.pending_view;self.saved_multi=replacement.saved_multi;
+                self.tools.prefs.mode=replacement.tools.prefs.mode;#[cfg(feature="pro")] {self.pro=None;self.multi=None;self.pro_dock=None;}self.image=None;self.texture=None;self.generation+=1;
+                self.request(ctx,self.requested_hdu);
+            },
+            #[cfg(feature="pro")]
+            "result"=>return Ok(self.pro.as_ref().ok_or("Select PRO to read a scientific result")?.result.clone()),
+            "open"=>{if self.loading{return Err("A file is already loading".into());}self.path=params["path"].as_str().ok_or("Open requires path")?.into();self.request(ctx,params["hdu"].as_u64().map(|v|v as usize));},
+            "action"=>{let action=params["name"].as_str().ok_or("Action requires name")?;if !controls::ACTIONS.contains(&action){return Err("Unknown viewer action".into());}self.action(action,ctx);},
+            "preferences"=>{let text=serde_json::to_string(params).map_err(|e|e.to_string())?;let prefs=controls::Preferences::parse(&text)?;controls::save(&prefs)?;self.tools.prefs=prefs;self.dirty=true;#[cfg(feature="pro")] {self.pro_dock=None;self.prepare_pro_dock(ctx,true);}self.prepare_popup_windows();},
+            "coordinates"=>self.coordinates.open=params["open"].as_bool().unwrap_or(true),
+            "coordinates.gaia"=>{let image=self.image.as_deref().ok_or("Open an image first")?;self.coordinates.start(ctx,&self.science,self.generation,image,params.clone())?;},
+            "coordinates.cancel"=>{self.coordinates.cancel(ctx,&self.science,self.generation);self.coordinates.message="Gaia calibration cancelled".into();},
+            "coordinates.use_gaia"=>{if self.coordinates.solution.is_none(){return Err("No validated Gaia solution".into());}self.coordinates.use_solution=params["enabled"].as_bool().unwrap_or(true);self.coordinates.changed=true;},
+            "histogram"=>self.tools.histogram_open=params["open"].as_bool().unwrap_or(true),
+            "header.select"=>{let hdu=params["hdu"].as_u64().ok_or("Missing header HDU")? as usize;if !self.image.as_ref().is_some_and(|image|image.info.hdus.iter().any(|header|header.index==hdu)){return Err("Unknown header HDU".into());}self.header.select(hdu);self.header_open=true;},
+            #[cfg(feature="pro")]
+            "workspace.add"=>{let multi=self.multi.as_mut().ok_or("Select PRO for multiple views")?;let paths:Vec<String>=serde_json::from_value(params["paths"].clone()).map_err(|e|e.to_string())?;if paths.len()>32{return Err("At most 32 files".into());}multi.add_paths(&paths);},
+            #[cfg(feature="pro")]
+            "workspace.select"=>{if self.loading{return Err("Wait for the current load".into());}self.cache_current();let selection=self.multi.as_mut().ok_or("Select PRO for multiple views")?.selection(params["index"].as_u64().ok_or("Missing view index")? as usize).ok_or("Unknown view index")?;self.pending_view=Some(json!({"view":selection.view,"apertures":selection.apertures}));if let Some(image)=selection.image{self.replace_shared(ctx,image);}else{self.path=selection.path;self.request(ctx,selection.hdu);}},
+            #[cfg(feature="pro")]
+            "workspace.close"=>{
+                if self.loading{return Err("Wait for the current load".into());}self.cache_current();
+                let (active,next)=self.multi.as_mut().ok_or("Select PRO for multiple views")?.remove(params["index"].as_u64().ok_or("Missing view index")? as usize)?;
+                if active{
+                    self.image=None;self.texture=None;self.path.clear();self.regions=regions_ui::Regions::default();self.tools.histogram=None;self.cursor.clear();
+                    if let Some(selection)=next{self.pending_view=Some(json!({"view":selection.view,"apertures":selection.apertures}));if let Some(image)=selection.image{self.replace_shared(ctx,image);}else{self.path=selection.path;self.request(ctx,selection.hdu);}}
+                    else{self.close_document(ctx);}
+                }
+            },
+            "view"=>{
+                let mut merged=self.view_configuration();if let (Some(target),Some(source))=(merged.as_object_mut(),params.as_object()){target.extend(source.clone());}
+                fitsviewer_core::view::View::parse(&merged.to_string())?;
+                let low=params["low"].as_f64().unwrap_or(self.low);let high=params["high"].as_f64().unwrap_or(self.high);
+                if !low.is_finite() || !high.is_finite() || high<=low{return Err("View requires finite Low < High".into());}
+                let stretch=if let Some(name)=params["stretch"].as_str(){Stretch::parse(name).ok_or("Unknown stretch")?}else{self.stretch};
+                let bias=params["bias"].as_f64().unwrap_or(self.tone.bias);let contrast=params["contrast"].as_f64().unwrap_or(self.tone.contrast);
+                if !(0. ..=1.).contains(&bias) || !(0.05..=20.).contains(&contrast){return Err("Invalid brightness/contrast".into());}
+                let render=if params["render"].is_object(){let r:fitsviewer_core::display::RenderOptions=serde_json::from_value(params["render"].clone()).map_err(|e|e.to_string())?;r.validate()?;r}else{self.tools.prefs.render.clone()};
+                self.low=low;self.high=high;self.stretch=stretch;self.tone=DisplayTone{bias,contrast};self.tools.prefs.render=render;self.limits=Limits::Manual;self.invert=params["invert"].as_bool().unwrap_or(self.invert);self.dirty=true;
+                if let Some(zoom)=params["zoom"].as_f64().filter(|v|v.is_finite() && *v>=0.005 && *v<=128.){self.zoom=zoom as f32;self.auto_fit=false;}
+                if let (Some(x),Some(y))=(params["pan"][0].as_f64(),params["pan"][1].as_f64()){if x.abs()<1e8 && y.abs()<1e8{self.pan=egui::vec2(x as f32,y as f32);self.auto_fit=false;}}
+                if let Ok(bounds)=serde_json::from_value::<[f64;4]>(params["plot_bounds"].clone()){self.plot.bounds=bounds;self.plot.fit=false;}
+            },
+            "aperture.uncertainty"=>self.regions.configure_uncertainty(params)?,
+            "aperture.add"=>{#[cfg(not(feature="pro"))] mini_aperture(params)?;let aperture:fitsviewer_core::regions::Aperture=serde_json::from_value(params.clone()).map_err(|e|e.to_string())?;aperture.shape.validate()?;if self.tools.prefs.mode!="PRO" && !matches!(aperture.shape,fitsviewer_core::regions::Shape::Circle{..}){return Err("Select PRO for advanced geometry".into());}self.regions.add_aperture(aperture);},
+            "aperture.select"|"aperture.delete"|"aperture.resize"|"aperture.move"|"aperture.update"=>{
+                let image=self.image.as_deref().ok_or("Open an image first")?;
+                if image.spectrum.is_some(){return Err("Aperture editing needs a two-dimensional image".into());}
+                if let Some(index)=params.get("index"){
+                    self.regions.select_aperture(index.as_u64().ok_or("Invalid aperture index")? as usize)?;
+                }else if operation=="aperture.select"{return Err("Missing aperture index".into());}
+                match operation{
+                    "aperture.delete"=>{if !self.regions.delete_selected(){return Err("Select an aperture first".into());}},
+                    "aperture.resize"=>self.regions.resize_selected(params["radius"].as_f64().ok_or("Missing aperture radius")?,image)?,
+                    "aperture.move"|"aperture.update"=>{
+                        let center:[f64;2]=serde_json::from_value(params["center"].clone()).map_err(|_|"Expected two zero-based pixel coordinates")?;
+                        if operation=="aperture.move"{self.regions.move_selected(center,image)?;}else{
+                            let sky=if params["sky"].is_null(){None}else{Some(serde_json::from_value::<[f64;2]>(params["sky"].clone()).map_err(|_|"Expected inner and outer sky radii")?)};
+                            self.regions.update_selected_circle(center,params["radius"].as_f64().ok_or("Missing aperture radius")?,sky,image)?;
+                        }
+                    },_=>{},
+                }
+            },
+            #[cfg(feature="pro")]
+            "aperture.template"=>{if self.tools.prefs.mode!="PRO"{return Err("Select PRO for template paste".into());}self.regions.template=serde_json::to_string(&params["template"]).map_err(|e|e.to_string())?;self.regions.paste_mode=params["method"].as_str().unwrap_or("Keep pixels").into();self.regions.auto_confirm=params["preview"]!=true;self.regions.paste(self.cursor_pixel,self.image.as_deref());},
+            #[cfg(feature="pro")]
+            "aperture.preview.apply"=>self.regions.confirm_paste(),
+            #[cfg(feature="pro")]
+            "aperture.preview.cancel"=>self.regions.preview_template=None,
+            #[cfg(feature="pro")]
+            "aperture.template_load"=>{if self.tools.prefs.mode!="PRO"{return Err("Select PRO for region templates".into());}fitsviewer_core::regions::RegionTemplate::parse(&params["template"].to_string())?;self.regions.template=params["template"].to_string();self.regions.auto_confirm=false;self.regions.paste(self.cursor_pixel,self.image.as_deref());},
+            #[cfg(feature="pro")]
+            "annotation.set"=>{let annotations:Vec<serde_json::Value>=serde_json::from_value(params["annotations"].clone()).map_err(|e|e.to_string())?;if annotations.len()>256 || params.to_string().len()>65536{return Err("Annotations exceed supported limits".into());}let pro=self.pro.as_mut().ok_or("Select PRO for annotations")?;pro.annotations=annotations;pro.annotations_dirty=true;},
+            #[cfg(feature="pro")]
+            "pro.select_row"=>self.pro.as_mut().ok_or("Select PRO for table rows")?.select_row(ctx,&self.science,self.generation,params["row"].as_u64().ok_or("Missing row")? as usize,params["notify"].as_bool().unwrap_or(false)),
+            #[cfg(feature="pro")]
+            "spectral.lines"=>{
+                if self.tools.prefs.mode!="PRO"{return Err("Select PRO for spectral reference lines".into());}
+                let pro=self.pro.as_mut().ok_or("Select PRO for spectral reference lines")?;
+                pro.sync_spectrum(self.image.as_deref());
+                pro.spectral_lines.as_mut().ok_or("Open a spectrum first")?.configure(params)?;
+            },
+            #[cfg(feature="pro")]
+            "spectral.analysis"=>{
+                if self.tools.prefs.mode!="PRO"{return Err("Select PRO for spectral analysis".into());}
+                let pro=self.pro.as_mut().ok_or("Select PRO for spectral analysis")?;pro.sync_spectrum(self.image.as_deref());
+                if params["action"].is_string() && pro.busy{return Err("Another PRO job is running".into());}
+                let image=self.image.as_deref().ok_or("Open a spectrum first")?;
+                let mut next_lines=pro.spectral_lines.as_ref().ok_or("Open a spectrum first")?.as_ref().clone();
+                next_lines.configure(params)?;
+                if params["action"].is_string(){next_lines.request(image)?;}
+                let analysis=pro.spectral_analysis.as_mut().ok_or("Open a spectrum first")?;
+                analysis.configure(params)?;analysis.sync_context(&next_lines);
+                pro.spectral_lines=Some(Box::new(next_lines));pro.operation="spectral_analysis".into();self.tools.prefs.set_pro_collapsed(true,false);
+                if let Some(action)=params["action"].as_str(){
+                    let request=analysis.request(action,image,pro.spectral_lines.as_ref().unwrap())?;
+                    pro.send(ctx,&self.science,self.generation,"spectral_analysis",request);
+                }self.plot.fit=true;
+            },
+            #[cfg(feature="pro")]
+            "layer.configure"=>{
+                if self.tools.prefs.mode!="PRO"{return Err("Select PRO for layers".into());}
+                self.multi.as_mut().ok_or("Select PRO for layers")?.configure_layer(params["index"].as_u64().ok_or("Missing layer index")? as usize,&params["settings"])?;self.plot.fit=true;
+            },
+            #[cfg(feature="pro")]
+            "spectral.overlay"=>{
+                if self.tools.prefs.mode!="PRO"{return Err("Select PRO for spectral comparisons".into());}
+                self.multi.as_mut().ok_or("Select PRO for spectral comparisons")?.configure_spectrum_overlay(params["index"].as_u64().ok_or("Missing spectrum index")? as usize,&params["settings"])?;
+                self.plot.fit=true;
+            },
+            #[cfg(feature="pro")]
+            "image.match_flux"=>{
+                if self.tools.prefs.mode!="PRO"{return Err("Select PRO for image layers".into());}
+                let image=self.image.as_deref().filter(|image|image.spectrum.is_none()).ok_or("Open a reference image first")?;
+                let pro=self.pro.as_mut().ok_or("Select PRO for image layers")?;if pro.busy{return Err("Another PRO job is running".into());}
+                let index=params["index"].as_u64().ok_or("Missing target layer index")? as usize;
+                let mut request=self.multi.as_ref().ok_or("Select PRO for image layers")?.image_flux_request(index,image,&params["params"])?;
+                if let Some(wcs)=&self.wcs_override{request["reference_wcs_override"]=json!(wcs);}
+                pro.select("image_layers");pro.send(ctx,&self.science,self.generation,"image_flux_match",request);self.tools.prefs.set_pro_collapsed(false,false);
+            },
+            #[cfg(feature="pro")]
+            "pro.run"=>{if self.tools.prefs.mode!="PRO"{return Err("Select PRO before using scientific tools".into());}let operation=params["operation"].as_str().ok_or("Missing PRO operation")?;if !pro::OPERATIONS.iter().any(|(o,_)|*o==operation){return Err("Unknown PRO tool".into());}let view=self.view_configuration();let pro=self.pro.get_or_insert_with(pro::Workspace::default);if pro.busy{return Err("Another PRO job is running".into());}pro.operation=operation.into();pro.parameters=serde_json::to_string(&params["params"]).map_err(|e|e.to_string())?;pro.submit(ctx,&self.science,self.generation,self.image.as_deref(),&view);},
+            "close"=>{self.close_document(ctx);
+                #[cfg(all(target_arch="wasm32",feature="offline"))] WEB_OFFLINE_SOURCE.with(|slot|*slot.borrow_mut()=None);
+            },
+            _=>return Err("Unknown viewer command".into()),
+        }if operation=="close"{self.scale_mapping=None;}Ok(json!({"accepted":true,"operation":operation,"asynchronous":(matches!(operation,"open"|"pro.run"|"coordinates.gaia"|"image.match_flux") || (operation=="spectral.analysis" && params["action"].is_string()))}))
+    }
+    fn commands(&mut self,ctx:&egui::Context){
+        #[cfg(target_arch="wasm32")]
+        {let commands=WEB_COMMANDS.with(|slot|std::mem::take(&mut *slot.borrow_mut()));for input in commands {let id=input.get("id").cloned().unwrap_or_default();let response=match self.command(ctx,input){Ok(result)=>serde_json::json!({"id":id,"ok":true,"result":result}),Err(error)=>serde_json::json!({"id":id,"ok":false,"error":error})};if let (Some(window),Ok(value))=(web_sys::window(),js_sys::JSON::parse(&response.to_string())){let _=js_sys::Reflect::set(&window,&"__fitsviewerCommandResult".into(),&value);}}}
+        #[cfg(not(target_arch="wasm32"))]
+        if let Some(path)=std::env::var_os("FITSVIEWER_COMMAND_FILE") {if let Ok(bytes)=std::fs::read(&path){let _=std::fs::remove_file(&path);if bytes.len()<=1024*1024{if let Ok(inputs)=serde_json::from_slice::<Vec<serde_json::Value>>(&bytes){for input in inputs{if let Err(error)=self.command(ctx,input){self.error=error;}}}}}ctx.request_repaint_after(std::time::Duration::from_millis(100));}
+    }
+    fn wcs_target(&self)->Option<[f64;2]>{
+        let image=self.image.as_ref()?;
+        if image.spectrum.is_some(){return None;}
+        self.cursor_pixel.or_else(||self.coordinates.open.then_some([(image.info.width as f64-1.)/2.,(image.info.height as f64-1.)/2.]))
+    }
+    fn show_cached_wcs(&mut self,pixel:[f64;2])->bool{
+        let Some(value)=self.wcs_cache.get(pixel) else{return false;};
+        let Some(point)=wcs_cache::point_at(&value,pixel) else{return false;};
+        self.wcs_text=format!("FK5 J2000 {}",point["sexagesimal"].as_str().unwrap_or_default());
+        self.wcs_pixel=Some(pixel);self.wcs_result=Some(value);true
+    }
+    fn request_wcs(&mut self,ctx:&egui::Context){
+        let Some(image)=self.image.as_ref() else{return;};
+        if image.spectrum.is_some(){return;}
+        if self.wcs_cache.bind(self.generation,&image.info.path,image.info.hdu,self.wcs_override.as_deref()){
+            self.wcs_pixel=None;self.wcs_pending=false;self.wcs_disabled=false;self.wcs_result=None;self.wcs_text.clear();self.wcs_requested_at=-100.;
+        }
+        let Some(pixel)=self.wcs_target() else{return;};
+        let changed_pixel=self.wcs_pixel!=Some(pixel);
+        if self.show_cached_wcs(pixel){if changed_pixel{ctx.request_repaint();}return;}
+        // Retry another position after a point failure, without hammering the same failed point.
+        // 单点失败后仍可查看别处，但不在原点重复发起失败请求。
+        if self.wcs_pixel==Some(pixel) && self.wcs_result.is_none() && !self.wcs_text.is_empty(){return;}
+        if self.wcs_disabled || self.wcs_cache.is_pending(){return;}
+        // Astropy validates the complete model, including DSS plate WCS without CTYPE.
+        // 由外部 Astropy 判定完整 WCS；DSS 底片坐标不一定带有 CTYPE 关键字。
+        let now=ctx.input(|i|i.time);
+        if now-self.wcs_requested_at<0.12 {ctx.request_repaint_after(std::time::Duration::from_millis(120));return;}
+        let Some(label)=self.wcs_cache.begin(pixel) else{return;};
+        self.wcs_requested_at=now;self.wcs_pending=true;
+        let image=self.image.as_ref().unwrap();
+        self.science.request_labeled(ctx,self.generation,"wcs",&label,serde_json::json!({"path":image.info.path,"hdu":image.info.hdu,"points":[pixel],"wcs_override":self.wcs_override}));
+    }
+    fn sync_coordinates(&mut self,ctx:&egui::Context){
+        let key=self.image.as_ref().map(|i|format!("{}:{}\n{}",self.generation,i.info.path,i.info.hdu)).unwrap_or_default();
+        self.coordinates.bind(ctx,&self.science,self.generation,key,self.wcs_override.clone());
+        if self.coordinates.changed{
+            self.coordinates.changed=false;self.wcs_cache.clear();self.wcs_override=self.coordinates.header().map(str::to_string);
+            self.wcs_pixel=None;self.wcs_pending=false;self.wcs_disabled=false;self.wcs_result=None;self.wcs_text.clear();
+            self.regions.wcs_override=self.wcs_override.clone();
+            // Markers computed with an old WCS must be recalculated, not silently reused.
+            // WCS 更新后清除旧坐标叠加，避免沿用原解的标记。
+            #[cfg(feature="pro")]
+if let Some(pro)=&mut self.pro{pro.markers.clear();}
+            #[cfg(feature="pro")]
+if let Some(multi)=&mut self.multi{multi.invalidate_wcs();}
+            self.cache_current();
+            ctx.request_repaint();
+        }
+    }
     #[cfg(target_arch = "wasm32")]
-    fn export_state(&self) {
-        let image = self.image.as_ref();
-        let state = serde_json::json!({"loaded":image.is_some(),"loading":self.loading,"error":self.error,"path":self.path,"hdu":image.map(|m|m.info.hdu),"width":image.map(|m|m.info.width),"height":image.map(|m|m.info.height),"stretch":self.stretch.name(),"limits":self.limits.name(),"low":self.low,"high":self.high,"bias":self.tone.bias,"contrast":self.tone.contrast,"zoom":self.zoom,"pan":[self.pan.x,self.pan.y],"cursor":self.cursor});
+    fn export_state(&self,ctx:&egui::Context) {
+        let now=js_sys::Date::now();let elapsed=now-self.last_export.get();
+        if elapsed<80.{ctx.request_repaint_after(std::time::Duration::from_millis((80.-elapsed).ceil().max(1.) as u64));return;}
+        self.last_export.set(now);
+        let state = self.state();
         if let (Some(window), Ok(value)) =
             (web_sys::window(), js_sys::JSON::parse(&state.to_string()))
         {
@@ -220,16 +805,38 @@ impl FitsApp {
             );
         }
     }
-    #[cfg(windows)]
+    fn spectrum_toolbar(&mut self,ui:&mut egui::Ui,ctx:&egui::Context){
+        let Some(meta)=self.image.as_ref().and_then(|i|i.info.spectrum.clone())else{return;};
+        ui.set_max_width(440.);let mut next=self.load_options;let mut reload=false;
+        ui.horizontal(|ui|{if ui.button(crate::i18n::t("Fit spectrum (F)")).clicked(){self.plot.fit=true;}ui.checkbox(&mut self.plot.errors,crate::i18n::t("Show uncertainty"));});
+        if !meta.columns.is_empty(){
+            let mut x=meta.x_column;let mut y=meta.y_column;let mut error=meta.error_column.unwrap_or(meta.columns.len());
+            for (id,label,chosen) in [("spectral-x","X",&mut x),("spectral-y","Flux",&mut y),("spectral-e","Error",&mut error)]{
+                ui.horizontal(|ui|{ui.label(crate::i18n::t(label));egui::ComboBox::from_id_salt(id).selected_text(meta.columns.get(*chosen).map(String::as_str).unwrap_or(crate::i18n::t("None"))).width(180.).show_ui(ui,|ui|{if id=="spectral-e"{ui.selectable_value(chosen,meta.columns.len(),crate::i18n::t("None"));}for (i,name) in meta.columns.iter().enumerate(){ui.selectable_value(chosen,i,name);}});});
+            }
+            if x!=meta.x_column || y!=meta.y_column || error!=meta.error_column.unwrap_or(meta.columns.len()){
+                next.x_column=Some(x);next.y_column=Some(y);next.error_column=(error<meta.columns.len()).then_some(error);next.error_hdu=None;next.ignore_errors=error==meta.columns.len();reload=true;
+            }
+        }else if let Some(image)=&self.image{
+            let none=usize::MAX;let mut chosen=meta.error_hdu.unwrap_or(none);
+            ui.horizontal(|ui|{ui.label(crate::i18n::t("Uncertainty HDU"));egui::ComboBox::from_id_salt("spectrum-error-hdu").selected_text(meta.error_hdu.map(|h|format!("HDU {h}")).unwrap_or_else(||crate::i18n::t("None").into())).show_ui(ui,|ui|{ui.selectable_value(&mut chosen,none,crate::i18n::t("None"));for h in image.info.hdus.iter().filter(|h|h.axes.len()==1 && h.viewable && h.index!=image.info.hdu){ui.selectable_value(&mut chosen,h.index,format!("{} · {}",h.index,h.name));}});});
+            if chosen!=meta.error_hdu.unwrap_or(none){next.error_hdu=(chosen!=none).then_some(chosen);next.error_column=None;next.ignore_errors=chosen==none;reload=true;}
+        }
+        let previous=next.error_kind;
+        ui.horizontal(|ui|{ui.label(crate::i18n::t("Uncertainty type"));egui::ComboBox::from_id_salt("spectrum-error-kind").selected_text(next.error_kind.as_str()).show_ui(ui,|ui|{for kind in [ErrorKind::Auto,ErrorKind::Sigma,ErrorKind::Variance,ErrorKind::Ivar]{ui.selectable_value(&mut next.error_kind,kind,kind.as_str());}});});
+        if previous!=next.error_kind && (next.error_column.is_some() || next.error_hdu.is_some()){reload=true;}
+        self.load_options=next;
+        if reload{self.request(ctx,self.image.as_ref().map(|image|image.info.hdu));}
+        ui.add(egui::Label::new(&meta.note).wrap());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     fn native_diagnostics(&self, ctx: &egui::Context) {
+        let now=self.started.elapsed().as_secs_f64()*1000.;
         // Opt-in functional diagnostics for local testing; never sent over the network.
         // 可选的本地状态输出用于功能测试，不发送到网络。
-        if let Some(path) = std::env::var_os("FITSVIEWER_DIAGNOSTICS") {
-            let state = serde_json::json!({"loaded":self.image.is_some(),"loading":self.loading,
-                "texture":self.texture.is_some(),"error":self.error,"path":self.path,
-                "width":self.image.as_ref().map(|m|m.info.width),"height":self.image.as_ref().map(|m|m.info.height),
-                "stretch":self.stretch.name(),"low":self.low,"high":self.high,"zoom":self.zoom,
-                "bias":self.tone.bias,"contrast":self.tone.contrast});
+        if let Some(path) = std::env::var_os("FITSVIEWER_DIAGNOSTICS").filter(|_|now-self.last_export.get()>80.) {
+            self.last_export.set(now);
+            let state = self.state();
             let _ = std::fs::write(path, state.to_string());
         }
         if let Ok(seconds) = std::env::var("FITSVIEWER_EXIT_AFTER")
@@ -245,26 +852,40 @@ impl FitsApp {
 }
 impl eframe::App for FitsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if !ctx.style().visuals.dark_mode {
-            ctx.set_visuals(egui::Visuals::dark());
+        self.sync_coordinates(ctx);
+        if i18n::set(&self.tools.prefs.language){
+            #[cfg(target_arch="wasm32")] let _=text_io::browser("setLanguage",&[&self.tools.prefs.language]);
+            ctx.request_repaint();
         }
-        let ready = self.pending.lock().unwrap().take();
+        #[cfg(all(target_arch="wasm32",feature="offline"))]
+        {if let Some(image)=WEB_OFFLINE_IMAGE.with(|slot|slot.borrow_mut().take()){self.accept(image);}}
+        self.tools.apply_theme(ctx);
+        self.science_updates(ctx);
+        let previous_preferences=serde_json::to_string(&self.tools.prefs).unwrap_or_default();
+        let previous_render=self.tools.prefs.render.clone();
+        let ready = self.pending.lock().unwrap().1.take();
         if let Some(result) = ready {
             self.loading = false;
             match result {
                 Ok(image) => self.accept(image),
                 Err(error) => {
                     self.error = error;
-                    self.image = None;
-                    self.texture = None;
+                    // Keep the last valid view so a failed column/path choice can be corrected.
+                    // 保留上一份有效数据，允许修正选列或路径错误。
                 }
             }
         }
         if self.image.is_none() && !self.loading && self.error.is_empty() && !self.path.is_empty() {
             self.request(ctx, self.requested_hdu);
         }
+        self.prepare_popup_windows();
+        #[cfg(feature="pro")] self.prepare_pro_dock(ctx,false);
+        self.commands(ctx);
+        self.tools.apply_theme(ctx);
+        self.sync_coordinates(ctx);
         self.shortcuts(ctx);
-        #[cfg(windows)]
+        if let Some(action)=self.tools.shortcut(ctx){self.action(&action,ctx);}
+        #[cfg(not(target_arch = "wasm32"))]
         {
             let dropped = ctx.input(|i| {
                 i.raw
@@ -280,213 +901,99 @@ impl eframe::App for FitsApp {
                 self.browse(ctx);
             }
         }
-        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-            ui.add_space(5.0);
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("FitsViewer")
-                        .size(21.0)
-                        .strong()
-                        .color(Color32::from_rgb(100, 210, 225)),
-                );
-                ui.separator();
-                #[cfg(windows)]
-                if ui.add_enabled(!self.loading, egui::Button::new("Browse…")).clicked() {
-                    self.browse(ctx);
-                }
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut self.path)
-                        .desired_width((ui.available_width() - if cfg!(windows) { 380.0 } else { 190.0 }).max(100.0))
-                        .hint_text("FITS file path"),
-                );
-                if ui
-                    .add_enabled(!self.loading, egui::Button::new("Open"))
-                    .clicked()
-                    || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                {
-                    self.request(ctx, None);
-                }
-                if ui.button("Header").clicked() {
-                    self.header_open = !self.header_open;
-                }
-                #[cfg(windows)]
-                if ui.add_enabled(!self.loading && self.image.is_some(), egui::Button::new("Close image")).clicked() {
-                    self.image = None;
-                    self.texture = None;
-                    self.path.clear();
-                    self.stats = Statistics::default();
-                    self.cursor.clear();
-                    self.error.clear();
-                }
-                if self.loading {
-                    ui.spinner();
-                }
-            });
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.label("HDU");
-                let mut chosen = None;
-                if let Some(image) = &self.image {
-                    egui::ComboBox::from_id_salt("hdu")
-                        .selected_text(format!(
-                            "{} · {}",
-                            image.info.hdu, image.info.hdus[image.info.hdu].name
-                        ))
-                        .width(145.0)
-                        .show_ui(ui, |ui| {
-                            for hdu in &image.info.hdus {
-                                if ui
-                                    .add_enabled(
-                                        hdu.viewable,
-                                        egui::Button::new(format!("{} · {}", hdu.index, hdu.name)),
-                                    )
-                                    .clicked()
-                                {
-                                    chosen = Some(hdu.index);
-                                }
-                            }
-                        });
-                }
-                if let Some(hdu) = chosen {
-                    self.request(ctx, Some(hdu));
-                }
-                ui.separator();
-                ui.label("Limits");
-                let old = self.limits;
-                egui::ComboBox::from_id_salt("limits")
-                    .selected_text(self.limits.name())
-                    .width(92.0)
-                    .show_ui(ui, |ui| {
-                        for v in Limits::ALL {
-                            ui.selectable_value(&mut self.limits, v, v.name());
-                        }
-                    });
-                if old != self.limits {
-                    (self.low, self.high) = self.stats.bounds(self.limits);
-                    self.dirty = true;
-                }
-                ui.label("Stretch");
-                let old = self.stretch;
-                egui::ComboBox::from_id_salt("stretch")
-                    .selected_text(self.stretch.name())
-                    .width(82.0)
-                    .show_ui(ui, |ui| {
-                        for v in Stretch::ALL {
-                            ui.selectable_value(&mut self.stretch, v, v.name());
-                        }
-                    });
-                if old != self.stretch {
-                    self.dirty = true;
-                }
-                let speed = (self.high - self.low).abs().max(0.001) / 300.0;
-                ui.label("Low");
-                let a = ui
-                    .add(
-                        egui::DragValue::new(&mut self.low)
-                            .speed(speed)
-                            .max_decimals(5),
-                    )
-                    .changed();
-                ui.label("High");
-                let b = ui
-                    .add(
-                        egui::DragValue::new(&mut self.high)
-                            .speed(speed)
-                            .max_decimals(5),
-                    )
-                    .changed();
-                if a || b {
-                    self.limits = Limits::Manual;
-                    self.dirty = true;
-                }
-                if ui.checkbox(&mut self.invert, "Invert").changed() {
-                    self.dirty = true;
-                }
-            });
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("−").clicked() {
-                    self.zoom /= 1.25;
-                    self.pan /= 1.25;
-                    self.auto_fit = false;
-                }
-                if ui.button("+").clicked() {
-                    self.zoom *= 1.25;
-                    self.pan *= 1.25;
-                    self.auto_fit = false;
-                }
-                if ui.button("Fit").clicked() {
-                    self.auto_fit = true;
-                    self.pan = Vec2::ZERO;
-                }
-                if ui.button("1:1").clicked() {
-                    self.zoom = 1.0 / ctx.pixels_per_point();
-                    self.pan = Vec2::ZERO;
-                    self.auto_fit = false;
-                }
-                ui.label(format!(
-                    "{:.0}%",
-                    self.zoom * ctx.pixels_per_point() * 100.0
-                ));
-                ui.separator();
-                ui.label("Bias");
-                let bias_changed = ui
-                    .add(egui::DragValue::new(&mut self.tone.bias).speed(0.005).range(0.0..=1.0).fixed_decimals(3))
-                    .on_hover_text("Brightness offset. Right-drag horizontally: right brighter, left darker.")
-                    .changed();
-                ui.label("Contrast");
-                let contrast_changed = ui
-                    .add(egui::DragValue::new(&mut self.tone.contrast).speed(0.01).range(0.05..=20.0).fixed_decimals(3))
-                    .on_hover_text("Right-drag vertically: up increases contrast, down decreases it.")
-                    .changed();
-                if bias_changed || contrast_changed {
-                    self.dirty = true;
-                }
-                if ui.button("Reset B/C").on_hover_text("Reset brightness and contrast (R)").clicked() {
-                    self.tone = DisplayTone::default();
-                    self.dirty = true;
-                }
-                ui.separator();
-                ui.weak("Wheel: zoom · Left drag: pan · Right drag: B/C · R: reset · 1–4: stretch · Z: zscale · F: fit");
-            });
-            ui.add_space(4.0);
-        });
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
+        let ribbon_multi_action=self.ribbon(ctx);
+        self.prepare_popup_windows();
+        if !cfg!(feature="pro") || self.tools.prefs.mode!="PRO" || self.image.is_none(){self.tools.settings(ctx,self.stats.max,&mut self.popup_windows);}
+        if i18n::set(&self.tools.prefs.language){
+            #[cfg(target_arch="wasm32")] let _=text_io::browser("setLanguage",&[&self.tools.prefs.language]);
+            ctx.request_repaint();
+        }
+        if !cfg!(feature="pro") || self.tools.prefs.mode!="PRO" || self.image.is_none(){self.tools.histogram(ctx,self.image.as_deref(),self.low,self.high,&mut self.popup_windows);}
+        let spectrum=self.image.as_ref().is_some_and(|image|image.spectrum.is_some());
+        let is_pro=cfg!(feature="pro") && self.tools.prefs.mode=="PRO";
+        #[cfg(feature="pro")]
+        {
+        self.sync_pro(ctx);
+        let multi_action=if spectrum{ribbon_multi_action}else{self.multi.as_mut().and_then(|multi|multi.toolbar(ctx)).or(ribbon_multi_action)};
+        if let Some(action)=multi_action {
+            self.cache_current();
+            match action {
+                multiview::Action::Select(index)=>{let _=self.command(ctx,serde_json::json!({"operation":"workspace.select","params":{"index":index}}));},
+                multiview::Action::Export(panels)=>{#[cfg(feature="pro")]
+if let Some(pro)=&mut self.pro{pro.send(ctx,&self.science,self.generation,"export",serde_json::json!({"panels":panels,"width":1800,"height":1200}));}},
+                multiview::Action::CopySession=>{if let Some(multi)=&self.multi{let mut session=multi.configuration();session["mode"]=serde_json::json!("PRO");ctx.copy_text(serde_json::to_string_pretty(&session).unwrap_or_default());}},
+                multiview::Action::Close(index)=>{let _=self.command(ctx,serde_json::json!({"operation":"workspace.close","params":{"index":index}}));},
+            }
+        }
+        }
+        self.sync_coordinates(ctx);
+        let available=self.api.is_some() || self.science.local.is_some();
+        if !spectrum{if is_pro && self.image.is_some(){self.coordinates.tick(ctx,&self.science,self.generation);}else{self.coordinates.panel(ctx,&self.science,self.generation,self.image.as_deref(),self.wcs_result.as_ref(),self.cursor_pixel,available,&mut self.popup_windows);}}
+        self.sync_coordinates(ctx);
+        let view=self.view_configuration();
+        #[cfg(feature="pro")] self.pro_workspace(ctx,&view,available);
+        #[cfg(feature="pro")] if let Some(pro)=&mut self.pro {
+            for aperture in std::mem::take(&mut pro.new_apertures){self.regions.add_aperture(aperture);}
+            if let (Some(pixel),Some(image))=(pro.focus_pixel.take(),self.image.as_ref()){self.auto_fit=false;self.pan=Vec2::new(((image.info.width as f64-1.)/2.-pixel[0]) as f32*self.zoom,(pixel[1]-(image.info.height as f64-1.)/2.) as f32*self.zoom);}
+            #[cfg(not(target_arch="wasm32"))]
+            if let Some(path)=pro.open_artifact.take(){let mut command=std::process::Command::new(if cfg!(windows){"explorer.exe"}else if cfg!(target_os="macos"){"open"}else{"xdg-open"});command.arg(path);let _=command.spawn();}
+            if let Some(path)=pro.open_path.take(){self.path=path;self.request(ctx,None);}
+        }
+        #[cfg(feature="pro")]
+        if let Some(index)=self.multi.as_mut().and_then(|multi|multi.pending_selection.take()){
+            if let Err(error)=self.command(ctx,serde_json::json!({"operation":"workspace.select","params":{"index":index}})){if let Some(multi)=&mut self.multi{multi.message=error;}}
+        }
+        if !spectrum && !is_pro{self.regions.panel(ctx,self.image.as_deref(),false,&mut self.popup_windows);}
+        #[cfg(feature="pro")]
+        if let Some(params)=self.regions.profile_request.take(){#[cfg(feature="pro")]
+if let Some(pro)=&mut self.pro{if !pro.busy{pro.select("line_profile");pro.parameters=params.to_string();pro.submit(ctx,&self.science,self.generation,self.image.as_deref(),&view);}else{self.regions.message="Wait for the running PRO task".into();}}}
+        if self.regions.need_batch_measure && !self.regions.measurement_pending{
+            self.regions.need_batch_measure=false;
+            if let Some(image)=&self.image{let params=self.regions.measurement_params(image,is_pro);if params.is_object(){self.regions.measurement_pending=true;self.science.request(ctx,self.generation,"measure",params);self.regions.message="Measuring…".into();}else{self.regions.message="Choose an aperture, uncertainty HDU and uncertainty type".into();}}
+        }
+        if !self.regions.measurement_pending{if let Some(radii)=self.regions.need_growth.take(){if let Some(image)=&self.image{let mut params=self.regions.measurement_params(image,false);if params.is_object(){params["growth_radii"]=serde_json::json!(radii);self.regions.measurement_pending=true;self.science.request_labeled(ctx,self.generation,"measure","measure.growth",params);self.regions.message="Measuring…".into();}else{self.regions.message="Choose an aperture, uncertainty HDU and uncertainty type".into();}}}}
+        #[cfg(feature="pro")]
+        if self.regions.need_sky_paste {
+            self.regions.need_sky_paste=false;
+            if let Some(image)=&self.image {match serde_json::from_str::<serde_json::Value>(&self.regions.template){Ok(template)=>self.science.request(ctx,self.generation,"region_transform",serde_json::json!({"path":image.info.path,"hdu":image.info.hdu,"template":template,"wcs_override":self.wcs_override})),Err(error)=>self.regions.message=error.to_string(),}}
+        }
+        if let Some(image)=&self.image{self.regions.measure_selected(image);}
+        if previous_render!=self.tools.prefs.render {self.dirty=true;}
+        let status=egui::TopBottomPanel::bottom("status").exact_height(40.).resizable(false).show(ctx, |ui| {
                 if !self.error.is_empty() {
-                    ui.colored_label(Color32::from_rgb(255, 150, 130), &self.error);
+                    ui.add(egui::Label::new(egui::RichText::new(&self.error).color(Color32::from_rgb(255,150,130))).truncate()).on_hover_text(&self.error);
                 } else if let Some(image) = &self.image {
-                    ui.label(format!(
-                        "{} × {}  ·  BITPIX {}  ·  {} valid pixels",
-                        image.info.width, image.info.height, image.info.bitpix, self.stats.finite
-                    ));
-                    ui.separator();
-                    ui.label(&self.cursor);
+                    let dimensions=if image.spectrum.is_some(){format!("{} · {} {}",crate::i18n::t("Spectrum"),image.info.width,crate::i18n::t("samples"))}else{format!("{} × {} · BITPIX {}",image.info.width,image.info.height,image.info.bitpix)};
+                    let details=format!("{dimensions} · {} {} · HDU {}",self.stats.finite,crate::i18n::t("valid values"),image.info.hdu);
+                    ui.add(egui::Label::new(&details).truncate()).on_hover_text(&details);
                 } else {
-                    ui.weak("Choose a FITS image to begin.");
+                    ui.add(egui::Label::new(crate::i18n::t("Choose a FITS image or spectrum.")).truncate());
                 }
-            });
+                // Always reserve exactly two rows; long readouts never wrap the image viewport.
+                // 始终固定两行，过长的读数截断并保留悬停详情，不挤动图像区域。
+                let readout=if self.cursor.is_empty(){" ".into()}else if self.wcs_text.is_empty(){self.cursor.clone()}else if !self.wcs_disabled && self.cursor_pixel!=self.wcs_pixel{format!("{} · J2000 …",self.cursor)}else{format!("{} · {}",self.cursor,self.wcs_text)};
+                ui.add(egui::Label::new(&readout).truncate()).on_hover_text(&readout);
         });
-        if self.header_open {
-            egui::Window::new("FITS header")
-                .open(&mut self.header_open)
-                .default_size([680.0, 500.0])
-                .show(ctx, |ui| {
-                    if let Some(image) = &self.image {
-                        egui::ScrollArea::both().show(ui, |ui| {
-                            ui.monospace(&image.info.header);
-                        });
-                    }
-                });
+        self.status_height=status.response.rect.height();
+        if self.header_open && (!is_pro || self.image.is_none()) {
+            let mut open=self.header_open;
+            let mut windows=std::mem::take(&mut self.popup_windows);
+            windows.show(ctx,window_layout::Key::Header,crate::i18n::t("FITS header"),&mut open,egui::vec2(680.,500.),|ui|self.header_ui(ui,ctx));
+            self.popup_windows=windows;
+            self.header_open=open;
         }
         if self.dirty && self.low.is_finite() && self.high.is_finite() && self.low < self.high {
             if let Some(image) = &self.image {
-                let rgba = fitsviewer_core::render_rgba_with_tone(
+                if self.scale_mapping.as_ref().is_none_or(|m|!m.matches(self.low,self.high,self.stretch,self.tools.prefs.render.stretch_exponent)){
+                    self.scale_mapping=Some(fitsviewer_core::display::ScaleMapping::new(Some(image),self.low,self.high,self.stretch,self.tools.prefs.render.stretch_exponent));
+                    if self.stretch==Stretch::HistogramEqualization{self.stretch_histogram_builds+=1;}
+                }
+                let rgba = fitsviewer_core::display::render_with_mapping(
                     image,
-                    self.low,
-                    self.high,
-                    self.stretch,
                     self.invert,
                     self.tone,
+                    &self.tools.prefs.render,
+                    self.scale_mapping.as_ref().unwrap(),
                 );
                 let color = egui::ColorImage::from_rgba_unmultiplied(
                     [image.info.width, image.info.height],
@@ -501,12 +1008,32 @@ impl eframe::App for FitsApp {
             }
             self.dirty = false;
         }
+        self.cursor_pixel=None;
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(Color32::from_rgb(13, 17, 23)))
+            .frame(egui::Frame::NONE.fill(Color32::from_rgb(13, 17, 23)).inner_margin(egui::Margin{right:if is_pro && !self.tools.prefs.pro_collapsed(spectrum){6}else{0},..Default::default()}))
             .show(ctx, |ui| {
+                if let Some(image)=&self.image {
+                    if image.spectrum.is_some() {
+                        let rect=ui.available_rect_before_wrap();
+                        self.view_rect=[rect.min.x,rect.min.y,rect.max.x,rect.max.y];
+                        #[cfg(feature="pro")]
+                        {
+                        let layers=if self.pro.is_some(){self.multi.as_ref().map(|multi|multi.spectrum_layers(image)).unwrap_or_default()}else{vec![]};
+                        let source_style=self.multi.as_ref().filter(|_|self.pro.is_some()).map(|multi|multi.source_layer_style(image)).unwrap_or((true,1.));
+                        let source_order=self.multi.as_ref().filter(|_|self.pro.is_some()).map(|multi|multi.source_layer_order(image)).unwrap_or(0);
+                        let (lines,analysis)=self.pro.as_mut().map(|pro|(pro.spectral_lines.as_deref(),pro.spectral_analysis.as_deref_mut())).unwrap_or((None,None));
+                        self.cursor=self.plot.show(ui,image,lines,analysis,&layers,source_style,source_order);
+                        }
+                        #[cfg(not(feature="pro"))]
+                        {self.cursor=self.plot.show(ui,image);}
+                        return;
+                    }
+                }
                 let (response, painter) =
                     ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
-                let area = response.rect;
+                let unit=self.image.as_ref().and_then(|image|image.info.header.lines().find(|line|line.starts_with("BUNIT   ="))).and_then(|line|line.split('\'').nth(1)).unwrap_or("").trim();
+                let area = self.tools.image_area(&painter,response.rect,self.low,self.high,self.stretch,self.invert,self.tone,unit,self.scale_mapping.as_ref());
+                self.view_rect=[area.min.x,area.min.y,area.max.x,area.max.y];
                 let center = area.center();
                 if let Some(image) = &self.image {
                     let dimensions = Vec2::new(image.info.width as f32, image.info.height as f32);
@@ -515,7 +1042,8 @@ impl eframe::App for FitsApp {
                             .min((area.height() - 24.0) / dimensions.y)
                             .max(0.005);
                     }
-                    if response.dragged_by(egui::PointerButton::Primary) {
+                    let aperture_rect=Rect::from_center_size(center+self.pan,dimensions*self.zoom);
+                    if response.dragged_by(egui::PointerButton::Middle) || (response.dragged_by(egui::PointerButton::Primary) && !self.regions.editing() && !self.regions.claims_primary_drag(ctx,aperture_rect,self.zoom)) {
                         self.pan += response.drag_delta();
                         self.auto_fit = false;
                     }
@@ -546,12 +1074,20 @@ impl eframe::App for FitsApp {
                     if let Some(texture) = &self.texture {
                         let size = dimensions * self.zoom;
                         let rect = Rect::from_center_size(center + self.pan, size);
-                        painter.image(
-                            texture.id(),
-                            rect,
-                            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                            Color32::WHITE,
-                        );
+                        #[cfg(feature="pro")]
+                        {
+                        if let (Some(pro),Some(multi),Some(mapping))=(&mut self.pro,&self.multi,&self.scale_mapping){
+                            let layers=multi.image_layers(image);let source_style=multi.source_layer_style(image);let source_order=multi.source_layer_order(image);
+                            let transfer=image_layers::Transfer{mapping,invert:self.invert,tone:self.tone,options:&self.tools.prefs.render,
+                                key:format!("{}:{}:{:p}:{}:{}:{}:{}:{}:{}:{}",image.info.path,image.info.hdu,Arc::as_ptr(image),self.low,self.high,self.stretch.name(),self.invert,self.tone.bias,self.tone.contrast,serde_json::to_string(&self.tools.prefs.render).unwrap_or_default())};
+                            pro.image_layers.get_or_insert_with(||Box::new(image_layers::Renderer::default())).paint(ctx,&painter.with_clip_rect(area),texture.id(),rect,self.zoom,source_style,source_order,&layers,transfer);
+                        }else{painter.image(texture.id(),rect,Rect::from_min_max(Pos2::ZERO,Pos2::new(1.,1.)),Color32::WHITE);}
+                        }
+                        #[cfg(not(feature="pro"))]
+                        {painter.image(texture.id(),rect,Rect::from_min_max(Pos2::ZERO,Pos2::new(1.,1.)),Color32::WHITE);}
+                        self.regions.canvas(ctx,&response,&painter,rect,self.zoom,image,self.tools.prefs.mode=="PRO");
+                        #[cfg(feature="pro")]
+if let Some(pro)=&mut self.pro{pro.overlay(&painter,rect,self.zoom,self.wcs_result.as_ref(),response.hover_pos());}
                         if let Some(pos) = response.hover_pos() {
                             let xy = (pos - rect.min) / self.zoom;
                             let x = xy.x.floor() as isize;
@@ -563,6 +1099,7 @@ impl eframe::App for FitsApp {
                             {
                                 let y = image.info.height - 1 - screen_y as usize;
                                 let i = y * image.info.width + x as usize;
+                                self.cursor_pixel=Some([x as f64,y as f64]);
                                 self.cursor = format!(
                                     "x={}  y={}  ·  value={}  ·  raw={}",
                                     x + 1,
@@ -583,20 +1120,43 @@ impl eframe::App for FitsApp {
                         center,
                         egui::Align2::CENTER_CENTER,
                         if self.loading {
-                            "Loading FITS…"
+                            crate::i18n::t("Loading FITS…")
                         } else {
-                            "Open a FITS image"
+                            crate::i18n::t("Open a FITS image")
                         },
                         egui::FontId::proportional(23.0),
                         Color32::from_gray(155),
                     );
                 }
             });
+        // Capture after every popup (including Header), without restoring scientific
+        // state. A settings import from this frame must win over old observations.
+        // 所有弹窗（包括文件头）绘制后采样；当前帧导入优先，不恢复科学任务。
+        self.remember_popup_windows();
+        if previous_preferences!=serde_json::to_string(&self.tools.prefs).unwrap_or_default(){
+            if let Err(error)=controls::save(&self.tools.prefs){self.tools.message=error;}
+        }
+        self.request_wcs(ctx);
+        self.scientific_heartbeat(ctx);
+
         #[cfg(target_arch = "wasm32")]
-        self.export_state();
-        #[cfg(windows)]
+        self.export_state(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
         self.native_diagnostics(ctx);
     }
+}
+
+#[cfg(all(target_arch="wasm32",feature="offline"))]
+thread_local!{
+    static WEB_OFFLINE_SOURCE:std::cell::RefCell<Option<(String,Vec<u8>)>>=const{std::cell::RefCell::new(None)};
+    static WEB_OFFLINE_IMAGE:std::cell::RefCell<Option<FitsImage>>=const{std::cell::RefCell::new(None)};
+}
+#[cfg(all(target_arch="wasm32",feature="offline"))]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn open_file(name:String,bytes:Vec<u8>)->Result<(),wasm_bindgen::JsValue>{
+    let image=fitsviewer_core::load_bytes_with_options(&bytes,&name,LoadOptions::default()).map_err(|e|wasm_bindgen::JsValue::from_str(&e))?;
+    WEB_OFFLINE_SOURCE.with(|slot|*slot.borrow_mut()=Some((name,bytes)));WEB_OFFLINE_IMAGE.with(|slot|*slot.borrow_mut()=Some(image));
+    WEB_CONTEXT.with(|slot|{if let Some(ctx)=slot.borrow().as_ref(){ctx.request_repaint();}});Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -604,16 +1164,58 @@ thread_local! {
     // Own the renderer so a closing document can release it explicitly.
     // 保留渲染器所有权，关闭文件页时主动释放图像、纹理和事件回调。
     static WEB_RUNNER: std::cell::RefCell<Option<eframe::WebRunner>> = const { std::cell::RefCell::new(None) };
+    static WEB_COMMANDS: std::cell::RefCell<Vec<serde_json::Value>> = const {std::cell::RefCell::new(Vec::new())};
+    static WEB_CONTEXT:std::cell::RefCell<Option<egui::Context>>=const{std::cell::RefCell::new(None)};
+}
+
+#[cfg(target_arch="wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn command(text:String)->Result<(),wasm_bindgen::JsValue>{
+    if text.len()>1024*1024{return Err("Command exceeds 1 MiB".into());}
+    let value:serde_json::Value=serde_json::from_str(&text).map_err(|e|wasm_bindgen::JsValue::from_str(&e.to_string()))?;
+    WEB_COMMANDS.with(|slot|{let mut q=slot.borrow_mut();if q.len()<32{q.push(value);}});
+    WEB_CONTEXT.with(|slot|{if let Some(ctx)=slot.borrow().as_ref(){ctx.request_repaint();}});Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn stop() {
+    #[cfg(feature="offline")]
+    {WEB_OFFLINE_SOURCE.with(|slot|*slot.borrow_mut()=None);WEB_OFFLINE_IMAGE.with(|slot|*slot.borrow_mut()=None);}
+    WEB_COMMANDS.with(|slot|slot.borrow_mut().clear());WEB_CONTEXT.with(|slot|*slot.borrow_mut()=None);
     WEB_RUNNER.with(|slot| {
         if let Some(runner) = slot.borrow_mut().take() {
             runner.destroy();
         }
     });
+}
+
+// Resolve explicit embedding/session mode before the first frame can acquire PRO.
+// 在第一帧之前解析嵌入页面或会话模式，避免短暂创建不需要的 PRO 工作区。
+#[cfg(any(target_arch = "wasm32", test))]
+fn resolve_startup_mode(explicit:Option<&str>,query:&str)->Result<Option<String>,String>{
+    let mode=if let Some(mode)=explicit {Some(mode.to_owned())}else{
+        query.trim_start_matches('?').split('&').find_map(|part|{
+            let (key,value)=part.split_once('=').unwrap_or((part,""));
+            (key=="mode").then_some(value)
+        }).map(|value|urlencoding::decode(value).map(|mode|mode.into_owned()).map_err(|_|"Unknown UI mode".to_owned())).transpose()?
+    };
+    if mode.as_deref().is_some_and(|mode|!["Minimal","PRO"].contains(&mode)){return Err("Unknown UI mode".into());}
+    #[cfg(not(feature="pro"))] if mode.as_deref()==Some("PRO"){return Err("PRO is not included in this Mini build".into());}
+    Ok(mode)
+}
+
+#[cfg(test)]
+mod startup_mode_tests{
+    use super::resolve_startup_mode;
+    #[test]fn explicit_mode_is_available_before_first_frame(){
+        assert_eq!(resolve_startup_mode(Some("Minimal"),"?mode=PRO").unwrap().as_deref(),Some("Minimal"));
+        assert_eq!(resolve_startup_mode(None,"?path=x&mode=Min%69mal").unwrap().as_deref(),Some("Minimal"));
+        #[cfg(feature="pro")] assert_eq!(resolve_startup_mode(None,"?mode=PRO").unwrap().as_deref(),Some("PRO"));
+        assert_eq!(resolve_startup_mode(None,"?path=x").unwrap(),None);
+        assert!(resolve_startup_mode(Some("invalid"),"").is_err());
+        assert!(resolve_startup_mode(None,"?mode=invalid").is_err());
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -624,19 +1226,50 @@ pub async fn start(
     path: String,
     token: String,
     hdu: Option<usize>,
+    cjk_font: Vec<u8>,
+    initial_mode: Option<String>,
 ) -> Result<(), wasm_bindgen::JsValue> {
     stop();
+    let query=web_sys::window().and_then(|window|window.location().search().ok()).unwrap_or_default();
+    let initial_mode=resolve_startup_mode(initial_mode.as_deref(),&query).map_err(|error|wasm_bindgen::JsValue::from_str(&error))?;
     let runner = eframe::WebRunner::new();
     runner
         .start(
             canvas,
             eframe::WebOptions::default(),
             Box::new(move |cc| {
+                WEB_CONTEXT.with(|slot|*slot.borrow_mut()=Some(cc.egui_ctx.clone()));
                 cc.egui_ctx.set_visuals(egui::Visuals::dark());
-                Ok(Box::new(FitsApp::new(path, Some(api), token, hdu)))
+                install_cjk_font(&cc.egui_ctx, cjk_font);
+                let mut app=FitsApp::new(path, (!api.is_empty()).then_some(api), token, hdu);
+                if let Some(mode)=initial_mode {app.tools.prefs.mode=mode;}
+                Ok(Box::new(app))
             }),
         )
         .await?;
     WEB_RUNNER.with(|slot| *slot.borrow_mut() = Some(runner));
     Ok(())
 }
+
+#[cfg(not(feature="pro"))]
+fn mini_aperture(value:&serde_json::Value)->Result<(),String>{
+    if value["shape"]["kind"]!="circle" || value["background"].as_object().is_some_and(|_|value["background"]["kind"]!="ring") || value["exclude"].as_array().is_some_and(|v|!v.is_empty()) {return Err("Mini supports circular apertures with an optional sky ring".into());}Ok(())
+}
+#[cfg(all(test,not(feature="pro")))]
+mod mini_build_tests{
+ use super::*;
+ #[test]fn pro_cannot_enter_by_url_preferences_or_session(){
+  assert!(resolve_startup_mode(Some("PRO"),"").is_err());
+  assert!(resolve_startup_mode(None,"?mode=PRO").is_err());
+  assert!(controls::Preferences::parse(r#"{"mode":"PRO"}"#).is_err());
+  assert!(controls::Preferences::parse(r#"{"default_mode":"PRO"}"#).is_err());
+  let app=FitsApp::new(String::new(),None,String::new(),None);
+  assert!(app.with_session(serde_json::json!({"views":[{"path":"a","view":{}}],"mode":"PRO"})).is_err());
+ }
+ #[test]fn pro_commands_are_not_compiled(){
+  let mut app=FitsApp::new(String::new(),None,String::new(),None);let ctx=egui::Context::default();
+  for operation in ["pro.run","workspace.add","spectral.lines","spectral.analysis","layer.configure","image.match_flux","annotation.set","aperture.template_load"]{assert!(app.command(&ctx,serde_json::json!({"operation":operation,"params":{}})).is_err(),"{operation}");}
+ }
+}
+
+

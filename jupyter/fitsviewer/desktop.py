@@ -37,6 +37,9 @@ def _default(mime):
 
 def details():
     if os.name=='nt': return _windows('status')
+    if sys.platform=='darwin':
+        from . import desktop_macos
+        return desktop_macos.details()
     paths = _paths()
     return {"registered": paths["desktop"].is_file(), "desktop_file": str(paths["desktop"]),
             "defaults": {mime: _default(mime) for mime in MIMES},
@@ -56,6 +59,9 @@ def disable_default():
     恢复安装前默认值，保留已注册的“打开方式”入口。
     """
     if os.name=='nt': return _windows('no')
+    if sys.platform=='darwin':
+        from . import desktop_macos
+        return desktop_macos.disable_default()
     paths = _paths()
     previous = json.loads(paths["state"].read_text()).get("previous", {}) if paths["state"].exists() else {}
     for mime, value in previous.items():
@@ -78,9 +84,15 @@ def disable_default():
 
 
 def install(default=True):
+    from .build_info import require_module
+    require_module("desktop")
     if os.name=='nt': return _windows('yes' if default else 'register')
+    if sys.platform=='darwin':
+        from . import desktop_macos
+        return desktop_macos.install(default)
     from .runtime import resources
-    resources()
+    _, _, web = resources()
+    icon = (web / "icons/fitsviewer.svg").read_bytes()
     paths = _paths()
     missing = [name for name in ["xdg-mime", "update-mime-database"] if not shutil.which(name)]
     if missing: raise ValueError("Desktop integration needs xdg-utils and shared-mime-info (missing " + ", ".join(missing) + ")")
@@ -103,17 +115,15 @@ def install(default=True):
     for character in ["\\", '"', "`", "$"]: executable = executable.replace(character, "\\" + character)
     executable = executable.replace("\\", "\\\\")
     paths["desktop"].write_text("[Desktop Entry]\nType=Application\nName=FitsViewer\nName[zh_CN]=FitsViewer 图像查看器\n"
-        "Comment=View FITS images with the native Rust interface\nTerminal=false\nIcon=fitsviewer\n"
+        "Comment=View FITS images with the native Rust interface\nTerminal=false\nIcon=fitsviewer\nStartupWMClass=fitsviewer\n"
         'Exec="' + executable + '" --native %f\nCategories=Science;Astronomy;\nMimeType=' + ";".join(MIMES) + ";\nX-FitsViewer-Managed=true\n")
-    globs = "".join('<glob pattern="' + pattern + '"/>' for pattern in ["*.fits", "*.fit", "*.fts"])
+    globs = "".join('<glob pattern="' + pattern + '"/>' for pattern in ["*.fits", "*.fit", "*.fts", "*.fz", "*.fits.fz", "*.fit.fz", "*.fts.fz"])
     gzip = "".join('<glob pattern="' + pattern + '"/>' for pattern in ["*.fits.gz", "*.fit.gz", "*.fts.gz"])
     paths["mime"].write_text('<?xml version="1.0" encoding="UTF-8"?>\n'
         '<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">'
         '<mime-type type="image/fits"><comment>FITS image</comment>' + globs + '</mime-type>'
         '<mime-type type="application/x-fits-gzip"><comment>Gzip-compressed FITS image</comment>' + gzip + '</mime-type></mime-info>\n')
-    paths["icon"].write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
-        '<rect width="64" height="64" rx="12" fill="#152438"/><path d="M32 8l5 19 19 5-19 5-5 19-5-19-19-5 19-5z" fill="#67d9e8"/>'
-        '<circle cx="15" cy="15" r="2" fill="white"/><circle cx="49" cy="48" r="3" fill="white"/></svg>\n')
+    paths["icon"].write_bytes(icon)
     _refresh(paths)
     if default:
         for mime in MIMES: subprocess.run(["xdg-mime", "default", IDENTIFIER, mime], check=True)
@@ -123,6 +133,9 @@ def install(default=True):
 
 def remove():
     if os.name=='nt': return _windows('remove')
+    if sys.platform=='darwin':
+        from . import desktop_macos
+        return desktop_macos.remove()
     paths = _paths()
     if paths["desktop"].exists() and "X-FitsViewer-Managed=true" not in paths["desktop"].read_text():
         raise ValueError("Refusing to remove an unmanaged desktop entry")

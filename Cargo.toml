@@ -1,9 +1,10 @@
 [workspace]
 members = ["crates/core", "crates/viewer", "crates/server"]
+exclude = ["vendor/fitsrs"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.4-rc.2"
+version = "0.1.5-rc.1"
 edition = "2021"
 license = "MIT"
 
@@ -12,3 +13,6 @@ opt-level = 2
 
 [profile.release.package.fitsviewer-web]
 opt-level = "s"
+
+[patch.crates-io]
+fitsrs = { path = "vendor/fitsrs" }

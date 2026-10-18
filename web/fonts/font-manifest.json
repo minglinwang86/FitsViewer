@@ -1,0 +1,16 @@
+{
+  "upstream": "Droid Sans Fallback",
+  "license": "Apache-2.0",
+  "source_url": "https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-4.4.4_r2/data/fonts/DroidSansFallback.ttf",
+  "source_tag": "android-4.4.4_r2",
+  "source_sha256": "05d71b179ef97b82cf1bb91cef290c600a510f77f39b4964359e3ef88378c79d",
+  "source_bytes": 3939852,
+  "asset_sha256": "8c67293982965c1d5cf754d47753bdb37e18274370444ef40a455173172b1c72",
+  "bytes": 677956,
+  "mapped_codepoints": 4304,
+  "common_han_characters": 3755,
+  "charset": "common",
+  "fonttools_version": "4.55.3",
+  "modifications": "Common-character subset; renamed FitsViewer CJK Common; hinting retained",
+  "coverage_note": "GB2312 level-one Chinese, punctuation and scientific symbols. Rare/traditional characters are not guaranteed; --charset full or --text-file extends coverage."
+}

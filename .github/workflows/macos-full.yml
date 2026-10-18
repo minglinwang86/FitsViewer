@@ -1,0 +1,65 @@
+name: Native macOS Full candidate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/macos-full-validation]
+
+permissions:
+  contents: read
+
+jobs:
+  native-full:
+    name: Full / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Fetch locked Full resources from this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/build_macos_full.py --fetch-assets "$RUNNER_TEMP/full-assets.whl"
+      - name: Prepare pinned native Rust toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Build native Full app and portable archive
+        run: python scripts/build_macos_full.py --wheel "$RUNNER_TEMP/full-assets.whl" --execute
+      - name: Install external validation packages
+        run: python -m pip install 'numpy>=2,<3' 'astropy>=6,<8'
+      - name: Validate packaged CLI, real FITS, server and worker shutdown
+        run: python scripts/verify_macos_full.py --package dist/macos --output reports/macos --probe-gui
+      - name: Upload validated candidate and evidence
+        uses: actions/upload-artifact@v5
+        with:
+          name: fitsviewer-full-macos-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            dist/macos/*.zip
+            dist/macos/*.sha256
+            dist/macos/package.json
+            reports/macos/
+      - name: Retain failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: fitsviewer-macos-failure-${{ matrix.arch }}
+          if-no-files-found: ignore
+          path: |
+            dist/macos/build.json
+            reports/macos/

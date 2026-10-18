@@ -10,6 +10,7 @@ import importlib.metadata
 import io
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import shlex
@@ -162,6 +163,25 @@ def _supported(info):
     return numbers[0] == "4" and int(numbers[1]) >= 4
 
 
+def _source_wheel(source):
+    """Find this release's Full wheel for the current host, excluding raw stages.
+
+    从模块化构建目录选当前版本、当前平台的 Full 包，不混用 raw 或其他平台。
+    """
+    project = (source / "jupyter/pyproject.toml").read_text(encoding="utf-8")
+    version = re.search(r'(?m)^version\s*=\s*"([^"]+)"', project).group(1)
+    architecture = {"AMD64": "x86_64", "arm64": "aarch64"}.get(platform.machine(), platform.machine())
+    def compatible(path):
+        if sys.platform == "win32":
+            return path.name.endswith("-win_amd64.whl") and architecture == "x86_64"
+        return ("-linux_" in path.name or "-manylinux_" in path.name) and path.name.endswith("_" + architecture + ".whl")
+    for folder in [source / "dist/full", source / "dist"]:
+        candidates = [p for p in folder.glob("fitsviewer-" + version + "-*.whl") if compatible(p)]
+        if candidates:
+            return max(candidates, key=lambda p: ("-manylinux_" in p.name, p.stat().st_mtime_ns))
+    raise FileNotFoundError("Build the Full wheel first, or specify --wheel")
+
+
 def _wheel(directory, explicit):
     if explicit:
         path = Path(explicit).expanduser().absolute()
@@ -169,9 +189,7 @@ def _wheel(directory, explicit):
         return path
     source = Path(__file__).resolve().parents[2]
     if (source / "Cargo.toml").is_file():
-        candidates = list((source / "dist").glob("fitsviewer-*.whl"))
-        if candidates: return max(candidates, key=lambda p: p.stat().st_mtime)
-        raise FileNotFoundError("Build a wheel first, or specify --wheel")
+        return _source_wheel(source)
     distribution = importlib.metadata.distribution("fitsviewer")
     package = Path(__file__).resolve().parent
     binary = "_vendor/bin/fitsviewer.exe" if os.name=='nt' else "_vendor/bin/fitsviewer"
@@ -214,6 +232,8 @@ def _wheel(directory, explicit):
 
 
 def install(arguments):
+    from .build_info import build_info, require_module
+    require_module("jupyter")
     parser = argparse.ArgumentParser(prog="fitsviewer install", description="Install FitsViewer into a selected JupyterLab Python environment")
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--python", help="Target Python executable; venv symlinks are preserved")
@@ -227,6 +247,7 @@ def install(arguments):
     parser.add_argument("--default-viewer", choices=["yes", "no"], help="Default FITS viewer in JupyterLab; preserve existing setting in noninteractive mode if omitted")
     parser.add_argument("--desktop-default", choices=["yes", "no"], help="Register native desktop as default, or restore previous desktop defaults")
     args = parser.parse_args(arguments)
+    if args.desktop_default == "yes": require_module("desktop")
     _interactive_target(args, parser)
     python = _target_python(args)
     info = _inspect(python)
@@ -241,12 +262,18 @@ def install(arguments):
         raise ValueError("Target needs JupyterLab 4.4+ (<5). Use --with-jupyter to install or upgrade it.")
     if sys.stdin.isatty():
         if args.default_viewer is None: args.default_viewer = _choice("Make FitsViewer the default FITS viewer in JupyterLab?", True)
-        if args.desktop_default is None: args.desktop_default = _choice("Make FitsViewer the default FITS viewer on this Linux desktop?", False)
+        if args.desktop_default is None and build_info()["desktop"]:
+            args.desktop_default = _choice("Make FitsViewer the default FITS viewer on this desktop?", False)
     with tempfile.TemporaryDirectory(prefix="fitsviewer-install-") as temporary:
         wheel = _wheel(Path(temporary), args.wheel)
         command = [str(python), "-m", "pip", "install", "--upgrade"]
         if args.no_deps: command.append("--no-deps")
-        subprocess.run([*command, str(wheel)], check=True, env=_target_environment(python))
+        # This command binds Jupyter, so include its optional integration dependencies.
+        # 此命令用于绑定 Jupyter；未授权升级时固定已有 Lab 版本，只补集成依赖。
+        requirements = [str(wheel) + "[jupyter]"]
+        if not args.with_jupyter and not args.no_deps:
+            requirements.append("jupyterlab==" + info["jupyterlab"])
+        subprocess.run([*command, *requirements], check=True, env=_target_environment(python))
     installed = _inspect(python)
     if args.default_viewer is not None:
         code = "from fitsviewer.settings import save_settings; save_settings({'default_viewer': " + str(args.default_viewer == "yes") + "})"

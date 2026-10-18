@@ -4,4 +4,11 @@ bin/* text eol=lf
 *.png binary
 *.ico binary
 *.fits binary
+*.FITS binary
+*.fit binary
+*.fts binary
+*.fz binary
+*.ttf binary
+*.icns binary
+*.jpg binary
 *.gz binary
