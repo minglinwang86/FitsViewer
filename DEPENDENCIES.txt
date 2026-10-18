@@ -125,3 +125,14 @@ This is an environment checklist, not a pip requirements file.
    - Astroquery: CDS XMatch. Astroalign: optional Gaia field pattern fallback.
    - Select with --python /path/to/env/bin/python or FITSVIEWER_PYTHON.
      Jupyter defaults to its server environment; a separate kernel is independent.
+
+9. macOS portable desktop / macOS 便携桌面
+   - Separate native arm64 (Apple Silicon) and x86_64 (Intel) ZIP files.
+   - Automated acceptance runs on macOS 15. The compile target is 11.0;
+     older macOS releases and complete GUI interaction are not certified.
+   - No Python needed for basic viewing. Scientific Python remains external.
+   - Ad-hoc signature; no Developer ID or Apple notarization. See docs/MACOS.md.
+   - No Mac Python wheel/Jupyter installer or Finder association in this release.
+   - Build: macOS, Xcode Command Line Tools, Python 3.11+, Rust 1.99.1;
+     reviewed Full web/Lab resources are SHA256-locked in config/macos-full-assets.json.
+   - Test-only NumPy/Astropy are not copied into the application.

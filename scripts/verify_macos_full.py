@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import plistlib
+import re
 import signal
 import subprocess
 import sys
@@ -19,7 +20,29 @@ import urllib.request
 
 from build_macos_full import ROOT, digest, lock
 
-REAL_FITS_URL = "https://data.astropy.org/tutorials/FITS-images/HorseHead.fits"
+REAL_FITS_URL = ("https://raw.githubusercontent.com/astropy/astropy-data/"
+                 "1b964d39b378390b24c58fb5633cef238d22a35a/tutorials/FITS-images/HorseHead.fits")
+REAL_FITS_SHA256 = "c4bcc0bccbadf1488e4e361c0d8f04255dc344ff401fd4827139b3354eafe863"
+REAL_FITS_BYTES = 1650240
+
+
+def redact_text(text, secrets):
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "<redacted>")
+    text = re.sub(r"(?i)([?&](?:token|access_token)=)[^&\s\"']+", r"\1<redacted>", text)
+    return re.sub(r"(?im)(\b(?:x-fitsviewer-token|authorization)\s*[:=]\s*)[^\r\n]+",
+                  r"\1<redacted>", text)
+
+
+def redact_value(value, secrets):
+    if isinstance(value, str):
+        return redact_text(value, secrets)
+    if isinstance(value, dict):
+        return {key: redact_value(item, secrets) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_value(item, secrets) for item in value]
+    return value
 
 
 def execute(arguments, environment, *, binary=False, input_text=None):
@@ -69,9 +92,10 @@ def main():
                               "Real image loading is not a scientific validation of every PRO tool",
                               "Prebuilt Lab assets are checked; no macOS Python wheel/Jupyter session test"]}
     report_path = output / "validation.json"
+    secrets = set()
 
     def save():
-        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        report_path.write_text(json.dumps(redact_value(report, secrets), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     save()
     try:
@@ -119,7 +143,8 @@ def main():
             real_file = work / "真实图像 空格.fits"
             with urllib.request.urlopen(REAL_FITS_URL, timeout=60) as response:
                 data = response.read(8 * 1024 * 1024 + 1)
-            assert len(data) < 8 * 1024 * 1024 and data.startswith(b"SIMPLE  =")
+            assert len(data) == REAL_FITS_BYTES and data.startswith(b"SIMPLE  =")
+            assert hashlib.sha256(data).hexdigest() == REAL_FITS_SHA256
             real_file.write_bytes(data)
             report["real_data"] = {"source": REAL_FITS_URL, "sha256": digest(real_file),
                                    "bytes": real_file.stat().st_size, "included_in_package": False}
@@ -162,6 +187,7 @@ def main():
                         raise RuntimeError("Packaged server did not become ready")
                     time.sleep(0.1)
                 runtime = json.loads(runtime_path.read_text())
+                secrets.add(runtime["token"])
                 assert runtime["pid"] == server.pid
                 base = "http://127.0.0.1:" + str(runtime["port"])
 
@@ -213,23 +239,29 @@ def main():
             if args.probe_gui:
                 with (output / "native-startup.log").open("wb") as log:
                     gui = subprocess.Popen([str(wrapper), str(real_file), "--python", sys.executable],
-                                           env=environment, stdout=log, stderr=subprocess.STDOUT)
+                                           env=environment, stdout=log, stderr=subprocess.STDOUT,
+                                           start_new_session=True)
                 try:
                     time.sleep(5)
                     report["gui"]["startup_probe"] = "alive after 5s" if gui.poll() is None else "exited"
                     report["gui"]["startup_returncode"] = gui.poll()
+                    if gui.poll() is not None:
+                        raise RuntimeError("Native GUI exited during startup probe: " + str(gui.returncode))
                     if gui.poll() is None:
                         captured = subprocess.run(["screencapture", "-x", str(output / "native-startup.png")],
                                                   capture_output=True, timeout=10)
                         report["gui"]["screenshot_captured"] = captured.returncode == 0
                 finally:
                     if gui.poll() is None:
-                        gui.terminate()
+                        os.killpg(gui.pid, signal.SIGTERM)
                         try:
                             gui.wait(timeout=5)
                         except subprocess.TimeoutExpired:
-                            gui.kill()
+                            os.killpg(gui.pid, signal.SIGKILL)
                             gui.wait()
+                    report["gui"]["owned_process_exited_after_cleanup"] = not process_alive(gui.pid)
+                    report["gui"]["cleanup_returncode"] = gui.returncode
+                    assert report["gui"]["owned_process_exited_after_cleanup"]
             report["passed"] = True
             save()
             print(json.dumps({"passed": True, "checks": list(report["checks"]), "interactive_gui_verified": False}))
@@ -237,6 +269,10 @@ def main():
         report["error"] = str(error)
         save()
         raise
+    finally:
+        for path in output.glob("*.log"):
+            text = path.read_text(encoding="utf-8", errors="replace")
+            path.write_text(redact_text(text, secrets), encoding="utf-8")
 
 
 if __name__ == "__main__":

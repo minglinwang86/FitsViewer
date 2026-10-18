@@ -13,6 +13,7 @@ The Full distribution includes Minimal and PRO interfaces, the native desktop, b
 | GNU/Linux x86_64, glibc 2.28+ | [Linux wheel](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/fitsviewer-0.1.5rc1-py3-none-manylinux_2_28_x86_64.whl) |
 | Windows x86_64 desktop | [Setup EXE](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/FitsViewer-0.1.5rc1-windows-x86_64-setup.exe) · [Portable ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/FitsViewer-0.1.5rc1-windows-x86_64-portable.zip) |
 | Windows Python/Jupyter | [Windows wheel](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/fitsviewer-0.1.5rc1-py3-none-win_amd64.whl) |
+| macOS Apple Silicon / Intel desktop | [arm64 ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/FitsViewer-0.1.5rc1-macos-arm64-portable.zip) · [x86_64 ZIP](https://github.com/minglinwang86/FitsViewer/releases/download/v0.1.5-rc.1/FitsViewer-0.1.5rc1-macos-x86_64-portable.zip) |
 
 The project is not on PyPI; use these wheel files, not an unrelated similarly named package. Select Python 3.10+ and JupyterLab 4.4–4.x. The environment installer rejects JupyterLab 5 rather than silently downgrading it. Direct pip commands use pip's resolver, so choose the intended environment first.
 
@@ -98,6 +99,17 @@ fitsviewer defaults set --jupyter yes --desktop no
 ```
 
 The app, launcher and viewer tabs have the FitsViewer icon. Associated data files keep generic icons.
+
+## macOS desktop / macOS 桌面
+
+Extract the ZIP for your processor and open `FitsViewer.app`. Basic viewing needs
+no Python; optional scientific tools use the selected external environment. The app
+uses an ad-hoc signature without Apple notarization, so read the
+[macOS first-launch and validation notes](MACOS.md) before opening it.
+
+按处理器选择 ZIP，解压后打开 `FitsViewer.app`。基础查看无需 Python；科学功能使用
+所选外部环境。应用采用临时签名，未做 Apple 公证，首次打开方式和测试边界见上方说明。
+此 ZIP 不绑定 Mac 本机 Jupyter；Mac 浏览器仍可通过 SSH 访问 Linux Jupyter。
 
 ## Git source installation / Git 源码安装
 

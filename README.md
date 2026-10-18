@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md) · [Download 0.1.5rc1](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.5-rc.1) · [Install](docs/INSTALL.md) · [Commands](docs/COMMANDS.md) · [Architecture](docs/ARCHITECTURE.md)
 
-A lightweight viewer for quickly opening and inspecting astronomical FITS images and spectra on remote servers, in local containers, and on Linux or Windows desktops. Double-click a file in JupyterLab, open it from a terminal, or embed it in a Notebook.
+A lightweight viewer for quickly opening and inspecting astronomical FITS images and spectra on remote servers, in local containers, and on Linux, Windows or macOS desktops. Double-click a file in JupyterLab, open it from a terminal, or embed it in a Notebook.
 
 > **Scientific use:** Coordinates, fluxes, magnitudes and other results identified, derived or measured by this tool are recommended for quick inspection and reference only. They should not be used directly as scientific measurements in a paper. Before publication, independently validate and calibrate them with an appropriate scientific workflow and assess their uncertainties and systematic errors.
 
@@ -114,6 +114,7 @@ Download the **Full** asset for your platform from [GitHub Releases](https://git
 | Windows Setup | Desktop installation; optional Python/Conda binding and default-viewer choice |
 | Windows portable ZIP | Extract and run; no automatic environment or association changes |
 | Windows wheel | Existing Windows Python/Conda environment and Jupyter |
+| macOS portable ZIP | Native Apple Silicon / Intel desktop; [installation and signing notes](docs/MACOS.md) |
 | Source archive / Git | Developer build; requires the build toolchain |
 
 For Linux Jupyter, activate the environment that **runs the Jupyter server**, then install the downloaded wheel with its integration extra:
@@ -134,7 +135,7 @@ fitsviewer install --conda-env astro --default-viewer yes --desktop-default no
 fitsviewer features --python /path/to/science-env/bin/python --json
 ```
 
-The environment installer preserves an already supported JupyterLab version unless `--with-jupyter` permits an upgrade. Scientific packages are installed separately in the selected environment. See [installation and SSH](docs/INSTALL.md), [Windows setup](docs/WINDOWS.md), [ports/defaults](docs/COMMANDS.md) and [scientific dependencies](docs/SCIENTIFIC_TOOLS.md).
+The environment installer preserves an already supported JupyterLab version unless `--with-jupyter` permits an upgrade. Scientific packages are installed separately in the selected environment. See [installation and SSH](docs/INSTALL.md), [Windows setup](docs/WINDOWS.md), [macOS desktop](docs/MACOS.md), [ports/defaults](docs/COMMANDS.md) and [scientific dependencies](docs/SCIENTIFIC_TOOLS.md).
 
 Notebook embedding:
 
@@ -151,11 +152,12 @@ Paths are relative to the Jupyter root. If server and kernel use different envir
 |---|---|
 | Linux release | x86_64, GNU/Linux with glibc 2.28+; native window additionally needs X11/XWayland and usable OpenGL |
 | Windows release | Windows 10/11 x86_64 with usable OpenGL; Python optional for standalone desktop |
+| macOS release | Apple Silicon / Intel portable apps; macOS 15 validation, ad-hoc signature, no Apple notarization or Mac Jupyter installer |
 | Python / Jupyter | Python 3.10+; JupyterLab `>=4.4,<5` and jupyter-server-proxy `>=4.4,<5` |
 | Browser | WebAssembly and WebGL; Windows/macOS browsers can connect to Linux over SSH |
 | Scientific tools | Packages in your selected environment; [dependency list](DEPENDENCIES.txt) |
 
-JupyterLab 5, ARM/musl packages, Safari and actual X2Go forwarding are outside current acceptance. A manylinux baseline is not certification of every distribution.
+JupyterLab 5, Linux/Windows ARM packages, Linux musl, Safari and actual X2Go forwarding are outside current acceptance. A manylinux baseline is not certification of every distribution. macOS startup probes do not constitute full interactive GUI acceptance; see the [validation scope](docs/releases/VALIDATION-0.1.5rc1.md).
 
 FITS images support BITPIX 8/16/32/64/−32/−64 with BSCALE/BZERO/BLANK. Tiled images support RICE/GZIP/GZIP2; HCOMPRESS, PLIO and compressed null-mask columns remain unsupported. Spectra cover 1D arrays, recognized scalar/fixed-vector binary tables and UTF-8 numeric text.
 

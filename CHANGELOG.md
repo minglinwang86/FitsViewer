@@ -18,6 +18,7 @@
 - Observed/rest/relativistic-velocity display axes, custom line references and an adjustable relative blackbody curve.
 - Shared visibility/order/opacity layer controls for native-grid spectra and image stacks. Field-star relative brightness matching calls the selected external NumPy/SciPy/Astropy environment; it does not infer an absolute photometric zeropoint.
 - No new runtime dependency stack; package growth is measured separately for code and the shared font.
+- Native macOS Apple Silicon and Intel portable apps, built on macOS with a shared Full resource lock; external Python selection and application icons, without Finder file associations or Apple notarization.
 - Platform acceptance and its limits are recorded in docs/releases/VALIDATION-0.1.5rc1.md.
 
 中文：新增按需初始化的极简/PRO、中英文界面、共同坐标/Gaia工具、光谱专用双行工具栏与可调侧栏；

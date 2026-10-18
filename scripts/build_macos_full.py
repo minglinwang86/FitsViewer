@@ -82,7 +82,11 @@ def extract_resources(wheel, destination):
     if adapters != python_files(select("full")):
         raise ValueError("Full scientific adapter inventory differs")
     for name in adapters:
-        if digest(destination / "web/python" / name) != digest(ROOT / "web/python" / name):
+        # Git checkout normalizes source line endings; Python reads both identically.
+        # Git 的 LF/CRLF 归一化不改变 Python 源码；其余所有字节仍须一致。
+        staged = (destination / "web/python" / name).read_bytes().replace(b"\r\n", b"\n")
+        current = (ROOT / "web/python" / name).read_bytes().replace(b"\r\n", b"\n")
+        if staged != current:
             raise ValueError("Shared scientific adapter is stale: " + name)
     if not (destination / "jupyter/labextension/package.json").is_file():
         raise ValueError("Prebuilt JupyterLab resources are missing")

@@ -86,3 +86,26 @@ optional fontTools. Neither fontTools nor Astropy is a runtime dependency.
 中文：使用专用测试 Python 环境和全新测试目录。脚本仅启动自己的服务；原生 Linux
 截图需 Xvfb/Pillow。测试令牌文件只供本地使用，不进入发行物。字体和 fitsrs 小补丁
 随源码提供，用户安装预编译包不需要上述验证工具。
+
+## Native macOS Full / macOS 原生全功能版
+
+On an Apple Silicon or Intel Mac with Xcode Command Line Tools, Python 3.11+ and
+Rust 1.99.1, download the exact Linux Full wheel named in
+`config/macos-full-assets.json`. It supplies only reviewed web/Lab resources;
+its Linux executable is never copied. The script verifies hashes and adapter
+sources before packaging a newly compiled native Mach-O application.
+
+```bash
+python scripts/build_macos_full.py --wheel /path/to/reviewed-full.whl --execute
+python -m pip install 'numpy>=2,<3' 'astropy>=6,<8'
+python scripts/verify_macos_full.py --package dist/macos --output reports/macos --probe-gui
+```
+
+The output directory must be new. The workflow `.github/workflows/macos-full.yml`
+runs the same build on `macos-15` and `macos-15-intel`. GUI startup evidence is
+separate from interactive acceptance. The ZIP is ad-hoc signed, not notarized;
+see [macOS installation](MACOS.md). This path does not create a Python wheel.
+
+在对应处理器的 macOS 上原生编译，锁定的 Linux wheel 只提供平台无关资源。
+上述 NumPy/Astropy 仅供测试，不进入应用。输出目录须全新；不会打包 Mac Python wheel，
+也不修改文件关联。打包器会验证 Full 模块、资源校验值和源码一致性。

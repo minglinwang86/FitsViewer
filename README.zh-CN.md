@@ -2,7 +2,7 @@
 
 [English](README.md) · [下载 0.1.5rc1](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.5-rc.1) · [安装](docs/INSTALL.md) · [基础命令](docs/COMMANDS.md) · [代码架构](docs/ARCHITECTURE.md)
 
-一款轻量、快速启动的天文 FITS 图像与光谱查看器，为科研中使用远程服务器、本地容器时的人工查看和检查提供便捷方案，也支持 Linux 图形化桌面和 Windows。可在 JupyterLab 文件列表中双击打开，通过命令行调用，或内嵌到 Notebook。
+一款轻量、快速启动的天文 FITS 图像与光谱查看器，为科研中使用远程服务器、本地容器时的人工查看和检查提供便捷方案，也支持 Linux、Windows 和 macOS 桌面。可在 JupyterLab 文件列表中双击打开，通过命令行调用，或内嵌到 Notebook。
 
 > **科学使用说明：** 本工具识别、推算或测量得到的坐标、流量、星等等结果，建议仅用于快速检查和参考，不应直接作为论文中的科学测量数据。用于科研发表前，请通过适当的专业科学流程独立验证、校准，并评估不确定度与系统误差。
 
@@ -114,6 +114,7 @@ Boxcar、Gaussian、Savitzky–Golay 平滑按有效段处理。可做有界 Gau
 | Windows Setup | 桌面安装，可选绑定 Python/Conda 和默认 FITS 查看器 |
 | Windows portable ZIP | 解压运行，不自动修改环境或文件关联 |
 | Windows wheel | 已有 Windows Python/Conda 与 Jupyter 环境 |
+| macOS portable ZIP | Apple Silicon／Intel 原生桌面，见[安装与签名说明](docs/MACOS.md) |
 | 源码包／Git | 开发者构建，需要构建工具链 |
 
 Linux 上先激活**运行 Jupyter 服务本身**的环境，再安装下载的 wheel 及其集成依赖：
@@ -134,7 +135,7 @@ fitsviewer install --conda-env astro --default-viewer yes --desktop-default no
 fitsviewer features --python /path/to/science-env/bin/python --json
 ```
 
-环境安装命令默认保留已兼容的 JupyterLab 版本，只有 `--with-jupyter` 才允许升级。科学依赖在所选环境另行安装。详见[安装与 SSH 转发](docs/INSTALL.md)、[Windows 安装](docs/WINDOWS.md)、[端口和默认关联](docs/COMMANDS.md)、[外部科学依赖](docs/SCIENTIFIC_TOOLS.md)。
+环境安装命令默认保留已兼容的 JupyterLab 版本，只有 `--with-jupyter` 才允许升级。科学依赖在所选环境另行安装。详见[安装与 SSH 转发](docs/INSTALL.md)、[Windows 安装](docs/WINDOWS.md)、[macOS 桌面](docs/MACOS.md)、[端口和默认关联](docs/COMMANDS.md)、[外部科学依赖](docs/SCIENTIFIC_TOOLS.md)。
 
 Notebook 内嵌：
 
@@ -151,11 +152,12 @@ show("data/image.fits", height=650)
 |---|---|
 | Linux 发行包 | x86_64、glibc 2.28+ 的 GNU/Linux；原生窗口另需 X11/XWayland 和可用 OpenGL |
 | Windows 发行包 | Windows 10/11 x86_64、可用 OpenGL；独立桌面不要求 Python |
+| macOS 发行包 | Apple Silicon／Intel portable；在 macOS 15 验证，临时签名、未经 Apple 公证，不含 Mac Jupyter 安装器 |
 | Python／Jupyter | Python 3.10+；JupyterLab `>=4.4,<5`、jupyter-server-proxy `>=4.4,<5` |
 | 浏览器 | 支持 WebAssembly、WebGL；Windows/macOS 浏览器可通过 SSH 访问 Linux |
 | 科学功能 | 使用所选环境的外部包，见[依赖列表](DEPENDENCIES.txt) |
 
-JupyterLab 5、ARM/musl 包、Safari 和真实 X2Go 转发不在本轮验收范围。manylinux 基线不等于每个发行版均经过认证。
+JupyterLab 5、Linux/Windows ARM 包、Linux musl、Safari 和真实 X2Go 转发不在本轮验收范围。manylinux 基线不等于每个发行版均经过认证。macOS 窗口启动探测不等于完整交互验收，详见[实际测试范围](docs/releases/VALIDATION-0.1.5rc1.md)。
 
 FITS 图像支持 BITPIX 8/16/32/64/−32/−64 和 BSCALE/BZERO/BLANK。分块压缩支持 RICE/GZIP/GZIP2，暂不支持 HCOMPRESS、PLIO 和压缩空值掩膜列。基础光谱支持一维数组、已识别的标量／定长向量二进制表及 UTF-8 数值文本。
 
