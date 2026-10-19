@@ -1,6 +1,6 @@
 # FitsViewer
 
-[English](README.md) · [下载 0.1.6](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.6) · [安装](docs/INSTALL.md) · [基础命令](docs/COMMANDS.md) · [代码架构](docs/ARCHITECTURE.md) · [Agent 工作记录](AgentWorkLog.md)
+[English](README.md) · [最新版本](https://github.com/minglinwang86/FitsViewer/releases/latest) · [下载 0.1.6](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.6) · [安装](docs/INSTALL.md) · [基础命令](docs/COMMANDS.md) · [代码架构](docs/ARCHITECTURE.md) · [Agent 工作记录](AgentWorkLog.md)
 
 一款轻量、快速启动的天文 FITS 图像与光谱查看器，为科研中使用远程服务器、本地容器时的人工查看和检查提供便捷方案，也支持 Linux、Windows 和 macOS 桌面。可在 JupyterLab 文件列表中双击打开，通过命令行调用，或内嵌到 Notebook。
 
