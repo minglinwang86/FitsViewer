@@ -3,9 +3,9 @@
   "repository": "minglinwang86/FitsViewer",
   "release_tag": "v0.1.6",
   "release_id": 416779449,
-  "asset_id": 654770911,
+  "asset_id": 654831212,
   "wheel_asset": "fitsviewer-0.1.6-py3-none-manylinux_2_28_x86_64.whl",
-  "wheel_bytes": 10523725,
-  "wheel_sha256": "14ad3e8d96df498abf47f734841386af3094d2c9ad2b5cd4d2d874715534253b",
-  "wasm_sha256": "f6595b6198a1931a5aa52e50de04d33229f7f74735fc60ce9d9ddb4d5bdfe707"
+  "wheel_bytes": 10525142,
+  "wheel_sha256": "a5c8eb059b2be3503c95d8c0816eceb59911f7c37d8e53e5034e1951a37b9010",
+  "wasm_sha256": "9829e237ef74c2f1812263c8e3984b6ade7c8132108c556dd3aeeeabbf2fe93a"
 }
