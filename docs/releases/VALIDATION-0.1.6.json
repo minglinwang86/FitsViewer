@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "version": "0.1.6",
+  "profile": "full",
+  "runtime_checkpoint": "final-full-10",
+  "frozen_source_zip_sha256": "bc8f1007f0e30f6e8198f1aaa2324706aa407d9b430a842e4664b2789a52b839",
+  "runtime_source_commit": "cd2371a76055c7895310eeccf1b9f2b6dac2e5f6",
+  "linux_fresh_tests": {
+    "viewer_PRO": 91,
+    "viewer_base": 45,
+    "observation_epoch": 5,
+    "science_services": 28
+  },
+  "windows_fresh_tests": {
+    "workspace_colon_keys_and_independent_heights": 5,
+    "observation_epoch": 5,
+    "science_services": 28
+  },
+  "unchanged_evidence_inherited_by_file_hash": true,
+  "actual_final10_layout_default_resize_switch_restore_reset": true,
+  "real_archive_download_save_second_tab_original_preserved": {
+    "checkpoint": 9,
+    "shape": [
+      512,
+      512
+    ],
+    "bytes": 529920,
+    "sha256": "c690296c95f1dc5c5300480a3bbbb8bb9f67130fed08200acac05d6f4fd3b5cc"
+  },
+  "module_screenshots": 13,
+  "macos_real_runner_run": 39180857987,
+  "macos_interactive_GUI_verified": false,
+  "apple_notarized": false,
+  "external_science_environment": true,
+  "embedded_browser_or_python": false,
+  "scientific_file_icons_modified": false,
+  "assets": {
+    "fitsviewer-0.1.6-py3-none-manylinux_2_28_x86_64.whl": {
+      "bytes": 10525142,
+      "sha256": "a5c8eb059b2be3503c95d8c0816eceb59911f7c37d8e53e5034e1951a37b9010"
+    },
+    "fitsviewer-0.1.6-py3-none-win_amd64.whl": {
+      "bytes": 12622960,
+      "sha256": "65c482b27e0617be5b83080d916ee4a97c0e19971f550902b77bdf3f032dff1d"
+    },
+    "FitsViewer-0.1.6-windows-x86_64-portable.zip": {
+      "bytes": 31156274,
+      "sha256": "5e927666fe6f07d90a69a2d9ea6b787666cd3e9b25b1b0026574f5664fa5d468"
+    },
+    "FitsViewer-0.1.6-windows-x86_64-setup.exe": {
+      "bytes": 26231245,
+      "sha256": "3690a6a93c266e277f7a357c67fb44dc323da33631406d0b2298cd2612684ba8"
+    },
+    "FitsViewer-0.1.6-macos-arm64-portable.zip": {
+      "bytes": 10430934,
+      "sha256": "901ed3725e98408b7e53ba367d7c3dbfa30fe2e5a2f5afdbd412bdbb53003835"
+    },
+    "FitsViewer-0.1.6-macos-x86_64-portable.zip": {
+      "bytes": 10790382,
+      "sha256": "cd3394b393596dec6f0f03c2a10106913b99ff510a1d7ac013508f94b08abe18"
+    }
+  },
+  "WASM_sha256": "9829e237ef74c2f1812263c8e3984b6ade7c8132108c556dd3aeeeabbf2fe93a",
+  "scientific_use": "Inspection/reference; independently calibrate and validate before paper measurements",
+  "limitations": [
+    "No universal scientific accuracy or long-run memory guarantee",
+    "No final10 Windows native input or clean positive Setup install/uninstall",
+    "Mac startup/CLI/API acceptance is not full interactive GUI/Gatekeeper acceptance",
+    "No JupyterLab5, Linux/Windows ARM, musl, local Mac wheel or paper-ready calibration acceptance"
+  ]
+}

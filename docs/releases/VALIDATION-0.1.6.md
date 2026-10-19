@@ -1,13 +1,13 @@
 # FitsViewer 0.1.6 validation / 验收记录
 
 This record separates source checks, real numerical work, GUI actions and packaged
-platform acceptance. **Release assembly is still in progress in this working copy.**
-The final artifact hashes and platform outcomes must be filled before publication.
+platform acceptance. Final Full packages use runtime checkpoint 10.
+Changed components were checked again; unchanged evidence is explicitly inherited.
 Earlier checkpoints are evidence for their own source; a changed component needs a
 corresponding new check or an explicit unchanged-source comparison.
 
-本文区分源码、真实数值、界面操作和平台发行包验收。当前工作副本尚在汇总最终产物；
-只有填入最终源码／资源哈希、平台结果后才能发布，不能把阶段证据当作最终验收。
+本文区分源码、真实数值、界面操作和平台发行包验收。最终 Full 使用第十检查点；
+受影响组件重新验证，未改组件按源码哈希关联既有证据，不把历史执行写成本次重跑。
 
 ## Implemented boundaries / 已检查的边界
 
@@ -25,17 +25,25 @@ corresponding new check or an explicit unchanged-source comparison.
 
 ## Source and numerical evidence / 源码与数值
 
-Runtime source checkpoint 9 was frozen as 875 files; the private source ZIP's
-SHA-256 is `f856c7dbcdbe1fa59c89c6d3b1dc4728989bd0a3c37b9d05145986bc68395505`.
-Post-freeze changes are documentation, illustrations, the macOS resource lock and
-an explicitly recorded QA fixture correction, not runtime code changes.
+Runtime source checkpoint 10 was frozen as 875 files; its private input ZIP has
+SHA-256 `bc8f1007f0e30f6e8198f1aaa2324706aa407d9b430a842e4664b2789a52b839`.
+The final source archive adds current documentation, illustrations and the macOS
+resource lock. Runtime code stayed unchanged after this freeze.
+
+The broad host/core matrix below ran at checkpoint 9. Checkpoint 10 reran all
+91 PRO and 45 base Viewer tests on Linux, plus 5 observation-date and 28 science
+tests. Windows reran its five affected workspace tests with actual colon-delimited
+keys and the same 5+28 Python tests, then rebuilt its native Full executable.
+An independent AST comparison confirms Gaia changed only one rejection diagnostic.
+Unchanged core/server/transport/spectral checks are inherited by full file hashes;
+the corresponding Full native and WASM release builds compile the changed UI.
 
 | Matrix | Actual result |
 | --- | --- |
 | Linux/TNT Full host | 36/36 tests; all-features and no-default checks pass. |
 | Windows Full host | 35/35 tests; desktop-only check passes. |
 | Headless PRO host | Linux 35/35, Windows 34/34; matching-source evidence includes actual copy cancellation. |
-| Viewer PRO / base | 91/91 and 45/45 on Linux/TNT and Windows. The base test-name sets were independently compared and match. |
+| Viewer PRO / base | Linux source10: 91/91 and 45/45; Windows source9: 91/91 and 45/45, plus source10 affected workspace 5/5. Base test-name sets match. |
 | WASM | PRO and no-default configurations pass checks. |
 | Shared core | 38 previous tests are explicitly inherited: all 16 relevant core source files match by SHA-256. They are not claimed as newly executed. |
 
@@ -118,9 +126,12 @@ rendering/inspection, not 78 successful scientific calculations.
 
 Controlled reproduction distinguished a correctly rejected old-role heartbeat
 from a real fresh-epoch race when PRO was first entered in an iframe older than
-45 seconds. Source-9 delays the first heartbeat and initializes the Gaia restore
-timer. Its real delayed-enter/reacquire acceptance is recorded with the final GUI
-results rather than reclassifying the original lost response bodies as successful.
+45 seconds. Source-9 delays the first heartbeat and initializes the Gaia restore timer.
+Actual delayed/reacquire checks observed the first PRO heartbeat at 45.027s with
+no fresh-epoch rejection, and restored Gaia's at 30.487s with HTTP 200. The first
+idle probes timed out under on-demand frame timing; retained retries used real
+mouse movement over the title to sustain frames, without scientific commands.
+Those original failures and the correctly rejected old epochs remain recorded.
 
 For a 4800×4800 image with a 92.16 MB original array, the tested browser transferred
 1,530,000 numeric preview bytes initially. Tone changes issued no new image
@@ -156,12 +167,106 @@ was installed independently of the previous version. The final Setup is checked
 without silently overwriting an existing user's registration. A complete positive
 Setup install/uninstall on a clean machine is a separate acceptance item.
 
-Final Linux portable ABI/wheel, Windows artifacts, macOS arm64/x86_64 CI results,
-the final source/resource hashes and the new archive-download UI are **pending in
-this working record**. Do not publish with this paragraph still present.
-
 macOS acceptance must come from real macOS runners. An app startup probe is not
 full interactive GUI testing; an ad-hoc signature is not Apple notarization.
 JupyterLab 5, Linux/Windows ARM, Linux musl, Safari, actual X2Go forwarding,
 production PSF photometry and paper-ready scientific calibration are outside
 this release's acceptance scope.
+
+## Final GUI and packages / 最终界面及发行包
+
+The actual checkpoint-9 installed-wheel GUI performed **Nearby observations →
+Search → CDS/P/DSS2/red → Generate FITS cutout and add**. The server saved the
+512×512 result beside the original; a second viewer tab appeared automatically.
+The saved FITS is 529920 bytes with 262144 finite pixels and SHA-256
+`c690296c95f1dc5c5300480a3bbbb8bb9f67130fed08200acac05d6f4fd3b5cc`.
+Astropy and the installed Rust reader agree. Reselecting the original retained
+its aperture, original tab and original hash. The cutout's area ratio is
+1.0000590893 and actual overlap approximately 1; it is a resampled HiPS cutout.
+The 149-member evidence manifest and ZIP CRC were independently verified.
+
+That real GUI run exposed a missed integration bug: the actual tool key is
+`archive_search:`, while the 600px default/migration tested only the bare name.
+Source10 fixes matching without mixing saved subtask sizes. Its actual fresh
+file-list double-click → Catalogues → Nearby observations used 600px with no
+height injection. A real drag to 420px, tool switch and return retained 420px;
+the actual workspace Reset restored 600px and cleared overrides. Twenty recorded
+actions passed. The source9 workflow's manually set height is not promoted to
+default-height acceptance.
+
+The checkpoint-9 Linux Gaia button completed network/date processing but rejected
+a solution with fit RMS≈0.824″ and holdout RMS≈1.728″ at a 3″ limit. Source also
+requires maximum holdout residual≤6″, so that guard explains the rejection; its
+exact maximum was not retained. Source10 now reports all three values and limits.
+The algorithm/thresholds were not weakened or rerun to obtain an accepted picture.
+This is distinct from the earlier actual Windows accepted example above.
+
+Thirteen new module screenshots use the actual installed Full10 wheel and real
+M67/SDSS input, with three genuinely in Minimal mode. Each image was visually
+reviewed; the parent independently checked representative aperture, WCS,
+archive and spectral pages. The original M67 WCS readout waited for its real
+asynchronous response, not an injected Gaia solution. The gallery demonstrates
+configuration and real basic Rust aperture calculations, not thirteen successful
+external scientific jobs. [Image provenance and byte hashes](../images/v0.1.6/README.md).
+
+Final Linux portable Full was built against glibc 2.28, repaired and inspected
+with auditwheel in 345.46 seconds, with no source drift. Its installed wheel
+uses its packaged host/web/Python resources without source PYTHONPATH. The parent
+checked its native/WASM/JS hashes and all 18 Python adapters against source.
+A separate authenticated Jupyter trial uses the workspace root; the existing
+two Jupyter servers, their process start identities and their kernel/session
+identities were preserved. The final trial was actually opened in the in-app
+browser, loaded M67 and entered PRO, then returned to Minimal for the user.
+
+Windows source10 Full rebuilt natively and packaged matching shared resources.
+The 610 wheel RECORD entries, 34 shared resource files, 542 original license
+files covering 240 Windows native dependencies, Unicode/space extraction, PE
+0.1.6.0 and privacy checks passed. Its portable contains 681 files, including
+AgentWorkLog. Three explicit documentation-only payload overlays replace stale
+validation text and provide current notes/logs; they do not alter frozen runtime.
+The final portable was installed into a separate versioned directory, preferences
+copied, and only this task's identified Start-menu shortcut updated. Its native
+window remained alive/responding; the preceding task-owned source9 window was
+retired. Older user programs, defaults and scientific-file icons were preserved.
+No final10 Windows native mouse/keyboard acceptance or clean positive Setup
+install/uninstall is claimed. The source9 actual Windows Jupyter actions above
+remain source-matched shared-UI evidence, with layout separately tested on Linux.
+
+Both Mac architectures were natively built and checked on real macOS 15 in
+[run 39180857987](https://github.com/minglinwang86/FitsViewer/actions/runs/39180857987),
+at commit `cd2371a76055c7895310eeccf1b9f2b6dac2e5f6`. The locked Linux wheel supplied
+shared resources; each runner compiled its own native app. Relocation, CLI,
+icons/ad-hoc signature, external-Python fver, real public HorseHead FITS values
+against Astropy, authenticated API and external worker termination passed.
+Native window startup/screenshots succeeded, followed by owned-process cleanup.
+The parent independently checked both downloaded ZIP CRCs/hashes, Mach-O CPU,
+plist and absence of scientific-file associations. Each matches 29 shared runtime
+files (Python line endings normalized only) and verifies 251 native dependency
+records with 462 original license-text records. This is startup acceptance,
+**not interactive Mac GUI acceptance or Apple notarization**.
+
+Final test-owned views/workers/artifacts were released individually. The user's
+deliberately retained Jupyter/base view and Windows app are intentional services,
+not abandoned test processes. This does not establish a universal no-leak/RSS
+guarantee for every driver, backend, third-party package or arbitrarily long run.
+
+### Final asset checksums / 最终产物校验
+
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `fitsviewer-0.1.6-py3-none-manylinux_2_28_x86_64.whl` | 10,525,142 | `a5c8eb059b2be3503c95d8c0816eceb59911f7c37d8e53e5034e1951a37b9010` |
+| `fitsviewer-0.1.6-py3-none-win_amd64.whl` | 12,622,960 | `65c482b27e0617be5b83080d916ee4a97c0e19971f550902b77bdf3f032dff1d` |
+| `FitsViewer-0.1.6-windows-x86_64-portable.zip` | 31,156,274 | `5e927666fe6f07d90a69a2d9ea6b787666cd3e9b25b1b0026574f5664fa5d468` |
+| `FitsViewer-0.1.6-windows-x86_64-setup.exe` | 26,231,245 | `3690a6a93c266e277f7a357c67fb44dc323da33631406d0b2298cd2612684ba8` |
+| `FitsViewer-0.1.6-macos-arm64-portable.zip` | 10,430,934 | `901ed3725e98408b7e53ba367d7c3dbfa30fe2e5a2f5afdbd412bdbb53003835` |
+| `FitsViewer-0.1.6-macos-x86_64-portable.zip` | 10,790,382 | `cd3394b393596dec6f0f03c2a10106913b99ff510a1d7ac013508f94b08abe18` |
+
+Shared final WASM SHA-256:
+`9829e237ef74c2f1812263c8e3984b6ade7c8132108c556dd3aeeeabbf2fe93a`.
+The final source archive includes the current guides, AgentWorkLog and screenshots.
+Use the release's `SHA256SUMS` for that archive and all six platform downloads;
+the private frozen input ZIP above is a separate engineering checkpoint.
+
+本次只发行 Full（包含极简与 PRO），没有独立 Mini。现有科学结果仍只建议作检查参考；
+Mac 为临时签名、未公证，也未声称完整原生交互验收。各平台新执行、沿用证据、预期的
+科学质量拒绝及明确未测范围分别记录；不能把一次查询成功当成档案服务永久可用。

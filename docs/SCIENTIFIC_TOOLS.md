@@ -25,9 +25,9 @@ The compact Office/CAD-style ribbon groups commands by task. Minimal has
 Choose a tab to expand it; double-click a tab or use the collapse button to hide
 the panels. Narrow windows wrap complete groups when needed. Photometry and
 coordinates occupy their own task groups instead of separate permanent toolbar rows.
-Chinese image task-group captions occupy the left gutter, with full captions on
-hover. English omits these small captions. Buttons and dropdowns in each group
-share their height and vertical alignment.
+Coordinates and tool-coordinate labels use horizontal text. Small group labels
+may be omitted when they repeat the selected task. Buttons and dropdowns in each
+group share their height and vertical alignment.
 Image HDU selection sits on the command row in both modes. Mini also puts the
 histogram/colorbar controls there. Display and zoom groups use their content width
 in both modes, avoiding reserved empty blocks between modules.
@@ -54,7 +54,7 @@ warnings and errors remain visible.
 
 **极简**包含基础图像/光谱查看、显示工具、主题、色表、色标、直方图、手动阈值叠加、
 圆孔径加背景环测光和共用的**坐标**面板。**设置 → 界面语言**即时切换中英文并保存选择。
-图像工具栏中文小标题放在左侧竖排，悬停可查看完整标题；英文不显示这些小标题。
+坐标与工具坐标标签使用横排；与当前任务重复的小分组标题可省略。
 同组按钮和下拉框统一高度与垂直对齐，不增加工具栏行数。
 图像极简与 PRO 的 HDU 选择移至命令行；极简还将直方图/色标放到该行。
 两种模式的显示和缩放组按内容宽度排列，减少模块间固定空白。
@@ -237,13 +237,17 @@ solver. The search radius is at most 1.5 degrees. No catalogue/index is bundled.
 Only the search field/query is sent to ESA Gaia TAP; images stay local. A local
 reference table can replace the query. The TAN fit needs at least ten unique
 matches and independent validation stars. The default RMS limit is 3 arcsec;
-the panel exposes the configured limit, fitted and validation RMS. This is not
+both fit/holdout RMS must pass, and every holdout residual must be at most twice
+that limit (6 arcsec by default). A rejection reports all three values and their
+limits, so passing RMS alone does not imply acceptance. This is not
 a universal accuracy guarantee. Proper motions are propagated when epoch and
 motion data are usable; otherwise the result explains the retained epoch.
 
 仅向 ESA Gaia TAP 发送检索天区/查询语句，图像保留在本地；也可使用本地参考表。
-TAN 拟合至少需要十个唯一匹配和独立验证星。默认 RMS 门槛为 3 角秒，面板显示可调整门槛、
-拟合 RMS 与独立验证 RMS；门槛并非通用精度承诺。有可用历元及自行时执行传播，否则结果说明采用的历元。
+TAN 拟合至少需要十个唯一匹配和独立验证星。默认 RMS 门槛为 3 角秒，拟合与独立验证
+RMS 均须通过，每个验证星残差还须不超过两倍门槛（默认 6 角秒）。拒绝信息列出三项值
+及各自门槛，不能只看 RMS 判断通过；门槛并非通用精度承诺。有可用历元及自行时执行
+传播，否则结果说明采用的历元。
 
 A validated solution is an in-memory WCS overlay used by coordinates, catalogue
 overlays, sky view links/templates and figure export. Its checkbox restores the

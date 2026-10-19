@@ -20,7 +20,7 @@ Open FITS, gzip FITS, supported tiled-compression `.fz` images and basic spectra
 
 Eight stretch choices: **Linear, Log, Power, Sqrt, Squared, Asinh, Sinh and Histogram Equalization**. Edit limits, switch palettes, invert the display, or open the compact histogram/colorbar. The bottom readout keeps a stable height while showing original pixel values.
 
-![Current Minimal image interface with the public M67 star field](docs/images/v0.1.5rc1/mini-image.jpg)
+![Current Minimal image interface with the public M67 star field](docs/images/v0.1.6/mini-image.png)
 
 ### Basic apertures and coordinates
 
@@ -30,7 +30,7 @@ The shared **Coordinates** panel shows one-based pixels and FK5 J2000 coordinate
 
 The **Scale bar** control sits beside the HDU selector. Rotate the display by ±90° or a chosen angle using the lower-right controls. Apertures, picking and coordinates use the same inverse display transform; source arrays are unchanged.
 
-![Minimal aperture measurement and editable aperture geometry](docs/images/v0.1.5rc1/mini-aperture.jpg)
+![Minimal aperture measurement and editable aperture geometry](docs/images/v0.1.6/mini-aperture.png)
 
 ### Basic spectra and preferences
 
@@ -38,7 +38,7 @@ View 1D FITS spectra, recognized binary-table spectra, or numeric text files. Se
 
 **Settings** switches English/简体中文, theme and default startup mode, and opens as a separate window. Select an external Python environment, inspect its actual dependencies and explicitly install selected missing packages. Chinese paths are retained for opening and copying. Popup size, position and folded state are remembered.
 
-![Minimal spectrum display using public SDSS data](docs/images/v0.1.5rc1/mini-spectrum.jpg)
+![Minimal spectrum display using public SDSS data](docs/images/v0.1.6/mini-spectrum.png)
 
 ## PRO mode, module by module
 
@@ -50,25 +50,25 @@ Manage visibility, ordering, opacity, labels and display scale/offset in framed 
 
 This adjusts display brightness; it does not establish absolute photometric zeropoints, match PSFs or guarantee flux-conserving registration. [Layer conventions](docs/IMAGE_LAYERS.md).
 
-![PRO image layers and relative brightness matching](docs/images/v0.1.5rc1/pro-layers.jpg)
+![PRO image layers and relative brightness matching](docs/images/v0.1.6/pro-layers.png)
 
 ### 2. Measurements, aperture templates and profiles
 
 Use advanced aperture shapes, background and uncertainty settings, growth/profile tools, and line/curved-trace apertures. Copy a template to another image and preview its pixel or WCS-based placement before recomputing measurements on the target. Review original data units and error provenance alongside the result.
 
-![PRO measurement page on an HST image](docs/images/v0.1.5rc1/pro-photometry.jpg)
+![PRO aperture measurement on the public M67 image](docs/images/v0.1.6/pro-photometry.png)
 
 ### 3. Coordinates and Gaia calibration
 
 The same coordinates/Gaia tools available in Minimal can be docked beside other PRO pages. A validated solution can feed catalogue overlays, sky-linked comparisons, templates and figure export. Save the JSON solution for provenance, or restore the original WCS. Only the field/query is sent to Gaia TAP; image pixels remain local.
 
-![Coordinates in the PRO work area](docs/images/v0.1.5rc1/pro-coordinates.jpg)
+![Coordinates in the PRO work area](docs/images/v0.1.6/pro-coordinates.png)
 
 ### 4. Source finding and traces
 
 **Find stars** projects Gaia DR3 or SDSS DR17 identities through the current WCS, including a validated Gaia override. **Local source candidates** separately detects intensity peaks; those peaks are not catalogue identities or PSF photometry. Detect straight traces, click a seed to follow a curved trace, or click control points for a line/band profile. Trace inspection does not perform wavelength-calibrated optimal spectral extraction.
 
-![PRO source detection on the real M67 field](docs/images/v0.1.5rc1/pro-detection.jpg)
+![PRO source detection on the real M67 field](docs/images/v0.1.6/pro-detection.png)
 
 ### 5. Catalogues, cross-matching and interoperability
 
@@ -82,21 +82,23 @@ FITS cutout or download a selected FITS product, save it beside the original and
 add it to the viewer. Unwritable destinations explicitly use a temporary result;
 the original stays unchanged. [Geometry, downloads and limits](docs/SCIENTIFIC_TOOLS.md#catalogues-and-nearby-observations).
 
+![Actual current-field cutout saved and added as a second viewer tab](docs/images/v0.1.6/archive-download-result.png)
+
 Local matching does not upload rows. CDS receives row identifiers, J2000 positions and explicitly selected extra columns. Online tools need the corresponding external packages and reachable services.
 
-![PRO catalogue and cross-match workspace](docs/images/v0.1.5rc1/pro-catalogues.jpg)
+![PRO catalogue and cross-match workspace](docs/images/v0.1.6/pro-catalogues.png)
 
 ### 6. Reprojection, RGB and export
 
 Prepare visualization reprojections, RGB compositions and annotated figure exports. MathText labels use the selected environment's Matplotlib with `usetex=False`; no TeX engine is embedded. Reprojection uses visualization resampling, so keep scientific measurements on the original images.
 
-![PRO export controls](docs/images/v0.1.5rc1/pro-export.jpg)
+![PRO export controls](docs/images/v0.1.6/pro-export.png)
 
 ### 7. Spectrum references and candidate lines
 
-Toggle single lines, doublets and groups, adjust redshift and marker width, and add custom references in the spectrum workspace. External Specutils can find candidate emission/absorption features for inspection. A nearby reference label is a candidate association, not an automatic physical identification.
+Toggle single lines, doublets and groups, adjust redshift and marker width, and add custom references in the spectrum workspace. External Specutils can find candidate emission/absorption features for inspection. Select an explicit wavelength unit when the source lacks one, then use **Find candidate emission / absorption**. A nearby reference label is a candidate association, not an automatic physical identification.
 
-![SDSS spectrum with PRO reference lines](docs/images/v0.1.5rc1/pro-spectrum-lines.jpg)
+![SDSS spectrum with PRO reference lines](docs/images/v0.1.6/pro-spectrum-lines.png)
 
 ### 8. Spectral measurement, processing and fitting
 
@@ -104,15 +106,15 @@ Set line windows, continuum windows and masks. Fit a linear or low-order polynom
 
 Boxcar, Gaussian and Savitzky–Golay smoothing operate on valid segments. Fit bounded Gaussian/Voigt components or show a relative blackbody curve with temperature/amplitude sliders. Formal measurements use original, unsmoothed samples. Missing uncertainties remain missing. [Numerical conventions](docs/SPECTRAL_ANALYSIS.md).
 
-![PRO spectral analysis controls](docs/images/v0.1.5rc1/pro-spectrum-analysis.jpg)
+![PRO spectral analysis controls](docs/images/v0.1.6/pro-spectrum-analysis.png)
 
 ### 9. Spectrum layers and multi-epoch comparison
 
 Overlay up to eight enabled comparison spectra on their native grids. Control visibility, ordering, opacity, scale, offset and epoch/phase labels. Explicit units and redshifts prevent silent axis assumptions. This release does not resample/coadd spectra or subtract one spectrum from another.
 
-![PRO spectrum layer comparison](docs/images/v0.1.5rc1/pro-spectrum-compare.jpg)
+![PRO spectrum layer comparison](docs/images/v0.1.6/pro-spectrum-compare.png)
 
-New screenshots use public scientific data. [Credits and capture details](docs/images/v0.1.5rc1/README.md). Configuration screenshots illustrate controls; they do not establish a successful online query or calibration.
+New screenshots use public scientific data. [Credits and capture details](docs/images/v0.1.6/README.md). Configuration screenshots illustrate controls; they do not establish a successful online query or calibration.
 
 ## Install
 

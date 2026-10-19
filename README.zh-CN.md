@@ -20,7 +20,7 @@ JWST/NIRCam F277W 的 SMACS 0723 视场；这张较早界面的截图保留为�
 
 提供八种拉伸：**线性、对数、幂函数、平方根、平方、反双曲正弦、双曲正弦、直方图均衡**。可手动设置上下限、更换色表、反色、显示紧凑直方图与色标。底部信息栏高度固定，游标数值变化不会挤动图像。
 
-![使用公开 M67 星团数据的当前极简图像界面](docs/images/v0.1.5rc1/mini-image.jpg)
+![使用公开 M67 星团数据的当前极简图像界面](docs/images/v0.1.6/mini-image.png)
 
 ### 基础孔径测光与坐标
 
@@ -30,7 +30,7 @@ JWST/NIRCam F277W 的 SMACS 0723 视场；这张较早界面的截图保留为�
 
 **比例尺**位于 HDU 右侧；图像右下角提供左右 90°及任意角度旋转。孔径、选点和坐标共用同一显示逆变换，原始数组不变。
 
-![极简模式孔径测量及孔径尺寸编辑](docs/images/v0.1.5rc1/mini-aperture.jpg)
+![极简模式孔径测量及孔径尺寸编辑](docs/images/v0.1.6/mini-aperture.png)
 
 ### 基础光谱和设置
 
@@ -38,7 +38,7 @@ JWST/NIRCam F277W 的 SMACS 0723 视场；这张较早界面的截图保留为�
 
 **设置**在独立窗口中切换英文／简体中文、主题和默认启动模式，也可选择外部 Python 环境、识别其实际依赖，单击安装选中的缺失包。打开及复制保留完整中文路径；弹窗的位置、大小和收起状态会保存。
 
-![使用公开 SDSS 数据的极简光谱界面](docs/images/v0.1.5rc1/mini-spectrum.jpg)
+![使用公开 SDSS 数据的极简光谱界面](docs/images/v0.1.6/mini-spectrum.png)
 
 ## PRO 模式：逐模块介绍
 
@@ -50,25 +50,25 @@ PRO 提供带边框的工作区，子页面可移动、调大小、停靠、组�
 
 它调整的是显示亮度，不等于绝对测光零点定标，不进行 PSF 匹配，也不保证配准过程通量守恒。[图层约定](docs/IMAGE_LAYERS.md)。
 
-![PRO 图层与场星相对亮度匹配控件](docs/images/v0.1.5rc1/pro-layers.jpg)
+![PRO 图层与场星相对亮度匹配控件](docs/images/v0.1.6/pro-layers.png)
 
 ### 2. 测量、孔径模板和剖面
 
 提供更多孔径形状、背景与误差设置、增长曲线／剖面工具、直线及曲线迹线孔径。可复制孔径模板到其他图像，预览像素或 WCS 定位后，在目标原图重新测量。结果保留物理单位和误差来源。
 
-![HST 图像上的 PRO 测量页面](docs/images/v0.1.5rc1/pro-photometry.jpg)
+![公开 M67 图像上的 PRO 孔径测量页面](docs/images/v0.1.6/pro-photometry.png)
 
 ### 3. 坐标与 Gaia 校准
 
 极简中的坐标／Gaia 功能也能停靠到 PRO 工作区，与其他工具并排使用。通过验证的坐标解供星表叠加、天球视角联动、孔径模板和图片导出使用。可保存 JSON 追溯解算来源，也可切回原始 WCS。发送至 Gaia TAP 的是天区／查询，图像像素留在本地。
 
-![停靠在 PRO 工作区的坐标页面](docs/images/v0.1.5rc1/pro-coordinates.jpg)
+![停靠在 PRO 工作区的坐标页面](docs/images/v0.1.6/pro-coordinates.png)
 
 ### 4. 找星与迹线
 
 **找星**根据当前 WCS（包括已验证的 Gaia 校准）投影 Gaia DR3 或 SDSS DR17 的星表身份。另设**局部光源候选**检测图像亮点；亮点候选不等于星表认证，也不是 PSF 测光。可检测直线，手动点击种子跟踪曲线，或点选控制点查看线／带状剖面。迹线检查不会自动完成波长定标或最优光谱提取。
 
-![真实 M67 视场上的 PRO 找星控件](docs/images/v0.1.5rc1/pro-detection.jpg)
+![真实 M67 视场上的 PRO 找星控件](docs/images/v0.1.6/pro-detection.png)
 
 ### 5. 星表、交叉匹配与互操作
 
@@ -81,19 +81,23 @@ PRO 提供带边框的工作区，子页面可移动、调大小、停靠、组�
 
 本地匹配不上传数据。CDS 接收行标识、J2000 坐标及明确选中的附加列。在线功能需要相应外部依赖和可访问的服务。
 
-![PRO 星表与交叉匹配工作区](docs/images/v0.1.5rc1/pro-catalogues.jpg)
+![真实当前视场切图保存后自动新增 Viewer 标签](docs/images/v0.1.6/archive-download-result.png)
+
+![PRO 星表与交叉匹配工作区](docs/images/v0.1.6/pro-catalogues.png)
 
 ### 6. 重投影、RGB 与导出
 
 准备可视化重投影、RGB 合成和带标注的图片导出。数学标注通过外部 Matplotlib MathText 实现，强制 `usetex=False`，不内嵌 TeX。重投影使用显示用途的重采样，科学测量仍应基于原始图像。
 
-![PRO 导出控件](docs/images/v0.1.5rc1/pro-export.jpg)
+![PRO 导出控件](docs/images/v0.1.6/pro-export.png)
 
 ### 7. 光谱参考线与候选识别
 
 光谱使用专属工作区。按单条、双线或组线开关参考标线，调整红移和标线宽度，并添加自定义参考线。可调用外部 Specutils 寻找待检查的发射／吸收候选；邻近参考线标签表示候选关联，不是自动完成物理谱线鉴定。
 
-![SDSS 光谱及 PRO 参考标线控件](docs/images/v0.1.5rc1/pro-spectrum-lines.jpg)
+![SDSS 光谱及 PRO 参考标线控件](docs/images/v0.1.6/pro-spectrum-lines.png)
+
+源文件缺少可信波长单位时，先显式选择 Å/nm 等解释，再点击候选发射／吸收检测；参考标线不是自动物理定种或红移解。
 
 ### 8. 光谱测量、处理与拟合
 
@@ -101,15 +105,15 @@ PRO 提供带边框的工作区，子页面可移动、调大小、停靠、组�
 
 Boxcar、Gaussian、Savitzky–Golay 平滑按有效段处理。可做有界 Gaussian／Voigt 分量拟合，或用温度与幅度滑块查看相对黑体曲线。正式测量仍读取未平滑源采样；缺失误差不会被伪造。[数值约定](docs/SPECTRAL_ANALYSIS.md)。
 
-![PRO 光谱分析控件](docs/images/v0.1.5rc1/pro-spectrum-analysis.jpg)
+![PRO 光谱分析控件](docs/images/v0.1.6/pro-spectrum-analysis.png)
 
 ### 9. 光谱图层与多历元对照
 
 最多启用八条对照谱，保留各自原始采样网格；分别管理显隐、层序、透明度、比例、偏移及历元／相位标签。单位和红移需要明确设置。本版不提供多谱重采样合并，也不支持两个光谱之间直接相减。
 
-![PRO 光谱图层对照](docs/images/v0.1.5rc1/pro-spectrum-compare.jpg)
+![PRO 光谱图层对照](docs/images/v0.1.6/pro-spectrum-compare.png)
 
-新增截图使用公开科学数据。[数据署名和截图说明](docs/images/v0.1.5rc1/README.md)。展示配置界面的截图不代表在线检索或定标已经成功运行。
+新增截图使用公开科学数据。[数据署名和截图说明](docs/images/v0.1.6/README.md)。展示配置界面的截图不代表在线检索或定标已经成功运行。
 
 ## 安装
 
