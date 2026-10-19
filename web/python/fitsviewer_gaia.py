@@ -260,7 +260,9 @@ def solve(worker, params):
     rms = float(np.sqrt(np.mean(residual[keep] ** 2)))
     validation_rms = float(np.sqrt(np.mean(residual[holdout] ** 2)))
     if rms > maximum or validation_rms > maximum or np.max(residual[holdout]) > maximum * 2:
-        raise ValueError(f'Gaia calibration rejected: fit RMS {rms:.3f}, holdout RMS {validation_rms:.3f} arcsec')
+        raise ValueError(f'Gaia calibration rejected: fit RMS {rms:.3f}, holdout RMS {validation_rms:.3f} '
+                         f'(limit {maximum:.3f}), holdout max {float(np.max(residual[holdout])):.3f} '
+                         f'(limit {maximum * 2:.3f}) arcsec')
     solved_center = pixel_to_skycoord((width - 1) / 2, (height - 1) / 2, fitted, origin=0)
     if solved_center.separation(center).deg > radius:
         raise ValueError('Gaia solution is inconsistent with the supplied search field')

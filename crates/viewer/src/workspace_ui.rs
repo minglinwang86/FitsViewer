@@ -7,6 +7,9 @@ use crate::i18n::t;
 pub(crate) const CONTROL: f32 = 24.;
 const GAP: f32 = 6.;
 const SNAP: f32 = 24.;
+// Layout keys include a task suffix; retain that full key for independent sizes.
+// 布局键含子任务后缀；默认值按模块判断，独立尺寸仍保留完整键。
+fn default_tool_height(operation:&str)->f32{if operation.split(':').next()==Some("archive_search"){600.}else{300.}}
 fn saved_rect(value:&serde_json::Value)->Option<Rect>{let values=value.as_array().filter(|v|v.len()==4)?;let numbers=values.iter().map(|v|v.as_f64().filter(|n|n.is_finite() && n.abs()<1e6).map(|n|n as f32)).collect::<Option<Vec<_>>>()?;let rect=Rect::from_min_max(egui::pos2(numbers[0],numbers[1]),egui::pos2(numbers[2],numbers[3]));(rect.width()>=180. && rect.height()>=24.).then_some(rect)}
 fn saved_size(value:&serde_json::Value)->Option<Vec2>{let values=value.as_array().filter(|v|v.len()==2)?;let size=egui::vec2(values[0].as_f64()? as f32,values[1].as_f64()? as f32);size.is_finite().then_some(egui::vec2(size.x.clamp(220.,2400.),size.y.clamp(96.,2400.)))}
 
@@ -150,8 +153,8 @@ impl Dock {
             if !self.operation.is_empty(){if let Some(state)=self.panels.get(&Page::Tool){self.tool_heights.insert(self.operation.clone(),state.height);}}
             self.operation=operation.into();self.focus=Some(Page::Tool);
             let state=self.panels.entry(Page::Tool).or_default();state.folded=false;
-            state.height=self.tool_heights.get(operation).copied().unwrap_or(if operation=="archive_search"{600.}else{300.});reveal=true;
-        }else if first && operation=="archive_search" && !self.tool_heights.contains_key(operation){
+            state.height=self.tool_heights.get(operation).copied().unwrap_or(default_tool_height(operation));reveal=true;
+        }else if first && default_tool_height(operation)==600. && !self.tool_heights.contains_key(operation){
             // Migrate the old 300px default once; keep explicitly resized layouts.
             // 旧默认高度仅迁移一次；用户主动调整过的高度仍按原状态恢复。
             if let Some(state)=self.panels.get_mut(&Page::Tool){if (state.height-300.).abs()<0.01{state.height=600.;}}
@@ -315,7 +318,7 @@ impl Dock {
         for action in actions {match action {Action::Dock(id)=>{self.attach(id,Target::Dock(0));collapsed=false;},Action::DockPage(page)=>{for group in &mut self.groups{group.pages.retain(|candidate|*candidate!=page);}self.groups.retain(|group|!group.pages.is_empty());self.panels.entry(page).or_default().floating=None;self.focus=Some(page);collapsed=false;},Action::Float(page,position,manual)=>self.float(page,position,manual),Action::Close(page)=>{self.panels.entry(page).or_default().open=false;closed.push(page);},_=>{}}}
         if !ctx.input(|i|i.pointer.primary_down() || i.pointer.primary_released()){self.drag=None;self.press=None;}
         if ctx.input(|i|i.key_pressed(egui::Key::Escape)){self.drag=None;self.press=None;}
-        if reset {for state in self.panels.values_mut(){state.floating=None;state.folded=false;state.height=300.;}self.groups.clear();self.order=Page::ALL.to_vec();self.drag=None;collapsed=false;}
+        if reset {self.tool_heights.clear();for (page,state) in &mut self.panels{state.floating=None;state.folded=false;state.height=if *page==Page::Tool{default_tool_height(&self.operation)}else{300.};}self.groups.clear();self.order=Page::ALL.to_vec();self.drag=None;collapsed=false;}
         Output{width:panel.response.rect.width(),collapsed,closed}
     }
 }
@@ -346,20 +349,30 @@ mod tests {
         let restored=Dock::restore(&dock.summary());assert_eq!(restored.groups.len(),1);assert_eq!(restored.groups[0].active,Page::Photometry);assert_eq!(restored.groups[0].rect.min,egui::pos2(123.,87.));assert!(restored.groups[0].folded);assert!(restored.panels[&Page::Tool].folded);assert!(!restored.was_open(Page::Header));
     }
     #[test]fn archive_height_is_larger_and_each_tool_remembers_user_resizing(){
-        let mut dock=Dock::default();dock.sync(&[Page::Tool],"detect_stars");
+        let mut dock=Dock::default();dock.sync(&[Page::Tool],"detect_stars:");
         dock.panels.get_mut(&Page::Tool).unwrap().height=340.;
-        dock.sync(&[Page::Tool],"archive_search");assert_eq!(dock.panels[&Page::Tool].height,600.);
+        dock.sync(&[Page::Tool],"archive_search:");assert_eq!(dock.panels[&Page::Tool].height,600.);
         dock.panels.get_mut(&Page::Tool).unwrap().height=480.;
-        dock.sync(&[Page::Tool],"detect_stars");assert_eq!(dock.panels[&Page::Tool].height,340.);
-        let mut restored=Dock::restore(&dock.summary());restored.sync(&[Page::Tool],"archive_search");
+        dock.sync(&[Page::Tool],"detect_stars:");assert_eq!(dock.panels[&Page::Tool].height,340.);
+        let mut restored=Dock::restore(&dock.summary());restored.sync(&[Page::Tool],"archive_search:");
         assert_eq!(restored.panels[&Page::Tool].height,480.);
-        restored.sync(&[Page::Tool],"detect_stars");assert_eq!(restored.panels[&Page::Tool].height,340.);
-        let legacy=serde_json::json!({"schema":1,"operation":"archive_search","panels":[{"page":"Tool","open":true,"height":300.}]});
-        let mut migrated=Dock::restore(&legacy);migrated.sync(&[Page::Tool],"archive_search");
+        restored.sync(&[Page::Tool],"detect_stars:");assert_eq!(restored.panels[&Page::Tool].height,340.);
+        let legacy=serde_json::json!({"schema":1,"operation":"archive_search:","panels":[{"page":"Tool","open":true,"height":300.}]});
+        let mut migrated=Dock::restore(&legacy);migrated.sync(&[Page::Tool],"archive_search:");
         assert_eq!(migrated.panels[&Page::Tool].height,600.);
         migrated.panels.get_mut(&Page::Tool).unwrap().height=300.;
-        let mut explicit=Dock::restore(&migrated.summary());explicit.sync(&[Page::Tool],"archive_search");
+        let mut explicit=Dock::restore(&migrated.summary());explicit.sync(&[Page::Tool],"archive_search:");
         assert_eq!(explicit.panels[&Page::Tool].height,300.);
+        // Bare legacy keys and full task keys share defaults, never saved sizes.
+        // 无后缀的历史键与完整子任务键共用默认值，但不混用已保存尺寸。
+        assert_eq!(default_tool_height("archive_search"),600.);
+        explicit.sync(&[Page::Tool],"archive_search:manual");
+        assert_eq!(explicit.panels[&Page::Tool].height,600.);
+        explicit.panels.get_mut(&Page::Tool).unwrap().height=520.;
+        explicit.sync(&[Page::Tool],"archive_search:");
+        assert_eq!(explicit.panels[&Page::Tool].height,300.);
+        explicit.sync(&[Page::Tool],"archive_search:manual");
+        assert_eq!(explicit.panels[&Page::Tool].height,520.);
     }
 }
 
