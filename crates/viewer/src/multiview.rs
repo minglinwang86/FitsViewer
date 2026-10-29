@@ -28,6 +28,18 @@ pub struct Workspace {slots:Vec<Slot>,pub selected:Option<usize>,secondary:Optio
 impl Default for Workspace {fn default()->Self{Self{slots:vec![],selected:None,secondary:None,link:"Independent".into(),paths:String::new(),open:false,clock:0,linked_center:None,linked_ratio:1.,last_link:None,message:String::new(),pending_selection:None,flux_mode:"wcs".into(),flux_aligned:false,flux_allow_filter:false,
     flux_target:None,flux_options:json!({"aperture_radius":5.,"annulus_inner":8.,"annulus_outer":12.,"fwhm":3.,"threshold_sigma":5.,"match_radius":2.,"max_stars":200,"min_matches":5})}}}
 impl Workspace {
+    pub fn insert_layer(&mut self,image:Arc<FitsImage>,preview:Option<Arc<FitsImage>>)->Result<usize,String>{
+        let index=self.add(image.info.path.clone(),Some(image.info.hdu)).ok_or("At most 32 views; close unused tabs")?;
+        if self.selected==Some(index){return Err("Choose a different file for the new layer".into());}
+        if self.slots.iter().filter(|s|s.overlay.enabled).count()>=8 && !self.slots[index].overlay.enabled{return Err("At most 8 enabled comparison spectra".into());}
+        self.clock+=1;let slot=&mut self.slots[index];slot.hdu=Some(image.info.hdu);slot.image=Some(image);slot.preview=preview;slot.texture=None;slot.overlay.enabled=true;slot.overlay.hidden=false;slot.touched=self.clock;slot.revision+=1;self.trim();Ok(index)
+    }
+    pub fn remove_layer(&mut self,index:usize)->Result<(),String>{if self.selected==Some(index){return Err("Close the reference document through its document tab".into());}self.remove(index).map(|_|())}
+    pub fn forget_reference(&mut self,path:&str){
+        let indices=self.slots.iter().enumerate().filter(|(_,slot)|slot.path==path && !slot.overlay.enabled).map(|(i,_)|i).collect::<Vec<_>>();
+        for index in indices.into_iter().rev(){let _=self.remove(index);}
+    }
+    pub fn forget_source(&mut self,path:&str,hdu:Option<usize>){let indices=self.slots.iter().enumerate().filter(|(_,s)|s.path==path && (hdu.is_none() || s.hdu==hdu)).map(|(i,_)|i).collect::<Vec<_>>();for index in indices.into_iter().rev(){let _=self.remove(index);}}
     pub fn paths(&self)->Vec<String>{self.slots.iter().map(|slot|slot.path.clone()).collect()}
     pub fn files_open(&self)->bool{self.open}
     pub fn set_files_open(&mut self,open:bool){self.open=open;}
@@ -42,7 +54,8 @@ impl Workspace {
     }
     pub fn configuration(&self)->Value{json!({"schema":1,"selected":self.selected,"secondary":self.secondary,"link":self.link,"views":self.slots.iter().map(|s|json!({"path":s.path,"hdu":s.hdu,"view":s.view,"apertures":s.apertures,"spectrum_overlay":s.overlay,"comparison_view":ComparisonView{zoom:s.zoom,pan:[s.pan.x,s.pan.y],fit:s.fit}})).collect::<Vec<_>>()})}
     pub fn add_paths(&mut self,paths:&[String]){for path in paths{self.add(path.clone(),None);}}
-    pub fn bytes(&self)->usize{self.slots.iter().map(|s|s.image.as_ref().map_or(0,|i|i.pixels.len()*(i.info.bitpix.unsigned_abs() as usize/8)+i.spectrum.as_ref().map_or(0,|p|p.x.len()*8+p.error.as_ref().map_or(0,|e|e.len()*8)))+s.preview.as_ref().map_or(0,|i|i.pixels.len()*(i.info.bitpix.unsigned_abs() as usize/8))+s.texture.as_ref().map_or(0,|t|t.size()[0]*t.size()[1]*4)).sum()}
+    pub fn bytes(&self)->usize{self.slots.iter().map(|s|s.image.as_ref().map_or(0,|i|crate::document_tabs::dataset_bytes(i))+s.preview.as_ref().map_or(0,|i|crate::document_tabs::dataset_bytes(i))+s.texture.as_ref().map_or(0,|t|t.size()[0]*t.size()[1]*4)).sum()}
+    pub fn cached_source(&self,path:&str,hdu:Option<usize>)->Option<Arc<FitsImage>>{self.slots.iter().find(|s|s.path==path && (hdu.is_none() || s.hdu==hdu)).and_then(|s|s.image.clone()).filter(|image|!matches!(image.pixels,fitsviewer_core::RawPixels::Unavailable))}
     fn trim(&mut self){while self.bytes()>128*1024*1024 {let candidate=self.slots.iter().enumerate().filter(|(i,s)|Some(*i)!=self.selected && Some(*i)!=self.secondary && s.image.is_some()).min_by_key(|(_,s)|s.touched).map(|(i,_)|i);let Some(index)=candidate else{break;};self.slots[index].image=None;self.slots[index].preview=None;self.slots[index].texture=None;}}
     fn add(&mut self,path:String,hdu:Option<usize>)->Option<usize>{
         if let Some(index)=self.slots.iter().position(|s|s.path==path && (s.hdu==hdu || s.hdu.is_none())){return Some(index);}
@@ -185,7 +198,7 @@ impl Workspace {
     }
     fn layer_rows(&mut self,ui:&mut egui::Ui,spectrum:bool,_busy:bool)->Option<usize>{
         use crate::i18n::t;
-        let mut changes=Vec::new();let mut moves=Vec::new();let mut selection=None;let match_target=None;
+        let mut changes=Vec::new();let mut moves=Vec::new();let mut removals=Vec::new();let mut selection=None;let match_target=None;
         for index in self.ordered_indices().into_iter().rev(){
             let slot=&self.slots[index];if slot.image.as_ref().is_some_and(|image|image.spectrum.is_some()!=spectrum){continue;}
             let active=Some(index)==self.selected;
@@ -210,6 +223,7 @@ impl Workspace {
                 });
                 let mut opacity=slot.overlay.opacity;
                 if ui.add(egui::Slider::new(&mut opacity,0. ..=1.).text(t("Opacity"))).changed(){changes.push((index,json!({"opacity":opacity})));}
+                if !active && ui.small_button(t("Remove layer")).clicked(){removals.push(index);}
                 let Some(image)=&slot.image else{if ui.small_button(t("Load layer / make reference")).clicked(){selection=Some(index);}return;};
                 egui::CollapsingHeader::new(t("Layer properties")).id_salt("layer-properties").show(ui,|ui|{
                     let mut label=slot.overlay.label.clone();ui.horizontal(|ui|{ui.label(t("Label"));if ui.add(egui::TextEdit::singleline(&mut label).char_limit(120)).changed(){changes.push((index,json!({"label":label})));}});
@@ -238,7 +252,7 @@ impl Workspace {
             });});
         }
         for (index,params) in changes{if let Err(error)=self.configure_layer(index,&params){self.message=error;}}
-        for (index,up) in moves{self.reorder_layer(index,up);}if selection.is_some(){self.pending_selection=selection;}match_target
+        for (index,up) in moves{self.reorder_layer(index,up);}for index in removals.into_iter().rev(){let _=self.remove_layer(index);}if selection.is_some(){self.pending_selection=selection;}match_target
     }
     pub fn remove(&mut self,index:usize)->Result<(bool,Option<Selection>),String>{
         if index>=self.slots.len(){return Err("Unknown view index".into());}
@@ -248,18 +262,20 @@ impl Workspace {
         self.last_link=None;self.linked_center=None;
         let next=if active && !self.slots.is_empty(){self.selection(index.min(self.slots.len()-1))}else{None};Ok((active,next))
     }
-    pub fn toolbar(&mut self,ctx:&egui::Context)->Option<Action>{
+    pub fn toolbar(&mut self,ctx:&egui::Context)->Option<Action>{self.toolbar_documents(ctx,true)}
+    pub fn toolbar_documents(&mut self,ctx:&egui::Context,show_views:bool)->Option<Action>{
         let mut action=None;let mut close=None;
         egui::TopBottomPanel::top("multi_tabs").show(ctx,|ui|{
             crate::ribbon::align_controls(ui);
             ui.horizontal_wrapped(|ui|{
+                ui.weak(crate::i18n::t("Layers / comparisons"));
                 if ui.button(crate::i18n::t("Add files…")).clicked(){self.open=true;}
                 if ui.button(crate::i18n::t("Copy session JSON")).clicked(){action=Some(Action::CopySession);}
-                for (index,slot) in self.slots.iter().enumerate(){
+                if show_views {for (index,slot) in self.slots.iter().enumerate(){
                     let label=slot.path.rsplit(['/', '\\']).next().unwrap_or(&slot.path);
                     if ui.selectable_label(self.selected==Some(index),format!("{label} [{}]",slot.hdu.map(|h|h.to_string()).unwrap_or_else(||"auto".into()))).clicked(){action=Some(Action::Select(index));}
                     if ui.button("×").on_hover_text(format!("{}: {}",crate::i18n::t("Remove view"),slot.path)).clicked(){close=Some(index);}
-                }
+                }}
                 ui.label(format!("{} {:.1} MiB",crate::i18n::t("Cache"),self.bytes() as f64/1048576.)).on_hover_text(crate::i18n::t("128 MiB LRU budget; active main and comparison images may exceed it."));
                 if !self.message.is_empty(){ui.label(crate::i18n::t(&self.message));}
             });
@@ -425,5 +441,3 @@ mod spectrum_comparison_tests{
         assert!(multi.slots[1].calibration.is_null());assert_eq!(b.physical(0),Some(1.));
     }
 }
-
-

@@ -71,9 +71,13 @@ pub(crate) fn paint_weighted_title(painter: &egui::Painter, position: egui::Pos2
 /// Cloning its painted shape preserves native fade opacity, clipping and layer.
 /// 只加重当前窗口标题矩形内的原始 galley；复制既有 shape 保留淡入淡出、裁剪与层级。
 pub(crate) fn weight_window_title(ctx: &egui::Context, response: &egui::Response, caption: &Arc<egui::Galley>) {
+    weight_window_title_reserved(ctx,response,caption,0.);
+}
+pub(crate) fn weight_window_title_reserved(ctx: &egui::Context, response: &egui::Response, caption: &Arc<egui::Galley>,reserved:f32) {
     let row = window_title_rect(ctx, response.rect);
     let inset = row.height() + ctx.style().spacing.item_spacing.x;
-    let clip = row.shrink2(egui::vec2(inset, 0.));
+    let mut clip = row.shrink2(egui::vec2(inset, 0.));
+    clip.max.x=(clip.max.x-reserved).max(clip.min.x);
     let offset = title_weight_offset(ctx);
     ctx.graphics_mut(|graphics| {
         let Some(list) = graphics.get_mut(response.layer_id) else { return; };
@@ -87,7 +91,8 @@ pub(crate) fn weight_window_title(ctx: &egui::Context, response: &egui::Response
             if matches.next().is_some() { return; }
             first
         };
-        if let Some((index, clip, text)) = source {
+        if let Some((index, clip, mut text)) = source {
+            if reserved>0.{text.pos.x=clip.center().x-text.galley.size().x/2.;}
             let mut left = text.clone();let mut right = text;
             left.pos -= offset;right.pos += offset;
             list.set(egui::layers::ShapeIdx(index), clip, egui::epaint::Shape::Text(left));

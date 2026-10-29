@@ -916,5 +916,21 @@
   "Cancel selection (Esc)": "取消选星 (Esc)",
   "Click or X: select · Middle drag: pan · Q: finish · Backspace: undo": "单击或 X：选点 · 中键拖动：平移 · Q：完成 · Backspace：撤回",
   "Selection session is unavailable or already used by another page": "选星会话不可用或已被另一页面使用",
-  "Scientific warnings": "科学注意事项"
+  "Scientific warnings": "科学注意事项",
+  "Replace current": "覆盖当前",
+  "Open in new tab": "在新选项卡打开",
+  "Open in new layer": "在新图层打开",
+  "Documents": "文档",
+  "Close document tab": "关闭文档选项卡",
+  "Layers / comparisons": "图层／对照",
+  "Remove layer": "移除图层",
+  "Files opened here use this destination; the Jupyter file browser keeps its own tabs.": "此处打开文件使用所选目的地；Jupyter 文件浏览器继续使用外层选项卡。",
+  "At most 32 documents; close unused tabs": "最多 32 个文档；请关闭不用的选项卡",
+  "New layers require PRO mode": "新图层需要 PRO 模式",
+  "Open a reference image before adding a layer": "添加图层前请先打开参考图像",
+  "Choose a different file for the new layer": "请为新图层选择其他文件",
+  "Close the reference document through its document tab": "请通过文档选项卡关闭参考文档",
+  "Layer and reference data types must match": "图层与参考数据的类型必须一致",
+  "Remote viewing is limited to its current authorized source.": "远程查看仅限当前明确授权的数据源。",
+  "Reselect the original local file to reload this document": "请重新选择原来的本地文件以重新加载此文档"
 }

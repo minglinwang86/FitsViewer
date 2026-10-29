@@ -193,7 +193,7 @@ pub fn run(web: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
         Some(connection.api.clone()),
         connection.token.clone(),
         connection.hdu,
-    ).with_window_control(windows.control());
+    ).with_window_control(windows.control()).with_single_source_scope();
     let api = connection.api.clone();
     let token = connection.token.clone();
     let (sender, receiver) = mpsc::sync_channel(8);

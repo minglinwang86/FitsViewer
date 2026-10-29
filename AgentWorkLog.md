@@ -1373,15 +1373,6 @@ container without replacing its active older service, scientific dependencies or
 The versioned entry and rollback instructions are kept in the private installation log.
 
 
-## Public Python selection boundary (2026-10-29)
-
-An earlier unreleased candidate included a downstream compatibility shim and its
-integration notes. They were removed from public source and package inputs; the
-generic `fitsviewer.interactive` API remains. Original records and eight adapter
-checks are retained privately, separately from the ten public client checks. No
-external scientific package source is included in this public integration. The
-historical Linux wheel/hash does not validate a newly cleaned or rebuilt package.
-
 
 ### Histogram hidden-canvas and close-frame correction (2026-10-29)
 
@@ -1398,5 +1389,29 @@ Log counts moved from transient Tools state into backward-compatible Preferences
 The histogram starts with enough height for controls, plot and range; legacy tiny
 saved windows are repaired. Focused Rust and strict Jupyter pointer/tab/reload
 checks passed; packaged Windows/macOS builds must include this correction before
-release. Generic Python selection remains public; locally private integration
-helpers and their dedicated material are excluded from public source/packages.
+release. Generic Python selection remains public. External scientific-project source is
+not bundled; package contents must be checked again after every rebuild.
+
+### Histogram compact layout and internal document destinations (2026-10-29)
+
+The requested compact histogram moves finite/bin/range/marker explanations into
+the title `...` menu and puts Log counts beside the caption. Floating plots fill
+the resize area's actual allocated height, allowing both expansion and shrinking.
+Set its minimum before advancing the UI cursor: doing this after content caused
+the measured minimum height to grow on each repaint. The default content is now
+320×152 logical points, about 16:9 with the compact title/frame. Layout revision 2
+migrates obsolete defaults once; subsequent manual dimensions and positions win.
+Actual English/Chinese browser checks cover the compact controls, resize and prior
+visibility/count-persistence behavior. Final packaged assets need current acceptance.
+
+New document entry belongs in `open_documents.rs`, with lightweight state in
+`document_tabs.rs` and original local-browser bytes in `offline_sources.rs`.
+Minimal offers new tab/replacement; PRO adds a new layer. Keep mode preferences
+separate. Never use a basename as offline source identity, reuse an obsolete async
+generation, or overwrite a current document just to select a legacy comparison.
+Downloaded products use the common open route; HDU and error-plane reloads retain
+the current document. Check document identity, close behavior and artifact references
+alongside the visible tab strip. The cache budgets bound retained content rather
+than total process memory. Focused tests cover original-HDU/measurement/view restore,
+failed opens, generated-file destinations and source eviction; unchanged scientific
+tests are reused rather than rerun solely for these UI changes.

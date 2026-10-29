@@ -51,6 +51,21 @@ the HTML page or a tool controller.
 
 `lib.rs` coordinates the document lifecycle. `ribbon.rs` owns the top task/options
 rows, `controls.rs` preferences, `coordinates.rs` WCS/Gaia, `regions_ui.rs` apertures.
+`open_documents.rs` routes new files to replacement, an internal tab, or a PRO layer.
+`document_tabs.rs` stores per-document HDU, display, view, spectrum and region state,
+with at most 32 tabs and a shared 128 MiB retained document/PRO cache budget. Switching
+does not clone the whole application or retain each document's transport cache.
+Superseded generations are cancelled; failed replacement restores the old document,
+while a failed new tab retains no mismatched source/image pair. Downloaded products
+use this same entry; HDU reloads keep the current document. Legacy PRO comparison
+selection resolves an existing document before creating another one.
+
+For an offline browser file picker, `offline_sources.rs` owns a separate original-byte
+pool, bounded to 64 MiB and 32 sources. Each selection receives an opaque unique ID;
+two files with the same name remain distinct. Eviction requests reselection rather
+than substituting another file's pixels. These are retained-cache limits, not total
+process-memory limits. Single-source remote/manual-selection sessions explicitly
+replace the authorized document and cannot gain additional file capabilities.
 `ui_style.rs` owns shared control geometry, interaction colors and popup/window
 appearance for both Mini and PRO, without changing scientific plot or image colors.
 `image_transform.rs` supplies the same forward/inverse pixel transform to textures,

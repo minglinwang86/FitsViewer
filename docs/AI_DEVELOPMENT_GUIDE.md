@@ -16,6 +16,8 @@
 | 停靠/浮动/折叠布局 | `workspace_ui.rs` | controller UI bodies, Preferences; do not duplicate scientific state |
 | 极简弹窗位置/折叠/恢复 | `window_layout.rs` | typed context keys, Preferences, popup wrappers; keep independent of PRO |
 | 换图、关闭、临时结果引用 | `document_lifecycle.rs` | `science_client.rs`, host sessions/process/artifact ownership |
+| 同窗选项卡、覆盖与 PRO 新图层 | `open_documents.rs`, `document_tabs.rs` | `ribbon.rs`, `multiview.rs`, `document_lifecycle.rs`; use the common open path, preserve pending source and generation |
+| 离线本地文件选择与 HDU 重开 | `offline_sources.rs` | opaque source IDs, bounded original-byte pool; never identify a file by basename alone |
 | 无图主HDU头、误差图测光 | `header_ui.rs`, `server/src/measurement.rs` | core original headers and explicit error kind/HDU |
 | 多图/多谱/相对亮度 | `multiview.rs`, `image_layers.rs` | `web/python/fitsviewer_image_matching.py` |
 | 光谱交互/分析 | `spectrum.rs`, `spectral_lines.rs`, `spectral_analysis.rs` | `fitsviewer_spectra.py`, `fitsviewer_spectral_analysis.py` |
@@ -41,6 +43,12 @@
 上表的 viewer 文件位于 `crates/viewer/src/`，Python 科学适配器位于 `web/python/`。
 顶层 `lib.rs` 负责调度，避免把新的完整 UI/科学工具继续堆进其每帧更新函数。
 `web/pkg/`、Lab 预构建目录、`target/`、`_vendor/` 和 wheel 都是产物，不能手改代替源码。
+
+内部选项卡与 Jupyter 外层文档页签不同。修改打开行为时须同时检查 UI、下载结果、
+Python 选星与远程命令入口；HDU 或误差图重载不是新文件打开。`open_documents.rs`
+统一目的地选择和失败回滚；不要从工具模块直接覆写 `path` 后启动加载。单源远程会话
+只能覆盖其授权来源。`document_tabs.rs` 只保存文档所需状态，不复制整个应用、任务或
+远程缓存；缓存容量、移除引用和取消旧 generation 必须一起审查。
 
 ## 建议的一次修改流程
 

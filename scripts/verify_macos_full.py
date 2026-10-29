@@ -264,14 +264,28 @@ def main():
                                            env=gui_environment, stdout=log, stderr=subprocess.STDOUT,
                                            start_new_session=True)
                 try:
-                    time.sleep(5)
-                    report["gui"]["startup_probe"] = "alive after 5s" if gui.poll() is None else "exited"
+                    started=time.monotonic();deadline=started+60;state={}
+                    # Wait for the observable texture, rather than assuming every
+                    # architecture has finished initialization after five seconds.
+                    while time.monotonic()<deadline:
+                        if gui.poll() is not None:
+                            break
+                        try:
+                            state=json.loads(gui_state.read_text())
+                        except (OSError,json.JSONDecodeError):
+                            state={}
+                        if state.get("error"):
+                            raise RuntimeError("Native GUI reported: "+str(state["error"]))
+                        if state.get("loaded") and state.get("texture") and state.get("first_frame_ready"):
+                            break
+                        time.sleep(.1)
+                    report["gui"]["startup_probe"] = "texture ready" if state.get("texture") else "texture not ready"
+                    report["gui"]["startup_seconds"] = round(time.monotonic()-started,3)
                     report["gui"]["startup_returncode"] = gui.poll()
                     if gui.poll() is not None:
                         raise RuntimeError("Native GUI exited during startup probe: " + str(gui.returncode))
                     if gui.poll() is None:
-                        state = json.loads(gui_state.read_text())
-                        assert state["loaded"] and state["texture"] and not state["error"], state
+                        assert state.get("loaded") and state.get("texture") and not state.get("error"), state
                         assert (state["width"], state["height"]) == (891, 893), state
                         report["gui"]["real_fits_texture_loaded"] = True
                         captured = subprocess.run(["screencapture", "-x", str(output / "native-startup.png")],

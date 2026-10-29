@@ -58,8 +58,9 @@ The fix ignores transient zero/one-point viewports, re-applies saved popup
 geometry on visibility restoration, and avoids capturing egui auto-placement
 when the X button closes a window. Reopening explicitly uses the saved layout.
 
-Histogram content defaults to 360×240 points; older truncated layouts recover
-to at least 320×220, subject to the real viewport. Log counts is a serialized
+Histogram content now defaults to 320×152 points (about 16:9 including title/frame);
+older truncated/default layouts migrate once, while later manual resizing is retained,
+subject to the real viewport. Log counts is a serialized
 preference with a backward-compatible false default.
 
 - The hidden-canvas unit regression failed before the fix with the same 64-point
@@ -71,12 +72,24 @@ preference with a backward-compatible false default.
   Position/size stayed identical, and both count-scale states survived reopening.
   A source-level isolated browser route verified the actual generated response
   bytes without changing a user installation or research kernel.
-- That final local WASM SHA256 is
+- That earlier geometry-only local WASM SHA256 is
   e4e8a2b54c115012f42c89ce9dd67261b40eac51c499fb4348c09c765187b6e3;
   the strict result JSON SHA256 is
   29d99c0c8ee2618cf5af734ae444940308c28fa4b2d1d685ea461a6d6d43f2f0.
   New packaged-platform validation remains required and uses served assets,
   without source overrides, before publication.
+- The subsequent compact-title implementation passed seven focused browser groups
+  in English and Chinese, including menu placement and both plot expansion/shrinking.
+  A final English/Chinese screenshot check measured the shortened outer frame at
+  1.758:1, with complete title controls, using WASM SHA256
+  ac6ad39a8b0a95b77f8875ecb7a6e57aea396a98d8fb6045547e51734fdb9ee9.
+  Packaged platforms require their own current asset checks; the earlier hashes
+  above identify historical evidence only.
+- Internal document opening passed eight focused Full routing/lifecycle cases,
+  six Mini cases, seven Full and five Mini browser groups, and three offline-browser
+  groups for same-named files, HDU selection and eviction. Three source-pool checks
+  verify exact-ID pruning and bounded retention; the proportion migration check
+  preserves manual dimensions and position. These do not replace science validation.
 - Previously accepted core scientific checks are reused. Unchanged Windows IPC
   and installer-option inputs are hash-checked against the accepted CI run;
   new package integrity, native rendering and histogram checks still execute.

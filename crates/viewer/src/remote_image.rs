@@ -126,6 +126,7 @@ impl RemoteImage {
             let index=((image.info.height-1-y)*image.info.width+x)*4;rgba[index..index+4].copy_from_slice(&color);
         }}rgba
     }
+    pub fn load_preview(&mut self,ctx:&egui::Context){self.now=ctx.input(|i|i.time);self.request(ctx,Key{level:self.manifest.preview_level,x:0,y:0});}
     fn request(&mut self,ctx:&egui::Context,key:Key){
         if self.tiles.contains_key(&key) || self.pending.contains(&key) || self.pending.len()>=4{return;}
         if self.retry.get(&key).is_some_and(|(time,_)|*time>self.now){return;}

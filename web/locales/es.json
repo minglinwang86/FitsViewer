@@ -916,5 +916,21 @@
   "Cancel selection (Esc)": "Cancelar selección (Esc)",
   "Click or X: select · Middle drag: pan · Q: finish · Backspace: undo": "Clic o X: seleccionar · Arrastrar con botón central: desplazar · Q: finalizar · Retroceso: deshacer",
   "Selection session is unavailable or already used by another page": "La sesión de selección no está disponible o ya la usa otra página",
-  "Scientific warnings": "Advertencias científicas"
+  "Scientific warnings": "Advertencias científicas",
+  "Replace current": "Reemplazar actual",
+  "Open in new tab": "Abrir en pestaña nueva",
+  "Open in new layer": "Abrir en capa nueva",
+  "Documents": "Documentos",
+  "Close document tab": "Cerrar pestaña del documento",
+  "Layers / comparisons": "Capas / comparaciones",
+  "Remove layer": "Eliminar capa",
+  "Files opened here use this destination; the Jupyter file browser keeps its own tabs.": "Los archivos abiertos aquí usan este destino; Jupyter conserva sus propias pestañas.",
+  "At most 32 documents; close unused tabs": "Máximo 32 documentos; cierre las pestañas sin usar",
+  "New layers require PRO mode": "Las capas nuevas requieren el modo PRO",
+  "Open a reference image before adding a layer": "Abra una imagen de referencia antes de añadir una capa",
+  "Choose a different file for the new layer": "Elija otro archivo para la nueva capa",
+  "Close the reference document through its document tab": "Cierre el documento de referencia desde su pestaña",
+  "Layer and reference data types must match": "La capa y la referencia deben tener el mismo tipo de datos",
+  "Remote viewing is limited to its current authorized source.": "La vista remota se limita a la fuente autorizada actualmente.",
+  "Reselect the original local file to reload this document": "Vuelva a seleccionar el archivo local original para cargar este documento"
 }

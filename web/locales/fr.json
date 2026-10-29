@@ -916,5 +916,21 @@
   "Cancel selection (Esc)": "Annuler la sélection (Esc)",
   "Click or X: select · Middle drag: pan · Q: finish · Backspace: undo": "Clic ou X : sélectionner · Glisser avec le bouton central : déplacer · Q : terminer · Retour arrière : annuler",
   "Selection session is unavailable or already used by another page": "Session de sélection indisponible ou déjà utilisée par une autre page",
-  "Scientific warnings": "Avertissements scientifiques"
+  "Scientific warnings": "Avertissements scientifiques",
+  "Replace current": "Remplacer le document",
+  "Open in new tab": "Ouvrir dans un onglet",
+  "Open in new layer": "Ouvrir dans un calque",
+  "Documents": "Documents",
+  "Close document tab": "Fermer cet onglet",
+  "Layers / comparisons": "Calques / comparaisons",
+  "Remove layer": "Supprimer le calque",
+  "Files opened here use this destination; the Jupyter file browser keeps its own tabs.": "Les fichiers ouverts ici utilisent cette destination ; Jupyter conserve ses propres onglets.",
+  "At most 32 documents; close unused tabs": "32 documents au maximum ; fermez les onglets inutilisés",
+  "New layers require PRO mode": "Les nouveaux calques nécessitent le mode PRO",
+  "Open a reference image before adding a layer": "Ouvrez une image de référence avant d’ajouter un calque",
+  "Choose a different file for the new layer": "Choisissez un autre fichier pour le nouveau calque",
+  "Close the reference document through its document tab": "Fermez le document de référence depuis son onglet",
+  "Layer and reference data types must match": "Le calque et la référence doivent avoir le même type de données",
+  "Remote viewing is limited to its current authorized source.": "La vue distante est limitée à la source actuellement autorisée.",
+  "Reselect the original local file to reload this document": "Sélectionnez à nouveau le fichier local d’origine pour recharger ce document"
 }

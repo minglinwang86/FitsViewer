@@ -7,8 +7,10 @@ use serde_json::json;
 pub(super) struct State{heartbeat:f64,refs_at:f64,refs:Vec<String>,generation:u64}
 impl Default for State{fn default()->Self{Self{heartbeat:-100.,refs_at:-100.,refs:vec![],generation:u64::MAX}}}
 impl FitsApp {
-    fn scientific_paths(&self)->Vec<String>{
-        let mut paths=vec![];
+    pub(super) fn scientific_paths(&self)->Vec<String>{
+        let mut paths=self.documents.paths();
+        if let Some((_,path))=&self.pending_open{paths.push(path.clone());}
+        #[cfg(feature="pro")]if let Some((path,_))=&self.pending_layer{paths.push(path.clone());}
         if let Some(path)=self.environment.artifact_path(){paths.push(path);}
         if let Some(image)=&self.image{paths.push(image.info.path.clone());}
         #[cfg(feature="pro")]{
@@ -28,6 +30,7 @@ impl FitsApp {
     }
     pub(super) fn replace_shared(&mut self,ctx:&egui::Context,image:std::sync::Arc<fitsviewer_core::FitsImage>){self.abandon_document(ctx,Some(&image.info.path));self.accept_shared(image);}
     pub(super) fn close_document(&mut self,ctx:&egui::Context){
+        self.documents.clear();self.pending_document=None;self.pending_open=None;self.replace_rollback=None;self.document_switching=false;
         self.cancel_image_load();
         self.environment.abandon();self.coordinates.cancel(ctx,&self.science,self.generation);self.coordinates=coordinates::Coordinates::default();
         self.wcs_override=None;self.wcs_result=None;self.wcs_pixel=None;self.wcs_pending=false;self.wcs_disabled=false;self.wcs_text.clear();self.wcs_cache.clear();
@@ -38,7 +41,10 @@ impl FitsApp {
         self.generation+=1;self.science.bind_document(self.generation);self.science.request(ctx,self.generation,"release_view",json!({}));self.lifecycle=State::default();
     }
     pub(super) fn scientific_heartbeat(&mut self,ctx:&egui::Context){
-        if self.image.is_none() && !self.environment.active(){return;}
+        if self.image.is_none() && !self.environment.active() && self.documents.len()==0 && self.pending_open.is_none(){
+            #[cfg(feature="pro")]if self.pending_layer.is_some(){}else{return;}
+            #[cfg(not(feature="pro"))]return;
+        }
         let now=ctx.input(|input|input.time);
         if now-self.lifecycle.heartbeat>=30.{self.science.request(ctx,self.generation,"view_heartbeat",json!({}));self.lifecycle.heartbeat=now;}
         if now-self.lifecycle.refs_at>=1. || self.lifecycle.generation!=self.generation{
@@ -46,5 +52,10 @@ impl FitsApp {
             self.lifecycle.refs_at=now;self.lifecycle.generation=self.generation;
         }
         ctx.request_repaint_after(std::time::Duration::from_secs(25));
+    }
+    pub(super) fn refresh_document_refs(&mut self,ctx:&egui::Context){
+        #[cfg(all(target_arch="wasm32",feature="offline"))]{let paths=self.scientific_paths();crate::WEB_OFFLINE_SOURCE.with(|slot|slot.borrow_mut().retain(&paths));}
+        #[cfg(feature="pro")]if let Some(multi)=&self.multi{self.documents.trim_to(crate::document_tabs::CACHE_BUDGET.saturating_sub(multi.bytes()));}
+        self.lifecycle.refs_at=-100.;self.scientific_heartbeat(ctx);
     }
 }

@@ -39,12 +39,25 @@ const save=()=>fs.writeFileSync(path.join(out,'histogram-fixed-result.json'),JSO
  async function drag(start,end){const b=await frame.locator('canvas').boundingBox();await page.mouse.move(b.x+start[0],b.y+start[1]);await page.mouse.down();await page.mouse.move(b.x+end[0],b.y+end[1],{steps:16});await page.mouse.up();await settle();}
  async function click(x,y){const b=await frame.locator('canvas').boundingBox();await page.mouse.click(b.x+x,b.y+y);await settle();}
  try{
-  const directory=path.posix.dirname(cfg.image1);await page.goto(cfg.base_url+'lab/workspaces/'+cfg.workspace+'/tree/'+directory+'?token='+encodeURIComponent(cfg.token));
+  const directory=path.posix.dirname(cfg.image1);
+  const tree=directory==='.'?'':'/tree/'+directory.split('/').map(encodeURIComponent).join('/');
+  await page.goto(cfg.base_url+'lab/workspaces/'+encodeURIComponent(cfg.workspace)+tree+'?token='+encodeURIComponent(cfg.token));
   await page.getByText(path.basename(cfg.image1),{exact:true}).waitFor({timeout:60000});await page.getByText(path.basename(cfg.image1),{exact:true}).dblclick();await selectFrame();
   const initial=await state();assert.ok(Object.hasOwn(initial.preferences,'histogram_log_counts'),'New preference field absent: wrong WASM');
+  if(cfg.language){const preferences=initial.preferences;preferences.language=cfg.language;await command('preferences',preferences);await frame.waitForFunction(language=>window.FitsViewer.state().preferences.language===language,cfg.language);await settle();}
   await command('histogram',{open:true});await settle();let s=await snap('01-default-expanded');
-  await check('initial_histogram_size',async()=>{assert.ok(s.histogram.size[0]>=360&&s.histogram.size[1]>=240);});
-  s=await state();let r=s.preferences.window_layouts.image.Histogram.rect;await drag([r[0]+110,r[1]+12],[460,340]);r=(await state()).preferences.window_layouts.image.Histogram.rect;await drag([r[2]-3,r[3]-3],[r[2]+180,r[3]+130]);const baseline=await snap('03-moved-resized');
+  await check('compact_expanded_histogram',async()=>{assert.ok(s.histogram.size[0]>=300&&s.histogram.size[0]<=335&&s.histogram.size[1]>=96&&s.histogram.size[1]<=160);const r=s.histogram.rect,aspect=(r[2]-r[0])/(r[3]-r[1]);assert.ok(aspect>=1.65&&aspect<=1.95,'Default outer aspect should be close to 16:9: '+aspect);assert.equal(s.histogram.collapsed,false);});
+  await check('title_controls_and_details_menu',async()=>{
+   const st=await state(),box=st.preferences.window_layouts.image.Histogram.rect,c=st.histogram_controls;
+   assert.ok(c?.log_counts_rect&&c?.details_rect&&c?.plot_rect,'New title controls absent');
+   assert.ok(c.log_counts_rect[1]>=box[1]&&c.log_counts_rect[3]<=box[1]+32,'Log counts must be in the title row');
+   await click((c.details_rect[0]+c.details_rect[2])/2,(c.details_rect[1]+c.details_rect[3])/2);
+   await frame.waitForFunction(()=>window.FitsViewer.state().histogram_controls.details_open);
+   await snap('02-details-menu');await page.keyboard.press('Escape');await settle();
+  });
+  s=await state();let r=s.preferences.window_layouts.image.Histogram.rect;await drag([r[0]+80,r[1]+12],[460,340]);r=(await state()).preferences.window_layouts.image.Histogram.rect;const beforeResize=await state();await drag([r[2]-3,r[3]-3],[r[2]+160,r[3]+130]);
+  await check('histogram_window_and_plot_resize',async()=>{const enlarged=await state();assert.ok(enlarged.preferences.window_layouts.image.Histogram.size[1]>beforeResize.preferences.window_layouts.image.Histogram.size[1]+40,'Window must grow');assert.ok(enlarged.histogram_controls.plot_rect[3]-enlarged.histogram_controls.plot_rect[1]>beforeResize.histogram_controls.plot_rect[3]-beforeResize.histogram_controls.plot_rect[1]+30,'Plot must grow with its window');const q=enlarged.preferences.window_layouts.image.Histogram.rect;await drag([q[2]-3,q[3]-3],[q[2]-100,q[1]+140]);const shrunk=await state();assert.ok(shrunk.preferences.window_layouts.image.Histogram.size[1]<enlarged.preferences.window_layouts.image.Histogram.size[1]-30,'Window must also shrink');});
+  const baseline=await snap('03-moved-resized');
   await check('jupyter_tab_hide_restore_geometry',async()=>{
    await page.getByText(path.basename(cfg.image2),{exact:true}).dblclick();await page.waitForFunction(()=>document.querySelectorAll('iframe[data-testid="fitsviewer-frame"]').length===2);await page.waitForTimeout(1000);const hidden=await snap('04-jupyter-hidden');assert.deepEqual(hidden.canvas,[0,0]);sameGeometry(baseline,hidden);
    await page.locator('.lm-TabBar-tab').filter({hasText:path.basename(cfg.image1)}).click();await settle();sameGeometry(baseline,await snap('05-jupyter-restored'));
@@ -54,7 +67,7 @@ const save=()=>fs.writeFileSync(path.join(out,'histogram-fixed-result.json'),JSO
    await frame.frameElement().then(el=>el.evaluate(el=>{el.style.display=el.dataset.qaDisplay;delete el.dataset.qaDisplay;}));await settle();sameGeometry(baseline,await snap('07-display-restored'));
   });
   for(const expected of [true,false])await check('log_counts_'+expected+'_persists',async()=>{
-   let s=await state();if(s.preferences.histogram_log_counts!==expected){const r=s.preferences.window_layouts.image.Histogram.rect;await click(r[0]+12,r[1]+41);}
+   let s=await state();if(s.preferences.histogram_log_counts!==expected){const r=s.histogram_controls.log_counts_rect;await click((r[0]+r[2])/2,(r[1]+r[3])/2);}
    await frame.waitForFunction(expected=>window.FitsViewer.state().preferences.histogram_log_counts===expected,expected,{timeout:10000});
    let captured=await snap('10-log-'+expected+'-clicked');assert.equal(captured.log_stored,expected);
    let r=captured.histogram.rect;await click(r[2]-11,r[1]+12);await frame.waitForFunction(()=>!window.FitsViewer.state().preferences.window_layouts.image.Histogram.open);await snap('10-log-'+expected+'-closed');

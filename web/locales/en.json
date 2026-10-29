@@ -916,5 +916,21 @@
   "Cancel selection (Esc)": "Cancel selection (Esc)",
   "Click or X: select · Middle drag: pan · Q: finish · Backspace: undo": "Click or X: select · Middle drag: pan · Q: finish · Backspace: undo",
   "Selection session is unavailable or already used by another page": "Selection session is unavailable or already used by another page",
-  "Scientific warnings": "Scientific warnings"
+  "Scientific warnings": "Scientific warnings",
+  "Replace current": "Replace current",
+  "Open in new tab": "Open in new tab",
+  "Open in new layer": "Open in new layer",
+  "Documents": "Documents",
+  "Close document tab": "Close document tab",
+  "Layers / comparisons": "Layers / comparisons",
+  "Remove layer": "Remove layer",
+  "Files opened here use this destination; the Jupyter file browser keeps its own tabs.": "Files opened here use this destination; the Jupyter file browser keeps its own tabs.",
+  "At most 32 documents; close unused tabs": "At most 32 documents; close unused tabs",
+  "New layers require PRO mode": "New layers require PRO mode",
+  "Open a reference image before adding a layer": "Open a reference image before adding a layer",
+  "Choose a different file for the new layer": "Choose a different file for the new layer",
+  "Close the reference document through its document tab": "Close the reference document through its document tab",
+  "Layer and reference data types must match": "Layer and reference data types must match",
+  "Remote viewing is limited to its current authorized source.": "Remote viewing is limited to its current authorized source.",
+  "Reselect the original local file to reload this document": "Reselect the original local file to reload this document"
 }

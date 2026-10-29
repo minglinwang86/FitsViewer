@@ -11,7 +11,7 @@ function fixture(){
  let session={id:'owned',status:'selecting',path:'a.fits',hdu:0,max_points:2,identity:'version-1',config_revision:1,requested_view:{},view:{},prompt:'Pick a star',markers:[]};
  const context=vm.createContext({URL,URLSearchParams,console,disposed:false,remote:null,base:'http://127.0.0.1:12345/',document:{cookie:'_xsrf=test-xsrf'},Date,
    setTimeout(callback){timers.push(callback);return timers.length;},fetch:async(url,options)=>{requests.push({url:String(url),options});if(context.failure)return {ok:false,status:context.failure,text:async()=> 'Session is already used'};return {ok:true,json:async()=> structuredClone(session)};},
-   window:{__fitsviewerState:state,FitsViewer:{async command(operation,params){commands.push({operation,params});if(operation==='selection.configure'){state.selection.applied_config_revision=params.config_revision;state.selection.revision++;}if(operation==='view'){Object.assign(state,params);}if(operation==='selection.cancel')state.selection.status='cancelled';}}},failure:0});
+   window:{__fitsviewerState:state,FitsViewer:{async command(operation,params){commands.push({operation,params});if(operation==='open'){state.path=params.path;state.hdu=params.hdu;state.loaded=true;state.loading=false;}if(operation==='selection.configure'){state.selection.applied_config_revision=params.config_revision;state.selection.revision++;}if(operation==='view'){Object.assign(state,params);}if(operation==='selection.cancel')state.selection.status='cancelled';}}},failure:0});
  vm.runInContext(bridge+'\nglobalThis.control={beginSelection,followSelection,selectionUpdate,cancelSelectionOnClose,applySelectionConfiguration,setSession(id){selectionSession=id;},getSession(){return selectionSession;}}',context);
  return {context,requests,commands,timers,state,set session(value){session=value;},get session(){return session;},control:context.control};
 }
@@ -50,4 +50,9 @@ function fixture(){
  assert.equal(context.window.__fvBootstrapToken,'owned-fixture-token');assert.deepEqual(edits,['/?selection=owned']);
  assert.ok(html.includes("delete window.__fvBootstrapToken"));
 }
-console.log('Selection bridge: bootstrap credential, source gate, writer identity, actual view acknowledgment, terminal cancellation, conflict stop and close keepalive passed (6 scenarios).');
+{
+ const f=fixture();f.state.path='reference.fits';f.state.preferences={mode:'PRO',pro_open_destination:'layer'};
+ await f.control.beginSelection('owned');const open=f.commands.find(c=>c.operation==='open');assert.equal(open.params.destination,'replace');assert.equal(open.params.path,'a.fits');assert.equal(open.params.hdu,0);
+ assert.ok(f.commands.find(c=>c.operation==='selection.begin'));
+}
+console.log('Selection bridge: bootstrap credential, source gate, writer identity, actual view acknowledgment, terminal cancellation, conflict stop and close keepalive passed (7 scenarios).');

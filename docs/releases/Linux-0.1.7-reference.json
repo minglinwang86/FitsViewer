@@ -20,15 +20,13 @@
     "installed_wheel_jupyter": true,
     "two_gib_sparse_precision_and_cleanup": true,
     "python_interactive_public_subset": 10,
-    "python_interactive_private_subset": 8,
     "historical_external_python_selection_and_cancel": true
   },
   "limits": [
     "Counts overlap; do not sum as a whole-workspace test count",
     "The large image test is synthetic, not an observational performance benchmark",
     "Original failing template unavailable",
-    "External service availability is not guaranteed",
-    "The historical 18 client checks include 10 generic checks and 8 private downstream-adapter checks; private compatibility is not a public feature"
+    "External service availability is not guaranteed"
   ],
   "runtime_files": [
     {
@@ -480,5 +478,5 @@
       "sha256_lf": "f1bc8799902eb4c156766928fbe3a9f8b88368fec463082392318f0dc29ee67d"
     }
   ],
-  "runtime_files_scope": "Historical public-source reference subset; the private adapter entry was removed. Rebuild and record a complete manifest for the next release."
+  "runtime_files_scope": "Historical source reference subset, not a manifest of the final rebuilt release."
 }

@@ -916,5 +916,21 @@
   "Cancel selection (Esc)": "Auswahl abbrechen (Esc)",
   "Click or X: select · Middle drag: pan · Q: finish · Backspace: undo": "Klick oder X: auswählen · Mittlere Taste ziehen: verschieben · Q: abschließen · Rücktaste: zurücknehmen",
   "Selection session is unavailable or already used by another page": "Auswahlsitzung nicht verfügbar oder bereits von einer anderen Seite verwendet",
-  "Scientific warnings": "Wissenschaftliche Warnungen"
+  "Scientific warnings": "Wissenschaftliche Warnungen",
+  "Replace current": "Aktuelles ersetzen",
+  "Open in new tab": "In neuem Tab öffnen",
+  "Open in new layer": "Als neue Ebene öffnen",
+  "Documents": "Dokumente",
+  "Close document tab": "Dokument-Tab schließen",
+  "Layers / comparisons": "Ebenen / Vergleiche",
+  "Remove layer": "Ebene entfernen",
+  "Files opened here use this destination; the Jupyter file browser keeps its own tabs.": "Hier geöffnete Dateien verwenden dieses Ziel; Jupyter behält seine eigenen Tabs.",
+  "At most 32 documents; close unused tabs": "Höchstens 32 Dokumente; unbenutzte Tabs schließen",
+  "New layers require PRO mode": "Neue Ebenen erfordern den PRO-Modus",
+  "Open a reference image before adding a layer": "Vor dem Hinzufügen einer Ebene ein Referenzbild öffnen",
+  "Choose a different file for the new layer": "Für die neue Ebene eine andere Datei wählen",
+  "Close the reference document through its document tab": "Referenzdokument über seinen Dokument-Tab schließen",
+  "Layer and reference data types must match": "Ebene und Referenz müssen denselben Datentyp haben",
+  "Remote viewing is limited to its current authorized source.": "Die Fernansicht ist auf die aktuell autorisierte Quelle beschränkt.",
+  "Reselect the original local file to reload this document": "Die ursprüngliche lokale Datei erneut auswählen, um das Dokument zu laden"
 }

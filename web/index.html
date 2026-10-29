@@ -71,8 +71,10 @@ async function applySelectionConfiguration(session){
 async function beginSelection(id){
  if(remote)throw new Error('Selection sessions require the local authenticated API');
  const session=await selectionRequest(null,id);if(!['waiting','selecting'].includes(session.status))return;
- const deadline=Date.now()+30000;
- while(!disposed){const state=window.__fitsviewerState;if(state?.loaded&&!state.loading&&state.path===session.path&&state.hdu===session.hdu)break;if(state?.error||Date.now()>deadline)throw new Error(state?.error||'Selection image did not load');await new Promise(resolve=>setTimeout(resolve,50));}
+ const deadline=Date.now()+30000;let requested=false,openingState=null;
+ while(!disposed){const state=window.__fitsviewerState;if(state?.loaded&&!state.loading&&state.path===session.path&&state.hdu===session.hdu)break;
+  if(state&&!state.loading&&!requested){requested=true;openingState=state;await window.FitsViewer.command('open',{path:session.path,hdu:session.hdu,destination:'replace'});continue;}
+  if(state!==openingState&&state?.error&&!state.loading||Date.now()>deadline)throw new Error(state?.error||'Selection image did not load');await new Promise(resolve=>setTimeout(resolve,50));}
  if(disposed)return;
  selectionSession=id;selectionLastRevision=0;selectionConfigRevision=-1;
  await window.FitsViewer.command('selection.begin',{id,path:session.path,hdu:session.hdu,max_points:session.max_points,identity:session.identity});
@@ -120,7 +122,7 @@ try{
  if(window.__fverBootstrapTicket){
   const ticket=window.__fverBootstrapTicket;delete window.__fverBootstrapTicket;
   const status=document.createElement('div');status.id='fver-status';status.style.cssText='padding:5px 10px;background:#18212d;flex:none;min-height:18px';document.body.prepend(status);
-  remote=remoteSession(base,ticket,{translate:pageText,started:()=>started,state:()=>window.__fitsviewerState,open:request=>window.FitsViewer.command('open',{path:request.path,hdu:request.hdu}),close:()=>window.FitsViewer.command('close'),artifact(id,complete){document.getElementById('stage').style.display='none';status.textContent=pageText('Export ready ');const button=document.createElement('button');button.textContent=pageText('Download');button.onclick=()=>{button.disabled=true;downloadArtifact(new URL('api/artifact?id='+encodeURIComponent(id),base),complete).finally(()=>{button.disabled=false;});};status.append(button);},status(text,fallback){status.replaceChildren(document.createTextNode(text));if(fallback){const button=document.createElement('button');button.textContent=pageText('Open in browser anyway');button.style.marginLeft='10px';button.onclick=()=>{button.disabled=true;fallback().catch(error=>{status.textContent=String(error);});};status.append(button);}}});
+  remote=remoteSession(base,ticket,{translate:pageText,started:()=>started,state:()=>window.__fitsviewerState,open:request=>window.FitsViewer.command('open',{path:request.path,hdu:request.hdu,destination:'replace'}),close:()=>window.FitsViewer.command('close'),artifact(id,complete){document.getElementById('stage').style.display='none';status.textContent=pageText('Export ready ');const button=document.createElement('button');button.textContent=pageText('Download');button.onclick=()=>{button.disabled=true;downloadArtifact(new URL('api/artifact?id='+encodeURIComponent(id),base),complete).finally(()=>{button.disabled=false;});};status.append(button);},status(text,fallback){status.replaceChildren(document.createTextNode(text));if(fallback){const button=document.createElement('button');button.textContent=pageText('Open in browser anyway');button.style.marginLeft='10px';button.onclick=()=>{button.disabled=true;fallback().catch(error=>{status.textContent=String(error);});};status.append(button);}}});
   initial=await remote.bootstrap();
  }
  if(!initial?.downloadOnly){
@@ -129,6 +131,7 @@ try{
  if(!fontResponse.ok)throw new Error('CJK font asset unavailable');
  const initialMode=query.get('mode')??session?.mode??(session?(session.views?.length>1?'PRO':'Minimal'):undefined);
  if(initialMode!==undefined&&!['Minimal','PRO'].includes(initialMode))throw new Error('Unknown UI mode');
+ window.__fitsviewerSingleSource=Boolean(remote);
  const font=new Uint8Array(await fontResponse.arrayBuffer());if(!disposed){await start(document.getElementById('fitsviewer-canvas'),api,remote?initial?.path||'':session?'':query.get('path')||'',remote?.token()||standaloneToken,remote?initial?.hdu??undefined:query.has('hdu')?Number(query.get('hdu')):undefined,font,initialMode);started=true;if(disposed)releaseResources();else {
  if(session)await window.FitsViewer.command('session.apply',{...session,mode:initialMode});
  if(query.has('selection'))await beginSelection(query.get('selection'));

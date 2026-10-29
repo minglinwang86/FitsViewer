@@ -79,6 +79,8 @@ pub struct Preferences {
     pub mode:String,
     pub default_mode:String,
     pub open_in_same_window:bool,
+    pub minimal_open_destination:crate::document_tabs::Destination,
+    pub pro_open_destination:crate::document_tabs::Destination,
     pub compact_large_images:bool,
     pub theme:String,
     pub language:String,
@@ -102,12 +104,13 @@ pub struct Preferences {
     pub shortcuts:Vec<(String,String)>,
 }
 impl Default for Preferences {
-    fn default()->Self {Self{schema:1,mode:"Minimal".into(),default_mode:"Minimal".into(),open_in_same_window:false,compact_large_images:true,theme:"Dark".into(),language:"en".into(),render:RenderOptions::default(),colorbar:false,histogram_log_counts:false,scale_bar:true,scale_pixels:100.,compass:false,colorbar_position:"Right".into(),toolbar:vec!["Fit".into(),"ZScale".into(),"Reset B/C".into()],ribbon_tab:"View".into(),ribbon_collapsed:false,image_pro_width:330.,spectrum_pro_width:330.,image_pro_collapsed:false,spectrum_pro_collapsed:false,image_pro_layout:serde_json::Value::Null,spectrum_pro_layout:serde_json::Value::Null,window_layouts:Default::default(),shortcuts:vec![]}}
+    fn default()->Self {Self{schema:1,mode:"Minimal".into(),default_mode:"Minimal".into(),open_in_same_window:false,minimal_open_destination:Default::default(),pro_open_destination:Default::default(),compact_large_images:true,theme:"Dark".into(),language:"en".into(),render:RenderOptions::default(),colorbar:false,histogram_log_counts:false,scale_bar:true,scale_pixels:100.,compass:false,colorbar_position:"Right".into(),toolbar:vec!["Fit".into(),"ZScale".into(),"Reset B/C".into()],ribbon_tab:"View".into(),ribbon_collapsed:false,image_pro_width:330.,spectrum_pro_width:330.,image_pro_collapsed:false,spectrum_pro_collapsed:false,image_pro_layout:serde_json::Value::Null,spectrum_pro_layout:serde_json::Value::Null,window_layouts:Default::default(),shortcuts:vec![]}}
 }
 impl Preferences {
     pub fn validate(&self)->Result<(),String>{
         #[cfg(not(feature="pro"))] if self.mode!="Minimal" || self.default_mode!="Minimal" || !["View","Measure","Coordinates"].contains(&self.ribbon_tab.as_str()){return Err("PRO is not included in this Mini build".into());}
         if self.schema!=1 || !crate::i18n::supported(&self.language) || !["Minimal","PRO"].contains(&self.mode.as_str()) || !["Dark","Light","Night"].contains(&self.theme.as_str()) || !["Left","Right","Top","Bottom"].contains(&self.colorbar_position.as_str()) {return Err("Unsupported preferences schema, mode, theme or colorbar position".into());}
+        if self.minimal_open_destination==crate::document_tabs::Destination::Layer{return Err("New layers require PRO mode".into());}
         self.render.validate()?;
         if !self.scale_pixels.is_finite() || !(0.001..=1e7).contains(&self.scale_pixels){return Err("Invalid scale bar length".into());}
         self.window_layouts.validate()?;
@@ -235,6 +238,7 @@ pub struct Tools {
     pub histogram:Option<Histogram>,
     pub histogram_builds:usize,
     pub histogram_limits:Option<(f64,f64)>,
+    pub histogram_controls:serde_json::Value,
     histogram_drag_low:bool,
     pub json:String,
     pub message:String,
@@ -244,7 +248,7 @@ pub struct Tools {
     io_path:String,
 }
 impl Default for Tools {
-    fn default()->Self{Self{prefs:load().for_startup(),settings_open:false,histogram_open:false,histogram:None,histogram_builds:0,histogram_limits:None,histogram_drag_low:true,json:String::new(),message:String::new(),applied_theme:String::new(),shortcut_key:"Ctrl+F".into(),shortcut_action:"Fit".into(),io_path:"fitsviewer-ui.json".into()}}
+    fn default()->Self{Self{prefs:load().for_startup(),settings_open:false,histogram_open:false,histogram:None,histogram_builds:0,histogram_limits:None,histogram_controls:serde_json::Value::Null,histogram_drag_low:true,json:String::new(),message:String::new(),applied_theme:String::new(),shortcut_key:"Ctrl+F".into(),shortcut_action:"Fit".into(),io_path:"fitsviewer-ui.json".into()}}
 }
 impl Tools {
     pub fn apply_theme(&mut self,ctx:&egui::Context){
@@ -322,18 +326,32 @@ impl Tools {
     }
     pub fn histogram(&mut self,ctx:&egui::Context,image:Option<&FitsImage>,low:f64,high:f64,windows:&mut crate::window_layout::Runtime){
         if !self.histogram_open{return;}let mut open=self.histogram_open;
-        windows.show(ctx,crate::window_layout::Key::Histogram,crate::i18n::t("Physical-value histogram"),&mut open,egui::vec2(360.,240.),|ui|self.histogram_ui(ui,image,low,high));self.histogram_open=open;
+        let font=egui::TextStyle::Button.resolve(&ctx.style());
+        let log_width=ctx.fonts(|fonts|fonts.layout_no_wrap(crate::i18n::t("Log counts").into(),font,Color32::WHITE).size().x);
+        windows.reserve_title_controls(crate::window_layout::Key::Histogram,log_width+60.);
+        windows.show(ctx,crate::window_layout::Key::Histogram,crate::i18n::t("Physical-value histogram"),&mut open,crate::window_layout::HISTOGRAM_DEFAULT_SIZE,|ui|self.histogram_plot_ui(ui,image,low,high,false));self.histogram_open=open;
+        if open{windows.title_controls(ctx,crate::window_layout::Key::Histogram,|ui|self.histogram_title_controls(ui,low,high));}
     }
     pub fn histogram_ui(&mut self,ui:&mut egui::Ui,image:Option<&FitsImage>,low:f64,high:f64){
-        if self.histogram.is_none(){if let Some(image)=image{self.histogram=Some(Histogram::new(image,128));self.histogram_builds+=1;}}
+        self.histogram_plot_ui(ui,image,low,high,true);
+    }
+    fn histogram_title_controls(&mut self,ui:&mut egui::Ui,low:f64,high:f64){
+        let response=ui.checkbox(&mut self.prefs.histogram_log_counts,crate::i18n::t("Log counts"));let r=response.rect;
+        self.histogram_controls["log_counts_rect"]=serde_json::json!([r.min.x,r.min.y,r.max.x,r.max.y]);
+        let menu=ui.menu_button("...",|ui|{
             if let Some(hist)=&self.histogram{
-                // Keep counts beside their control; a dock must not stretch the plot to its full height.
-                // 计数紧跟选项，直方图不随工作区高度无限扩张。
-                ui.horizontal(|ui|{
-                    ui.checkbox(&mut self.prefs.histogram_log_counts,egui::RichText::new(crate::i18n::t("Log counts")).size(11.));
-                    let details=format!("{} {} · {} {} · {}",hist.finite,crate::i18n::t("finite values"),hist.counts.len(),crate::i18n::t("bins"),crate::i18n::t(if hist.sampled{"sampled"}else{"full image"}));
-                    ui.add(egui::Label::new(egui::RichText::new(&details).size(11.)).truncate()).on_hover_text(details);
-                });
+                ui.label(format!("{} {} · {} {} · {}",hist.finite,crate::i18n::t("finite values"),hist.counts.len(),crate::i18n::t("bins"),crate::i18n::t(if hist.sampled{"sampled"}else{"full image"})));
+                ui.label(format!("{:.3e} … {:.3e}",hist.minimum,hist.maximum));
+                ui.label(crate::i18n::t("yellow = Low / High"));
+                ui.label(format!("{}: {low:.7e} · {}: {high:.7e}",crate::i18n::t("Low"),crate::i18n::t("High")));
+            }
+        });self.histogram_controls["details_open"]=serde_json::json!(menu.inner.is_some());let r=menu.response.rect;
+        self.histogram_controls["details_rect"]=serde_json::json!([r.min.x,r.min.y,r.max.x,r.max.y]);
+    }
+    fn histogram_plot_ui(&mut self,ui:&mut egui::Ui,image:Option<&FitsImage>,low:f64,high:f64,inline_controls:bool){
+        if self.histogram.is_none(){if let Some(image)=image{self.histogram=Some(Histogram::new(image,128));self.histogram_builds+=1;}}
+        if inline_controls{ui.horizontal(|ui|self.histogram_title_controls(ui,low,high));}
+            if let Some(hist)=&self.histogram{
                 let mut edited=(low,high);
                 ui.horizontal(|ui|{
                     ui.label(crate::i18n::t("Low"));let lower=ui.add(egui::DragValue::new(&mut edited.0).speed((hist.maximum/1000.-hist.minimum/1000.).abs().max(f64::MIN_POSITIVE)).custom_formatter(|value,_|format!("{value:.6e}"))).changed();
@@ -341,8 +359,9 @@ impl Tools {
                     if (lower || upper) && valid_display_limits(edited){self.histogram_limits=Some(edited);}
                 });
                 if !valid_display_limits(edited){edited=(low,high);}
-                let plot_height=(ui.available_width()*0.33).clamp(84.,120.);
+                let plot_height=if inline_controls{(ui.available_width()*0.33).clamp(52.,120.)}else{ui.available_height().clamp(36.,2000.)};
                 let (response,painter)=ui.allocate_painter(Vec2::new(ui.available_width(),plot_height),egui::Sense::click_and_drag());let rect=response.rect;
+                self.histogram_controls["plot_rect"]=serde_json::json!([rect.min.x,rect.min.y,rect.max.x,rect.max.y]);
                 let to_x=|value:f64|rect.left()+((value-hist.minimum)/(hist.maximum-hist.minimum)) as f32*rect.width();
                 if let Some(pos)=response.interact_pointer_pos(){
                     if response.drag_started(){self.histogram_drag_low=(pos.x-to_x(edited.0)).abs()<=(pos.x-to_x(edited.1)).abs();}
@@ -357,8 +376,6 @@ impl Tools {
                 let height=|n:u64|if self.prefs.histogram_log_counts{(n as f64).ln_1p()}else{n as f64};let maximum=height(*hist.counts.iter().max().unwrap_or(&1)).max(1.);
                 for (i,&n) in hist.counts.iter().enumerate(){let x0=rect.left()+rect.width()*i as f32/hist.counts.len() as f32;let x1=rect.left()+rect.width()*(i+1) as f32/hist.counts.len() as f32;painter.rect_filled(Rect::from_min_max(Pos2::new(x0,rect.bottom()-(height(n)/maximum) as f32*rect.height()),Pos2::new(x1,rect.bottom())),0.,Color32::from_rgb(75,155,185));}
                 for (bound,label) in [(edited.0,"L"),(edited.1,"H")]{let x=to_x(bound);if x>=rect.left() && x<=rect.right(){painter.line_segment([Pos2::new(x,rect.top()),Pos2::new(x,rect.bottom())],Stroke::new(1.5_f32,Color32::YELLOW));painter.circle_filled(Pos2::new(x,rect.top()+5.),4.,Color32::YELLOW);painter.text(Pos2::new(x,rect.top()+12.),egui::Align2::CENTER_TOP,label,egui::FontId::proportional(10.),Color32::YELLOW);}}
-                let range=format!("{:.3e} … {:.3e} · {}",hist.minimum,hist.maximum,crate::i18n::t("yellow = Low / High"));
-                ui.add(egui::Label::new(egui::RichText::new(&range).size(11.)).truncate()).on_hover_text(format!("{range}\nLow: {low:.7e}\nHigh: {high:.7e}"));
             }else{ui.label(crate::i18n::t("Open an image to compute its histogram."));}
     }
     pub fn image_area(&self,painter:&egui::Painter,mut area:Rect,low:f64,high:f64,stretch:Stretch,invert:bool,tone:DisplayTone,unit:&str,mapping:Option<&ScaleMapping>)->Rect{

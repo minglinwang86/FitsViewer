@@ -7,6 +7,10 @@
 - Bring aperture results and spectrum summaries/copy actions into view; preserve scientific warning details and keep task scrolling independent.
 - Fix large-image precision-switch request cancellation, native window mailbox lifecycle, download cancellation at commit, and private Jupyter proxy/backend authentication.
 - Set display Low/High by clicking or dragging histogram markers, with numeric inputs.
+- Keep histogram geometry across hidden Jupyter tabs and reopening; remember Log counts,
+  place details in the title menu and allow resizing of the compact window and plot.
+- Add internal new-tab/replacement destinations in both modes and new-layer opening in PRO,
+  with per-mode preferences, per-tab state and bounded retained caches.
 - Exit all registered FitsViewer windows gracefully and optionally reuse an existing window when opening another image; Jupyter and unrelated applications remain running.
 - Native startup uses asynchronous metadata, previews and viewport tiles. Minimal mode can use compact 16-bit display tiles; PRO retains original-bit-depth tiles. Exact readouts and scientific calculations retain original data.
 - Large internally compressed FITS images use bounded decoding of the compression tiles required by the view, instead of requiring a full decoded-array cache. Original headers can be inspected independently of the full-array input limit.
