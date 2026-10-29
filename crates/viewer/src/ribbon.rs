@@ -425,7 +425,10 @@ impl FitsApp {
             let gap=ui.spacing().item_spacing.x;let open_width=button_width("Open");
             #[cfg(target_arch="wasm32")]
             let window_width=button_width("↗");
+            #[cfg(not(all(target_arch="wasm32",feature="offline")))]
             let destination_width=button_width(self.open_destination().label());
+            #[cfg(all(target_arch="wasm32",feature="offline"))]
+            let destination_width=0.;
             let mut reserved=destination_width+gap+open_width+button_width("Header")+button_width("Settings")+button_width("Exit all")+gap*4.;
             #[cfg(feature="pro")]
             if self.tools.prefs.mode=="PRO"{reserved+=button_width("Work area")+gap;}
@@ -439,17 +442,28 @@ impl FitsApp {
             let maximum=(ui.available_width()-reserved).max(32.);
             let centered=(ui.max_rect().center().x-open_width/2.-ui.cursor().left()-gap).max(32.);
             let width=(measure(&self.path)+8.).max(centered).min(maximum);
+            #[cfg(not(all(target_arch="wasm32",feature="offline")))]
             let response=if self.path.starts_with("local://"){
                 let mut name=self.path.rsplit('/').next().unwrap_or("").to_string();ui.add_sized([width,ui.spacing().interact_size.y],egui::TextEdit::singleline(&mut name).interactive(false))
             }else{path_field(ui,&mut self.path,width)};
+            #[cfg(all(target_arch="wasm32",feature="offline"))]
+            ui.add_enabled_ui(false,|ui|{if self.path.starts_with("local://"){
+                let mut name=self.path.rsplit('/').next().unwrap_or("").to_string();ui.add_sized([width,ui.spacing().interact_size.y],egui::TextEdit::singleline(&mut name).interactive(false))
+            }else{path_field(ui,&mut self.path,width)}}).response.on_disabled_hover_text("Use the local file picker above.");
+            #[cfg(not(all(target_arch="wasm32",feature="offline")))]
             if ui.add_enabled(!self.loading, egui::Button::new(t("Open")).min_size(Vec2::new(open_width,0.))).clicked()
                 || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) { let path=self.path.clone();if let Err(error)=self.open_path(ctx,path,fitsviewer_core::LoadOptions::default(),None){self.error=error;} }
+            #[cfg(all(target_arch="wasm32",feature="offline"))]
+            ui.add_enabled(false,egui::Button::new(t("Open")).min_size(Vec2::new(open_width,0.))).on_disabled_hover_text("Use the local file picker above.");
+            #[cfg(not(all(target_arch="wasm32",feature="offline")))]
+            {
             let mut target=self.open_destination();
             ui.add_enabled_ui(!self.single_source,|ui|{egui::ComboBox::from_id_salt("open-destination").width(destination_width).selected_text(t(target.label())).show_ui(ui,|ui|{
                 for choice in [crate::document_tabs::Destination::Tab,crate::document_tabs::Destination::Replace]{ui.selectable_value(&mut target,choice,t(choice.label()));}
                 #[cfg(feature="pro")] if self.tools.prefs.mode=="PRO"{ui.selectable_value(&mut target,crate::document_tabs::Destination::Layer,t("Open in new layer"));}
             }).response.on_hover_text(t("Files opened here use this destination; the Jupyter file browser keeps its own tabs.")).on_disabled_hover_text(t("Remote viewing is limited to its current authorized source."));});
             if target!=self.open_destination(){if cfg!(feature="pro") && self.tools.prefs.mode=="PRO"{self.tools.prefs.pro_open_destination=target;}else{self.tools.prefs.minimal_open_destination=target;}let _=crate::controls::save(&self.tools.prefs);}
+            }
             if ui.button(t("Header")).clicked() { self.header_open = !self.header_open; }
             if ui.selectable_label(self.tools.settings_open,t("Settings")).clicked(){self.tools.settings_open=!self.tools.settings_open;}
             #[cfg(feature="pro")]
@@ -462,12 +476,18 @@ impl FitsApp {
             if ui.add_enabled(!self.loading && self.image.is_some(), egui::Button::new(t("Close image"))).clicked() {
                 let _ = self.command(ctx, serde_json::json!({"operation":"close"}));
             }
+            #[cfg(not(all(target_arch="wasm32",feature="offline")))]
             if ui.button(t("Exit all")).on_hover_text(t("Exit all FitsViewer windows")).clicked(){self.exit_all_windows(ctx);}
+            #[cfg(all(target_arch="wasm32",feature="offline"))]
+            ui.add_enabled(false,egui::Button::new(t("Exit all"))).on_disabled_hover_text("Close the app or browser tab using your device controls.");
             if self.loading { ui.spinner(); }
             #[cfg(target_arch="wasm32")]
             {
                 ui.add_space((ui.available_width()-window_width).max(0.));
+                #[cfg(not(feature="offline"))]
                 if ui.add(egui::Button::new("↗").min_size(Vec2::new(window_width,0.))).on_hover_text(t("Open in window")).clicked(){let _=crate::text_io::browser("openWindow",&[]);}
+                #[cfg(feature="offline")]
+                ui.add_enabled(false,egui::Button::new("↗").min_size(Vec2::new(window_width,0.))).on_disabled_hover_text("This offline viewer uses local document tabs.");
             }
         });
     }

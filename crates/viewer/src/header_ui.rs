@@ -11,9 +11,15 @@ impl Headers{
 impl FitsApp{
     pub(super) fn header_ui(&mut self,ui:&mut egui::Ui,ctx:&egui::Context){
         let Some(image)=&self.image else{return;};let current=image.info.hdu;
-        let selected=self.header.selected.get_or_insert(current);let previous=*selected;
+        let selected=self.header.selected.get_or_insert(current);
+        #[cfg(all(target_arch="wasm32",feature="offline"))]
+        {*selected=current;}
+        let previous=*selected;
         ui.horizontal(|ui|{
+            #[cfg(not(all(target_arch="wasm32",feature="offline")))]
             egui::ComboBox::from_id_salt("original-header-hdu").selected_text(format!("HDU {}",*selected)).show_ui(ui,|ui|{for hdu in &image.info.hdus{ui.selectable_value(selected,hdu.index,format!("{} · {}",hdu.index,hdu.name));}});
+            #[cfg(all(target_arch="wasm32",feature="offline"))]
+            ui.add_enabled_ui(false,|ui|{egui::ComboBox::from_id_salt("original-header-hdu").selected_text(format!("HDU {}",current)).show_ui(ui,|_|{});}).response.on_disabled_hover_text("Shows the current HDU header. Switch the image HDU to inspect another viewable header.");
             if ui.button(t("Copy JSON")).clicked(){ctx.copy_text(json!({"path":image.info.path,"hdu":*selected,"header":if *selected==current{Some(image.info.header.as_str())}else{self.header.text.as_deref()}}).to_string());}
         });
         if previous!=*selected{self.header.text=None;self.header.error.clear();self.header.pending=false;}

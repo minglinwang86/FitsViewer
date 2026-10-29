@@ -1,0 +1,12 @@
+Android wrapper dependency
+
+The Android wrapper uses AndroidX WebKit 1.12.1 and its AndroidX dependencies,
+published by the Android Open Source Project under the Apache License 2.0.
+The complete Apache License 2.0 is included in this viewer's license notices.
+
+AndroidX source and licensing:
+https://android.googlesource.com/platform/frameworks/support/
+https://developer.android.com/jetpack/androidx/releases/webkit
+
+Android System WebView and Apple WebKit are supplied by the device operating
+system. Their browser engines are not redistributed inside this application.

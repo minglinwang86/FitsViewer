@@ -657,7 +657,10 @@ if let Some(pro)=&mut self.pro {pro.reply(reply);}
         let mut open=self.tools.settings_open;
         let mut windows=std::mem::take(&mut self.popup_windows);
         windows.show(ctx,window_layout::Key::Settings,crate::i18n::t("Settings"),&mut open,egui::vec2(480.,580.),|ui|{
+            #[cfg(not(all(target_arch="wasm32",feature="offline")))]
             egui::CollapsingHeader::new(crate::i18n::t("Scientific Python environment")).id_salt("settings-environment").default_open(true).show(ui,|ui|self.environment.ui(ui,ctx,&self.science,self.generation));
+            #[cfg(all(target_arch="wasm32",feature="offline"))]
+            egui::CollapsingHeader::new(crate::i18n::t("Scientific Python environment")).id_salt("settings-environment").default_open(true).show(ui,|ui|{ui.weak("Offline viewer: external Python is unavailable.");});
             ui.separator();ui.strong(crate::i18n::t("Image display / interface"));self.tools.settings_ui(ui,ctx,self.stats.max);
         });
         self.popup_windows=windows;self.tools.settings_open=open;

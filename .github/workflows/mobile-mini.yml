@@ -1,0 +1,165 @@
+name: Mobile Mini candidate
+
+on:
+  push:
+    branches: [codex/mobile-mini-0.1.7]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-mini-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  web-mini:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.22.0'
+      - run: rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/bin/wasm-bindgen
+            build/mobile/target
+          key: mobile-mini-wasm-v1-${{ hashFiles('Cargo.lock', 'crates/**', 'vendor/**', 'web/locales/**') }}
+          restore-keys: mobile-mini-wasm-v1-
+      - name: Match wasm-bindgen to Cargo.lock
+        run: |
+          version=$(python -c "import tomllib; print(next(p['version'] for p in tomllib.load(open('Cargo.lock','rb'))['package'] if p['name']=='wasm-bindgen'))")
+          if [ "$(wasm-bindgen --version 2>/dev/null || true)" != "wasm-bindgen $version" ]; then cargo install wasm-bindgen-cli --locked --version "$version"; fi
+      - name: Build only base and offline WASM from the module registry
+        run: python mobile/build.py --target-dir build/mobile/target --output build/mobile/site --execute
+      - name: Changed mobile tabs, opaque file identity, touch and compact histogram
+        run: |
+          npm ci --prefix qa
+          ./qa/node_modules/.bin/playwright install --with-deps chromium
+          python -m http.server 18817 --bind 127.0.0.1 --directory build/mobile/site >build/mobile/http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          python mobile/verify_assets.py build/mobile/site
+          NODE_PATH="$PWD/qa/node_modules" node mobile/qa_mobile_delta.cjs http://127.0.0.1:18817/index.html build/mobile/qa-delta
+      - uses: actions/upload-artifact@v5
+        with:
+          name: fitsviewer-mini-web-0.1.7
+          path: build/mobile/site/
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: mobile-browser-evidence
+          path: |
+            build/mobile/qa-delta/result.json
+            build/mobile/qa-delta/*.png
+            build/mobile/http.log
+
+  android:
+    needs: web-mini
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v5
+        with:
+          name: fitsviewer-mini-web-0.1.7
+          path: build/mobile/site
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.22.0'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build a debug-signed sideload test APK
+        run: |
+          python3 mobile/verify_assets.py build/mobile/site
+          gradle -p mobile/android --no-daemon -PmobileAssets="$PWD/build/mobile/site" :app:assembleDebug
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs mobile/android/app/build/outputs/apk/debug/app-debug.apk >build/mobile/apk-signature.txt
+      - name: Permit emulator acceleration on the hosted runner
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Emulator startup and system document picker smoke
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: node mobile/qa_android.cjs mobile/android/app/build/outputs/apk/debug/app-debug.apk build/mobile/android-smoke
+      - uses: actions/upload-artifact@v5
+        with:
+          name: FitsViewer-Mini-Android-0.1.7-test
+          path: |
+            mobile/android/app/build/outputs/apk/debug/app-debug.apk
+            build/mobile/apk-signature.txt
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: android-emulator-evidence
+          path: build/mobile/android-smoke/
+
+  ios:
+    needs: web-mini
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v5
+        with:
+          name: fitsviewer-mini-web-0.1.7
+          path: build/mobile/site
+      - name: Build unsigned device app and simulator app
+        run: |
+          python3 mobile/verify_assets.py build/mobile/site
+          xcodebuild -version
+          python3 mobile/build_ios.py --assets build/mobile/site --output build/mobile/ios-device
+          python3 mobile/build_ios.py --assets build/mobile/site --output build/mobile/ios-simulator --simulator
+          if codesign --verify build/mobile/ios-device/FitsViewerMini.app 2>/dev/null; then echo 'Expected unsigned device artifact'; exit 1; fi
+          ditto -c -k --keepParent build/mobile/ios-device/FitsViewerMini.app build/mobile/FitsViewer-Mini-iOS-0.1.7-UNSIGNED.app.zip
+      - name: Install and launch in iPhone simulator
+        run: |
+          udid=$(xcrun simctl list devices available -j | python3 -c "import json,sys; print(next(d['udid'] for group in json.load(sys.stdin)['devices'].values() for d in group if d['name'].startswith('iPhone')))")
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl install "$udid" build/mobile/ios-simulator/FitsViewerMini.app
+          xcrun simctl launch "$udid" org.fitsviewer.mini
+          sleep 10
+          xcrun simctl io "$udid" screenshot build/mobile/ios-simulator-startup.png
+          xcrun simctl terminate "$udid" org.fitsviewer.mini
+          xcrun simctl shutdown "$udid"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: FitsViewer-Mini-iOS-0.1.7-UNSIGNED
+          path: build/mobile/FitsViewer-Mini-iOS-0.1.7-UNSIGNED.app.zip
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: ios-simulator-evidence
+          path: build/mobile/ios-simulator-startup.png
+

@@ -1,0 +1,15 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'org.fitsviewer.mini'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'org.fitsviewer.mini'
+        minSdk 26
+        targetSdk 35
+        versionCode 107
+        versionName '0.1.7'
+    }
+    buildTypes { debug { applicationIdSuffix '.test'; versionNameSuffix '-test' } }
+    sourceSets.main.assets.srcDirs = [project.findProperty('mobileAssets') ?: '../../../build/mobile/site']
+}
+dependencies { implementation 'androidx.webkit:webkit:1.12.1' }
