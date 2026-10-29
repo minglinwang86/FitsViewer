@@ -3,6 +3,9 @@ name: Full 0.1.7 platform candidates
 on:
   push:
     branches: [codex/v0.1.7-release]
+    paths-ignore:
+      - .github/workflows/prepare-macos-cache.yml
+      - .github/workflows/full-release.yml
   workflow_dispatch:
 
 permissions:

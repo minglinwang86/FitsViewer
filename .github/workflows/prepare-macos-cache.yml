@@ -1,0 +1,52 @@
+name: Prepare missing macOS packaging metadata cache
+
+on:
+  push:
+    branches: [codex/v0.1.7-release]
+    paths: [.github/workflows/prepare-macos-cache.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    name: Fetch locked metadata / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 6f8b15f98df8ba5df1c3e02c5cb20b14b2b393a3
+          persist-credentials: false
+      - run: rustup toolchain install 1.99.1 --profile minimal
+      - uses: actions/cache/restore@v6
+        id: native-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/macos-full
+          key: macos-full-v1-${{ matrix.runner }}-rust1.99.1-macos11-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**', 'vendor/**', 'windows/app.png', 'web/locales/**') }}
+          restore-keys: macos-full-v1-${{ matrix.runner }}-rust1.99.1-macos11-
+      - name: Fetch missing locked packages without compiling or rerunning tests
+        run: |
+          cargo fetch --locked --target ${{ matrix.target }}
+          cargo metadata --locked --offline --format-version 1 --filter-platform ${{ matrix.target }} --no-default-features --features fitsviewer/desktop,fitsviewer/pro > "$RUNNER_TEMP/native-metadata.json"
+      - uses: actions/cache/save@v6
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/macos-full
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
