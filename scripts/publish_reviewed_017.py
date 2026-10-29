@@ -14,6 +14,7 @@ import subprocess
 import zipfile
 
 import stage_windows_revalidation as supplemental
+import ui_only_release as ui
 
 REPO = "minglinwang86/FitsViewer"
 ARTIFACTS = {"full-windows-x86_64", "full-macos-arm64", "full-macos-x86_64", "full-linux-x86_64"}
@@ -110,42 +111,10 @@ def verify_supplemental_provenance(approval, origin, run, root, lock):
     return proof
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--approval", required=True, type=Path)
-    parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--execute", action="store_true")
-    args = parser.parse_args()
-    approval = json.loads(args.approval.read_text())
-    if not args.execute:
-        print(json.dumps({"will_publish": False, "approval": approval}))
-        return
-    assert os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("GITHUB_REPOSITORY") == REPO
-    assert approval["schema"] in {1, 2} and approval["reviewed"] is True and approval["version"] == "0.1.7"
-    assert ("supplemental_windows" in approval) == (approval["schema"] == 2)
-    source = approval["source_commit"]
-    assert re.fullmatch(r"[0-9a-f]{40}", source)
-    assert set(approval["package_sha256"]) == PACKAGES
-    assert set(approval["artifacts"]) == ARTIFACTS | {approval["shared_artifact"]}
-    run = api(f"repos/{REPO}/actions/runs/{int(approval['run_id'])}")
-    assert run["head_sha"] == source and run["status"] == "completed"
-    assert run["path"] == ".github/workflows/full-release.yml" and run["event"] in {"push", "workflow_dispatch"}
-    assert run["run_attempt"] == approval["run_attempt"]
-    history = api(f"repos/{REPO}/actions/runs/{run['id']}/jobs?filter=all&per_page=100")["jobs"]
-    latest = {j["name"]: j for j in sorted(history, key=lambda j: (j["started_at"] or "", j["id"]))}
-    jobs = list(latest.values())
-    extra_run = None
-    if approval["schema"] == 2:
-        extra_run = supplemental_run(approval, run, history)
-    else:
-        assert run["conclusion"] == "success"
-        assert len(jobs) == 5 and all(j["conclusion"] == "success" for j in jobs), "Every platform job must pass"
+def download_artifacts(approval, run, extra_run, output):
     listed = api(f"repos/{REPO}/actions/runs/{run['id']}/artifacts?per_page=100")["artifacts"]
     extra_artifacts = (api(f"repos/{REPO}/actions/runs/{extra_run['id']}/artifacts?per_page=100")["artifacts"]
                        if extra_run else [])
-    output = args.output.resolve()
-    assert not output.exists(), "Use a new owned publication directory"
-    output.mkdir(parents=True)
     unpacked = output / "artifacts"
     for name, reviewed in approval["artifacts"].items():
         candidates = extra_artifacts if extra_run and name == "full-windows-x86_64" else listed
@@ -164,14 +133,11 @@ def main():
                 assert not relative.is_absolute() and ".." not in relative.parts and "\\" not in entry.filename
                 assert entry.file_size < 256 * 1024 * 1024
             archive.extractall(destination)
-    shared = unpacked / approval["shared_artifact"]
-    lock = json.loads(one(shared, "assets-lock.json").read_text())
-    assert lock["schema"] == 2 and lock["source_commit"] == source
-    assert str(lock["run_id"]) == str(run["id"]) and 0 < int(lock["run_attempt"]) <= run["run_attempt"]
-    supplemental_proof = None
-    if extra_run:
-        supplemental_proof = verify_supplemental_provenance(approval, run, extra_run, unpacked / "full-windows-x86_64", lock)
-        assert supplemental_proof["resources"]["assets_lock_sha256"] == digest(one(shared, "assets-lock.json"))
+    return unpacked
+
+
+def verify_full_reports(approval, unpacked, lock, extra_run):
+    source = approval["source_commit"]
     reports = {}
     for platform in ARTIFACTS:
         root = unpacked / platform
@@ -196,6 +162,128 @@ def main():
                 setup = next(p for p in reports[platform] if "installed_payload_integrity" in p)
                 assert setup["installed_payload_integrity"]["sha256_matches"] is True
                 assert setup["installed_payload_integrity"]["files"] > 0
+    return reports
+
+
+def verify_ui_reports(approval, run, unpacked, lock):
+    """Verify current package proofs, without relabelling baseline GUI reports."""
+    reference = approval["ui_record"]
+    assert set(reference) == {"path", "sha256"}
+    assert reference["path"] == "qa/ui-only-017.json"
+    raw = subprocess.check_output(["git", "show", approval["source_commit"] + ":" + reference["path"]])
+    assert ui.source_sha(raw) == reference["sha256"]
+    record = json.loads(raw)
+    targeted = ui.record_check(record, reference["path"], approval["source_commit"])
+
+    def identity(report):
+        assert report["passed"] is True and report["ui_only"] is True
+        assert report["source_commit"] == approval["source_commit"]
+        assert report["baseline_source"] == supplemental.SOURCE
+        assert report["run_id"] == run["id"] and 0 < report["run_attempt"] <= run["run_attempt"]
+        assert report["record_path"] == reference["path"] and report["record_sha256"] == reference["sha256"]
+        assert report["hash_convention"] == "sha256-lf"
+        assert report["runtime_sha256"] == record["runtime_sha256"] and report["targeted"] == targeted
+
+    scope = json.loads(one(unpacked / approval["shared_artifact"], "ci-resources-scope.json").read_text())
+    identity(scope)
+    assert scope["kind"] == "ui-only-scope-0.1.7" and scope["origin_artifact_metadata_verified"] is True
+    reports = {"scope": scope}
+    for artifact in ARTIFACTS:
+        root = unpacked / artifact
+        report = json.loads(one(root, "ui-package.json").read_text())
+        identity(report)
+        assert report["kind"] == "ui-only-package-0.1.7" and report["platform"] == artifact.removeprefix("full-")
+        assert report["build_info"] == {"schema": 1, "version": "0.1.7", "features": ui.FEATURES}
+        if artifact.startswith("full-macos"):
+            contents = ui.package_check(report["platform"], lock,
+                package_dir=one(root, "package.json").parent, execute_native=False)
+        else:
+            name = ("fitsviewer-0.1.7-py3-none-win_amd64.whl" if artifact == "full-windows-x86_64"
+                    else "fitsviewer-0.1.7-py3-none-manylinux_2_28_x86_64.whl")
+            windows = (one(root, "FitsViewer-0.1.7-windows-x86_64-portable.zip").parent
+                       if artifact == "full-windows-x86_64" else None)
+            contents = ui.package_check(report["platform"], lock, wheel=one(root, name),
+                                       windows_dir=windows, execute_native=False)
+        assert all(report[key] == value for key, value in contents.items() if key != "build_info")
+        assert all(approval["package_sha256"][name] == checksum for name, checksum in report["packages"].items())
+        reports[artifact] = report
+    return reports
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--approval", required=True, type=Path)
+    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--execute", action="store_true")
+    args = parser.parse_args()
+    approval = json.loads(args.approval.read_text())
+    if not args.execute:
+        print(json.dumps({"will_publish": False, "approval": approval}))
+        return
+    assert os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("GITHUB_REPOSITORY") == REPO
+    assert approval["schema"] in {1, 2, 3} and approval["reviewed"] is True and approval["version"] == "0.1.7"
+    assert ("supplemental_windows" in approval) == (approval["schema"] == 2)
+    assert (approval.get("ui_only") is True) == (approval["schema"] == 3)
+    assert ("ui_record" in approval) == (approval["schema"] == 3)
+    source = approval["source_commit"]
+    assert re.fullmatch(r"[0-9a-f]{40}", source)
+    assert set(approval["package_sha256"]) == PACKAGES
+    assert set(approval["artifacts"]) == ARTIFACTS | {approval["shared_artifact"]}
+    run = api(f"repos/{REPO}/actions/runs/{int(approval['run_id'])}")
+    assert approval["shared_artifact"] == "full-shared-" + str(run["id"])
+    assert run["head_sha"] == source and run["status"] == "completed"
+    assert run["path"] == ".github/workflows/full-release.yml" and run["event"] in {"push", "workflow_dispatch"}
+    assert run["run_attempt"] == approval["run_attempt"]
+    history = api(f"repos/{REPO}/actions/runs/{run['id']}/jobs?filter=all&per_page=100")["jobs"]
+    latest = {j["name"]: j for j in sorted(history, key=lambda j: (j["started_at"] or "", j["id"]))}
+    jobs = list(latest.values())
+    extra_run = None
+    if approval["schema"] == 2:
+        extra_run = supplemental_run(approval, run, history)
+    else:
+        assert run["conclusion"] == "success"
+        assert len(jobs) == 5 and all(j["conclusion"] == "success" for j in jobs), "Every platform job must pass"
+    output = args.output.resolve()
+    assert not output.exists(), "Use a new owned publication directory"
+    output.mkdir(parents=True)
+    unpacked = download_artifacts(approval, run, extra_run, output)
+    shared = unpacked / approval["shared_artifact"]
+    lock = json.loads(one(shared, "assets-lock.json").read_text())
+    assert lock["schema"] == 2 and lock["source_commit"] == source
+    assert str(lock["run_id"]) == str(run["id"]) and 0 < int(lock["run_attempt"]) <= run["run_attempt"]
+    assert digest(one(shared, lock["wheel_asset"])) == lock["wheel_sha256"]
+    with zipfile.ZipFile(one(shared, lock["wheel_asset"])) as archive:
+        assert hashlib.sha256(archive.read("fitsviewer/_vendor/web/pkg/fitsviewer_web_bg.wasm")).hexdigest() == lock["wasm_sha256"]
+    supplemental_proof = None
+    if extra_run:
+        supplemental_proof = verify_supplemental_provenance(approval, run, extra_run, unpacked / "full-windows-x86_64", lock)
+        assert supplemental_proof["resources"]["assets_lock_sha256"] == digest(one(shared, "assets-lock.json"))
+    reports = (verify_ui_reports(approval, run, unpacked, lock)
+               if approval["schema"] == 3 else verify_full_reports(approval, unpacked, lock, extra_run))
+    reused = None
+    if approval["schema"] == 3:
+        raw = subprocess.check_output(["git", "show", source + ":" + approval["ui_record"]["path"]])
+        record = json.loads(raw)
+        old = record["origin_evidence"]
+        assert set(old["package_sha256"]) == PACKAGES
+        old_run = api(f"repos/{REPO}/actions/runs/{old['run_id']}")
+        old_jobs = api(f"repos/{REPO}/actions/runs/{old_run['id']}/jobs?filter=all&per_page=100")["jobs"]
+        old_extra = supplemental_run(old, old_run, old_jobs)
+        old_output = output / "origin-evidence"
+        old_output.mkdir()
+        old_unpacked = download_artifacts(old, old_run, old_extra, old_output)
+        old_shared = old_unpacked / old["shared_artifact"]
+        old_lock = json.loads(one(old_shared, "assets-lock.json").read_text())
+        assert old_lock["source_commit"] == supplemental.SOURCE and int(old_lock["run_id"]) == old_run["id"]
+        proof = verify_supplemental_provenance(old, old_run, old_extra, old_unpacked / "full-windows-x86_64", old_lock)
+        assert proof["resources"]["assets_lock_sha256"] == digest(one(old_shared, "assets-lock.json"))
+        old_reports = verify_full_reports(old, old_unpacked, old_lock, old_extra)
+        for name, checksum in old["package_sha256"].items():
+            assert digest(one(old_unpacked, name)) == checksum
+        reused = {"source_commit": supplemental.SOURCE, "run_url": old_run["html_url"],
+                  "supplemental_windows_run_url": old_extra["html_url"], "artifact_sha256": old["artifacts"],
+                  "platforms": old_reports, "supplemental_windows_provenance": proof,
+                  "statement": "Original functional evidence is reused; its source identity is unchanged."}
     release = output / "release"
     release.mkdir()
     for filename in sorted(PACKAGES):
@@ -212,16 +300,25 @@ def main():
                 "common_linux_evidence": reference, "ci_resource_lock": lock, "platforms": reports,
                 "limits": ["macOS ad-hoc signed; not notarized", "macOS 15 native startup is not complete interactive acceptance",
                            "Windows CI uses an external test-only software renderer", "External scientific packages remain external"]}
+    if reused:
+        evidence["validation_mode"] = "ui_only"
+        evidence["ui_record"] = approval["ui_record"]
+        evidence["historical_functional_evidence"] = reused
+        evidence["limits"][2] = "Historical Windows GUI CI used an external test-only software renderer"
+        evidence["limits"].append("Current UI-only packages received focused UI verification and package identity checks; full runtime regressions retain their baseline source.")
     if extra_run:
         evidence["supplemental_windows"] = {"run_url": extra_run["html_url"], "provenance": supplemental_proof}
     (release / "VALIDATION-0.1.7.json").write_text(json.dumps(evidence, indent=2) + "\n")
     with zipfile.ZipFile(release / "VALIDATION-0.1.7-evidence.zip", "x", zipfile.ZIP_DEFLATED) as archive:
-        for root in sorted(unpacked.iterdir()):
+        evidence_roots = [(root.name, root) for root in sorted(unpacked.iterdir())]
+        if reused:
+            evidence_roots += [("origin/" + root.name, root) for root in sorted(old_unpacked.iterdir())]
+        for label, root in evidence_roots:
             if root.name not in ARTIFACTS:
                 continue
             for path in sorted(root.rglob("*")):
                 if path.is_file() and path.suffix in {".json", ".png"}:
-                    archive.write(path, root.name + "/" + path.relative_to(root).as_posix())
+                    archive.write(path, label + "/" + path.relative_to(root).as_posix())
     sums = release / "SHA256SUMS"
     sums.write_text("".join(digest(p) + "  " + p.name + "\n" for p in sorted(release.iterdir()) if p.is_file()))
     notes = output / "release-notes.md"

@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "kind": "targeted-ui-0.1.7",
+  "hash_convention": "sha256-lf",
+  "passed": true,
+  "source_sha256": {
+    "crates/viewer/src/lib.rs": "38e3ff064dd406bdf37838090abcbf552bc61b9307ac870041ad83e7f43ae0fd",
+    "crates/viewer/src/document_tabs.rs": "d7a5c0fd91d0178398c4abb6e2e39fd35b85e33f1b13ab0e534f27023d137643",
+    "crates/viewer/src/ribbon.rs": "6b2362c44b853668e764100db5989a6dfe20c84d204a0d9aad6f613c42579762",
+    "crates/viewer/src/multiview.rs": "f9a2a76011f94817984788c035d95e5c382bfdf83d96bb8bda87af08c72c7cb1"
+  },
+  "checks": {
+    "document_tabs_below_toolbar": true,
+    "view_measure_toolbar_height_stable": true,
+    "pro_document_tabs_share_comparison_row": true,
+    "pro_combined_row_controls_accessible_narrow": true,
+    "pro_document_tabs_pointer_select_and_close": true,
+    "pro_zero_one_two_documents_no_extra_row": true,
+    "pro_tabs_share_workspace_row": true,
+    "rapid_tab_switch_does_not_collapse": true,
+    "active_tab_double_click_collapses": true,
+    "single_document_tab_visible": true
+  },
+  "final_pro_browser": {
+    "cases": [
+      {
+        "name": "en-450",
+        "passed": true
+      },
+      {
+        "name": "en-650",
+        "passed": true
+      },
+      {
+        "name": "en-1100",
+        "passed": true
+      },
+      {
+        "name": "zh-CN-450",
+        "passed": true
+      },
+      {
+        "name": "zh-CN-650",
+        "passed": true
+      },
+      {
+        "name": "zh-CN-1100",
+        "passed": true
+      }
+    ],
+    "report_sha256": "012c2f34a81581f8e7e42682621ea79ecd6562ce5ff64679d31176f7dff573dd"
+  },
+  "task_height_and_click_evidence": {
+    "full_cases": 4,
+    "mini_cases": 6,
+    "source_sha256": {
+      "crates/viewer/src/lib.rs": "98a23f2fbe6cad1137e539d67ca6ff581d4e3968a56aad43b9d7843db3b742b3",
+      "crates/viewer/src/document_tabs.rs": "13d15714a8db90d08a22983709ef1caf669ca1c977234bfafd5c0777d911bc6d",
+      "crates/viewer/src/ribbon.rs": "6b2362c44b853668e764100db5989a6dfe20c84d204a0d9aad6f613c42579762"
+    },
+    "ribbon_source_unchanged": true,
+    "full_report_sha256": "2719f591c5d974ad1e6f1c20bafc9da31b2b59d505d1e33e0d295645e70ae575",
+    "mini_report_sha256": "4a393172f2a43fad64b8c6ec56665e68afc92cfd26c346e4ae17c127ba77330c"
+  },
+  "unit": {
+    "passed": true,
+    "final_pro_cases": 1,
+    "report_sha256": "9b4f27bc2aeb2faee470398183ac442498ca3532bf403ed9c208d954e2405deb"
+  },
+  "scope": "Only changed layout paths; prior scientific and runtime results keep their original source identity."
+}

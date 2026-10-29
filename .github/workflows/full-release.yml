@@ -7,9 +7,16 @@ on:
       - .github/workflows/prepare-macos-cache.yml
       - .github/workflows/full-release.yml
   workflow_dispatch:
+    inputs:
+      ui_only:
+        description: 'Use the committed, source-bound UI-only reuse record'
+        type: boolean
+        default: false
+
 
 permissions:
   contents: read
+  actions: read
 
 env:
   RUSTUP_TOOLCHAIN: '1.99.1'
@@ -20,13 +27,36 @@ jobs:
     name: Full shared WASM and Lab resources
     runs-on: ubuntu-22.04
     timeout-minutes: 45
+    outputs:
+      ui_only: ${{ steps.mode.outputs.ui_only }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+      - name: Select the single validation mode after checkout
+        id: mode
+        env:
+          UI_ONLY_REQUESTED: ${{ inputs.ui_only == true || (github.event_name == 'push' && github.ref == 'refs/heads/codex/v0.1.7-release') }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          record = Path('qa/ui-only-017.json').is_file()
+          requested = os.environ['UI_ONLY_REQUESTED'] == 'true'
+          if os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch' and requested and not record:
+              raise SystemExit('Explicit UI-only dispatch requires qa/ui-only-017.json')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('ui_only=' + str(requested and record).lower() + '\n')
+          PY
+      - name: Verify UI-only scope, targeted proof and original artifact metadata
+        if: steps.mode.outputs.ui_only == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/ui_only_release.py --record qa/ui-only-017.json --origin-metadata --output "$RUNNER_TEMP/ci-resources-scope.json"
       - uses: actions/setup-node@v6
         with:
           node-version: '24.22.0'
@@ -69,6 +99,7 @@ jobs:
             ${{ runner.temp }}/ci-resources/*.whl
             ${{ runner.temp }}/ci-resources/assets-lock.json
             ${{ runner.temp }}/ci-resources/resources-manifest.json
+            ${{ runner.temp }}/ci-resources-scope.json
           if-no-files-found: error
           retention-days: 7
 
@@ -78,12 +109,14 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 70
     env:
+      FITSVIEWER_UI_ONLY: ${{ needs.shared.outputs.ui_only }}
       CARGO_TARGET_DIR: target/windows-full
       CARGO_ENCODED_RUSTFLAGS: ''
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
@@ -112,12 +145,14 @@ jobs:
           $env:CARGO_ENCODED_RUSTFLAGS = $flags -join [char]31
           cargo build --locked --release -p fitsviewer --no-default-features --features desktop,pro
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python scripts/reuse_platform_checks.py windows_ipc
-          $reuse = $LASTEXITCODE
-          if ($reuse -eq 1) {
-            cargo test --locked --release -p fitsviewer --no-default-features --features desktop,pro native_windows::tests
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          } elseif ($reuse -ne 0) { exit $reuse }
+          if ($env:FITSVIEWER_UI_ONLY -ne 'true') {
+            python scripts/reuse_platform_checks.py windows_ipc
+            $reuse = $LASTEXITCODE
+            if ($reuse -eq 1) {
+              cargo test --locked --release -p fitsviewer --no-default-features --features desktop,pro native_windows::tests
+              if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            } elseif ($reuse -ne 0) { exit $reuse }
+          }
       - uses: actions/cache/save@v6
         if: steps.native-cache.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -139,6 +174,7 @@ jobs:
           python scripts/build_windows_installer.py --wheel dist/full/fitsviewer-0.1.7-py3-none-win_amd64.whl --payload "$env:RUNNER_TEMP/windows-payload" --out dist/windows --iscc 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe'
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Prepare isolated platform validation and CI-only OpenGL
+        if: env.FITSVIEWER_UI_ONLY != 'true'
         shell: pwsh
         run: |
           python -m venv "$env:RUNNER_TEMP/validation-venv"
@@ -153,6 +189,7 @@ jobs:
           7z x "$env:RUNNER_TEMP/mesa.7z" "-o$env:RUNNER_TEMP/mesa"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Native render, Unicode, Jupyter proxy, Notebook and cleanup
+        if: env.FITSVIEWER_UI_ONLY != 'true'
         shell: pwsh
         run: |
           $env:FITSVIEWER_CI_MESA_DIR = "$env:RUNNER_TEMP/mesa/x64"
@@ -165,6 +202,12 @@ jobs:
           elseif ($reuse -ne 1) { exit $reuse }
           python scripts/verify_windows_setup.py --setup dist/windows/FitsViewer-0.1.7-windows-x86_64-setup.exe --python "$env:RUNNER_TEMP/validation-venv/Scripts/python.exe" --scratch "$env:RUNNER_TEMP/windows-setup-test" --payload "$env:RUNNER_TEMP/windows-payload" @extra
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Check current Full package identity only; reuse original runtime acceptance
+        if: env.FITSVIEWER_UI_ONLY == 'true'
+        shell: pwsh
+        run: |
+          python scripts/ui_only_release.py --record qa/ui-only-017.json --platform windows-x86_64 --assets-lock "$env:RUNNER_TEMP/ci-resources/assets-lock.json" --wheel dist/full/fitsviewer-0.1.7-py3-none-win_amd64.whl --windows-dir dist/windows --output reports/ui-package.json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v5
         with:
           name: full-windows-x86_64
@@ -172,6 +215,7 @@ jobs:
             dist/full/*.whl
             dist/windows/*.exe
             dist/windows/*.zip
+            reports/ui-package.json
             ${{ runner.temp }}/windows-runtime-test/validation.json
             ${{ runner.temp }}/windows-runtime-test/histogram/*.json
             ${{ runner.temp }}/windows-runtime-test/histogram/*.png
@@ -205,11 +249,13 @@ jobs:
           - runner: macos-15-intel
             arch: x86_64
     env:
+      FITSVIEWER_UI_ONLY: ${{ needs.shared.outputs.ui_only }}
       MACOSX_DEPLOYMENT_TARGET: '11.0'
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
@@ -242,9 +288,14 @@ jobs:
             ~/.cargo/git
             target/macos-full
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
-      - run: python -m pip install 'numpy>=2,<3' 'astropy>=6,<8'
+      - if: env.FITSVIEWER_UI_ONLY != 'true'
+        run: python -m pip install 'numpy>=2,<3' 'astropy>=6,<8'
       - name: Relocated Unicode app, signature, server, worker, GUI texture and cleanup
+        if: env.FITSVIEWER_UI_ONLY != 'true'
         run: python scripts/verify_macos_full.py --assets-lock "$RUNNER_TEMP/ci-resources/assets-lock.json" --package dist/macos --output reports/macos --probe-gui
+      - name: Check current Full archive identity only; reuse original runtime acceptance
+        if: env.FITSVIEWER_UI_ONLY == 'true'
+        run: python scripts/ui_only_release.py --record qa/ui-only-017.json --platform macos-${{ matrix.arch }} --assets-lock "$RUNNER_TEMP/ci-resources/assets-lock.json" --package dist/macos --output reports/ui-package.json
       - uses: actions/upload-artifact@v5
         with:
           name: full-macos-${{ matrix.arch }}
@@ -252,6 +303,7 @@ jobs:
             dist/macos/*.zip
             dist/macos/*.sha256
             dist/macos/package.json
+            reports/ui-package.json
             reports/macos/
           if-no-files-found: error
       - uses: actions/upload-artifact@v5
@@ -269,12 +321,14 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 55
     env:
+      FITSVIEWER_UI_ONLY: ${{ needs.shared.outputs.ui_only }}
       CARGO_TARGET_DIR: target/linux-full
       FITSVIEWER_WHEEL_PLATFORM: manylinux_2_28_x86_64
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
@@ -303,11 +357,16 @@ jobs:
           cargo zigbuild --locked --release --target x86_64-unknown-linux-gnu.2.28 -p fitsviewer --no-default-features --features desktop,pro
           python scripts/stage_ci_platform.py --native target/linux-full/x86_64-unknown-linux-gnu/release/fitsviewer --wheel "$(find "$RUNNER_TEMP/ci-resources" -maxdepth 1 -name '*.whl' -print -quit)" --assets-lock "$RUNNER_TEMP/ci-resources/assets-lock.json" --output build/ci-linux
           python scripts/build_wheel.py --assets-dir build/ci-linux --repair
+          if [ "$FITSVIEWER_UI_ONLY" = true ]; then
+            python scripts/ui_only_release.py --record qa/ui-only-017.json --platform linux-x86_64 --assets-lock "$RUNNER_TEMP/ci-resources/assets-lock.json" --wheel dist/full/fitsviewer-0.1.7-py3-none-manylinux_2_28_x86_64.whl --output reports/ui-package.json
+          else
           python scripts/verify_ci_linux_package.py --wheel dist/full/fitsviewer-0.1.7-py3-none-manylinux_2_28_x86_64.whl --assets-lock "$RUNNER_TEMP/ci-resources/assets-lock.json" --output reports/linux-package.json
+          fi
       - uses: actions/upload-artifact@v5
         with:
           name: full-linux-x86_64
           path: |
             dist/full/*.whl
             reports/linux-package.json
+            reports/ui-package.json
           if-no-files-found: error

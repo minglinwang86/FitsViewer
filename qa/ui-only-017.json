@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "kind": "ui-only-0.1.7",
+  "hash_convention": "sha256-lf",
+  "baseline_source": "f613840afb90fa88f9bc41d0f1c88e35e4bffa10",
+  "runtime_sha256": {
+    "crates/viewer/src/lib.rs": "38e3ff064dd406bdf37838090abcbf552bc61b9307ac870041ad83e7f43ae0fd",
+    "crates/viewer/src/document_tabs.rs": "d7a5c0fd91d0178398c4abb6e2e39fd35b85e33f1b13ab0e534f27023d137643",
+    "crates/viewer/src/ribbon.rs": "6b2362c44b853668e764100db5989a6dfe20c84d204a0d9aad6f613c42579762",
+    "crates/viewer/src/multiview.rs": "f9a2a76011f94817984788c035d95e5c382bfdf83d96bb8bda87af08c72c7cb1"
+  },
+  "nonruntime_changes": [
+    ".github/workflows/full-release.yml",
+    ".github/workflows/windows-revalidate-017.yml",
+    "AgentWorkLog.md",
+    "CHANGELOG.md",
+    "docs/AI_DEVELOPMENT_GUIDE.md",
+    "docs/releases/PLATFORM-0.1.7-REUSE.json",
+    "docs/releases/v0.1.7.md",
+    "qa/histogram_window.cjs",
+    "qa/pro_document_row.cjs",
+    "qa/tab_ribbon_layout.cjs",
+    "qa/test_windows_revalidation.py",
+    "qa/ui-only-017-targeted.json",
+    "qa/ui-only-017.json",
+    "scripts/publish_reviewed_017.py",
+    "scripts/reuse_platform_checks.py",
+    "scripts/stage_windows_revalidation.py",
+    "scripts/ui_only_release.py"
+  ],
+  "targeted": {
+    "path": "qa/ui-only-017-targeted.json",
+    "sha256": "e64c6b7e4e030594313ce2a4f893f78f0a0c92032ba3fe350fa07da4db03d0c9"
+  },
+  "origin_evidence": {
+    "schema": 2,
+    "reviewed": false,
+    "version": "0.1.7",
+    "source_commit": "f613840afb90fa88f9bc41d0f1c88e35e4bffa10",
+    "run_id": 40968317884,
+    "run_attempt": 1,
+    "shared_artifact": "full-shared-40968317884",
+    "artifacts": {
+      "full-shared-40968317884": {
+        "id": 12938828636,
+        "sha256": "67a2221319dcf6ae48657028ac87898f2b482948d1fb88936de72602a4056356"
+      },
+      "full-linux-x86_64": {
+        "id": 12938958272,
+        "sha256": "d2a8e80ea1087b8822891b07ebba78b622ed28ad5ff6226a5047434fc8bf3267"
+      },
+      "full-macos-arm64": {
+        "id": 12939122261,
+        "sha256": "3133c92b0d0e72cb1e9c9084143f02592f825b4e3394e0dbb6141ce3f8bf57a1"
+      },
+      "full-macos-x86_64": {
+        "id": 12939935692,
+        "sha256": "d64680723142a0b79e6bf013fb5e30be2a4bfca189f1c1356c0630d96615d225"
+      },
+      "full-windows-x86_64": {
+        "id": 12940706400,
+        "sha256": "f207f46621f7d259f2af869b9f3851375ce47d43acc1735f9f38d4d9948ca917"
+      }
+    },
+    "package_sha256": {
+      "fitsviewer-0.1.7-py3-none-manylinux_2_28_x86_64.whl": "658df2c57e51b28bde4b2e8df07c0065f5ca983852c229402ad7ecf1cff2c000",
+      "FitsViewer-0.1.7-macos-arm64-portable.zip": "d8278713c7a2ae5b4ba870c9ce7919b0c6651d8d3eba6bf091010a2ba84e4325",
+      "FitsViewer-0.1.7-macos-x86_64-portable.zip": "e8560646d615282d68e89493945e591fca04fc8a26dd6585d88f5f8b0ddd7aae",
+      "fitsviewer-0.1.7-py3-none-win_amd64.whl": "7d882c8f657b666e8cde64ddd0cf4dbff00b87a90d055115055f69e4edd88369",
+      "FitsViewer-0.1.7-windows-x86_64-portable.zip": "a5f00e0aea59f5d2f2f67380ddcb7684cc25678de2fab2b4a4060911ec055598",
+      "FitsViewer-0.1.7-windows-x86_64-setup.exe": "f7b62258637a4c244165f677ed2846f59aaf0d639a04707321710c97cd6add4e"
+    },
+    "supplemental_windows": {
+      "run_id": 40970505458,
+      "run_attempt": 1,
+      "driver_commit": "d867ad32491e1692c9b8382be8dee94554cc846d",
+      "provenance_sha256": "4970d9c6da9f7bfe4bea36690fabb2c883e3cd591268d622ef6d2b700dd60331",
+      "origin_shared_artifact": {
+        "id": 12938828636,
+        "name": "full-shared-40968317884",
+        "sha256": "67a2221319dcf6ae48657028ac87898f2b482948d1fb88936de72602a4056356"
+      }
+    }
+  }
+}

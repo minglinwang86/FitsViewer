@@ -11,12 +11,58 @@ type RibbonAction=crate::multiview::Action;
 type RibbonAction=();
 const PRO_TABS: [&str; 3] = ["Analysis", "Catalogues", "Export"];
 
+#[cfg(test)]
+mod stable_task_layout_tests {
+    use super::*;
+    #[test]
+    fn sizing_tasks_never_change_document_tools_preferences_or_focus(){
+        for pro in [false,true]{if pro && !cfg!(feature="pro"){continue;}
+            let mut app=FitsApp::new("fixture.fits".into(),Some("http://127.0.0.1".into()),String::new(),None);
+            if pro{app.tools.prefs.mode="PRO".into();}
+            app.regions.tool=Tool::Circle;let before=(serde_json::to_value(&app.tools.prefs).unwrap(),app.view_configuration(),app.generation,app.dirty);
+            let ctx=egui::Context::default();let focus=egui::Id::new("unrelated-input");
+            let _=ctx.run(egui::RawInput::default(),|ctx|{egui::CentralPanel::default().show(ctx,|ui|{
+                align_controls(ui);ctx.memory_mut(|memory|memory.request_focus(focus));let right=ui.max_rect().right();
+                let first=app.basic_task_height(ui,ctx,right);let cached=app.basic_task_height(ui,ctx,right);assert_eq!(first,cached);
+                assert_eq!(ctx.memory(|memory|memory.focused()),Some(focus));
+            });});
+            assert_eq!(before,(serde_json::to_value(&app.tools.prefs).unwrap(),app.view_configuration(),app.generation,app.dirty));
+            assert!(app.regions.tool==Tool::Circle);assert!(!app.regions.measurement_pending && !app.loading);
+            #[cfg(feature="pro")] assert!(app.pro.is_none() && app.multi.is_none());
+        }
+    }
+    #[test]
+    fn image_task_switches_keep_height_on_first_and_settled_frames() {
+        for (language,_) in crate::i18n::LANGUAGES {crate::i18n::set(language);
+            for width in [650.,850.,1600.] {for pro in [false,true] {
+                if pro && !cfg!(feature="pro") {continue;}
+                let mut app=FitsApp::new(String::new(),Some("http://127.0.0.1".into()),String::new(),None);
+                app.tools.prefs=crate::controls::Preferences::default();
+                if pro {app.tools.prefs.mode="PRO".into();}
+                #[cfg(feature="pro")] if pro {app.multi=Some(Default::default());}
+                let ctx=egui::Context::default();crate::install_cjk_font(&ctx,include_bytes!("../../../web/fonts/cjk.ttf").to_vec());
+                let mut heights=vec![];
+                for tab in ["Measure","View","Coordinates","Measure","View"] {
+                    app.tools.prefs.ribbon_tab=tab.into();
+                    for frame in 0..3 {
+                        let _=ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(width,900.))),..Default::default()},|ctx|{app.tools.apply_theme(ctx);app.ribbon(ctx);});
+                        heights.push((tab,frame,app.ribbon_height));
+                    }
+                }
+                assert!(heights.iter().all(|(_,_,h)|(h-heights[0].2).abs()<0.5),"language={language}, width={width}, PRO={pro}: {heights:?}");
+            }}
+        }crate::i18n::set("en");
+    }
+}
+
 // Tests inspect real interactive rectangles, not merely painted text bounds.
 // 测试记录真实交互区域；发布构建中此函数只原样返回 Response。
 #[inline]
 fn ribbon_tool(response:egui::Response,key:&str)->egui::Response{
     #[cfg(test)]
-    response.ctx.data_mut(|data|data.get_temp_mut_or_default::<Vec<(String,egui::Rect)>>(egui::Id::new("ribbon-tool-responses")).push((key.into(),response.rect)));
+    if !response.ctx.data(|data|data.get_temp::<bool>(egui::Id::new("ribbon-measuring")).unwrap_or(false)){
+        response.ctx.data_mut(|data|data.get_temp_mut_or_default::<Vec<(String,egui::Rect)>>(egui::Id::new("ribbon-tool-responses")).push((key.into(),response.rect)));
+    }
     #[cfg(not(test))]
     let _=key;
     response
@@ -24,20 +70,23 @@ fn ribbon_tool(response:egui::Response,key:&str)->egui::Response{
 
 // Task buttons share the normal control font; compact padding keeps them together.
 // 任务按钮与其余控件共用普通字号；通过紧凑边距保持同行，不缩小文字。
-fn image_task_tabs(ui:&mut egui::Ui,active:&mut String,pro:bool)->(bool,bool){
+fn image_task_tabs(ui:&mut egui::Ui,active:&mut String,pro:bool)->(bool,bool,serde_json::Value){
     let tabs=BASIC_TABS.into_iter().chain(PRO_TABS.into_iter().filter(|_|pro));
-    let mut changed=false;let mut collapsed=false;
+    let mut changed=false;let mut collapsed=false;let mut bounds=serde_json::json!({});
     ui.horizontal(|ui|{
         ui.spacing_mut().button_padding.x=4.;ui.spacing_mut().item_spacing.x=3.;
         for tab in tabs{
-            let response=ui.add(egui::Button::selectable(active.as_str()==tab,t(tab))
+            let was_active=active.as_str()==tab;
+            let response=ui.add(egui::Button::selectable(was_active,t(tab))
                 .wrap_mode(egui::TextWrapMode::Extend)
                 .min_size(Vec2::new(0.,ui.spacing().interact_size.y)));
+            let r=response.rect;bounds[tab]=serde_json::json!([r.min.x,r.min.y,r.max.x,r.max.y]);
             if response.clicked(){*active=tab.into();changed=true;}
-            if response.double_clicked(){collapsed=true;}
+            // A fast activation of a different task must not collapse its new body.
+            if was_active && response.double_clicked(){collapsed=true;}
         }
     });
-    (changed,collapsed)
+    (changed,collapsed,bounds)
 }
 
 #[cfg(all(test,feature="pro"))]
@@ -275,10 +324,10 @@ impl FitsApp {
             ui.spacing_mut().item_spacing = Vec2::new(6., 3.);
             ui.spacing_mut().button_padding = Vec2::new(7., 4.);
             align_controls(ui);
-            self.ribbon_file(ui, ctx);
-            ui.horizontal_wrapped(|ui| {
+            let file=self.ribbon_file(ui, ctx);
+            let navigation=ui.horizontal_wrapped(|ui| {
                 let pro=self.tools.prefs.mode=="PRO";
-                let (changed,collapsed)=image_task_tabs(ui,&mut self.tools.prefs.ribbon_tab,pro);
+                let (changed,collapsed,bounds)=image_task_tabs(ui,&mut self.tools.prefs.ribbon_tab,pro);self.ribbon_tabs=bounds;
                 if changed{self.tools.prefs.ribbon_collapsed=false;if pro && PRO_TABS.contains(&self.tools.prefs.ribbon_tab.as_str()){self.tools.prefs.set_pro_collapsed(false,false);}}
                 if collapsed{self.tools.prefs.ribbon_collapsed=true;}
                 ui.separator();
@@ -307,7 +356,7 @@ impl FitsApp {
             if self.tools.prefs.mode != "PRO" && !BASIC_TABS.contains(&self.tools.prefs.ribbon_tab.as_str()) {
                 self.tools.prefs.ribbon_tab = "View".into();
             }
-            let row_right=ui.max_rect().right();
+            let row_right=ui.max_rect().right().min(ui.clip_rect().right());
             if self.tools.prefs.ribbon_collapsed {
                 ui.horizontal_wrapped(|ui| {
                     let mut action = None;
@@ -323,23 +372,59 @@ impl FitsApp {
             } else {
                 let y=ui.cursor().top()-ui.spacing().item_spacing.y/2.;
                 ui.painter().hline(ui.max_rect().x_range(),y,ui.visuals().widgets.noninteractive.bg_stroke);
-                // Allocate only the controls being shown; wrap actual tools when needed.
-                // 只分配实际控件的空间；宽度不足时让工具自然换行，不预留空行。
-                ui.horizontal_wrapped(|ui| {
-                    match self.tools.prefs.ribbon_tab.as_str() {
-                        "Measure" => self.ribbon_measure(ui),
-                        "Coordinates" => self.ribbon_coordinates(ui),
-                        #[cfg(feature="pro")]
-                        "Analysis" | "Catalogues" | "Export" => self.ribbon_pro(ui),
-                        _ => self.ribbon_view(ui, ctx),
-                    }
-                    #[cfg(feature="pro")]
-                    {multi_action=self.ribbon_comparison(ui,row_right);}
+                let tab=self.tools.prefs.ribbon_tab.clone();
+                let height=if BASIC_TABS.contains(&tab.as_str()){self.basic_task_height(ui,ctx,row_right)}else{0.};
+                let task_rect=egui::Rect::from_min_max(ui.cursor().min,egui::pos2(row_right,ui.max_rect().bottom()));
+                let task=ui.scope_builder(egui::UiBuilder::new().max_rect(task_rect),|ui|{
+                    // Reserve only this task row's measured wrapped height, never the whole ribbon.
+                    ui.set_min_height(height);
+                    ui.horizontal_wrapped(|ui| {multi_action=self.ribbon_task(ui,ctx,&tab,row_right);});
                 });
+                let r=task.response.rect;self.ribbon_task_rect=[r.min.x,r.min.y,r.max.x,r.max.y];
+                let rect=|r:egui::Rect|[r.min.x,r.min.y,r.max.x,r.max.y];
+                self.ribbon_layout=serde_json::json!({"file":rect(file),"navigation":rect(navigation.response.rect),"inner_min":rect(ui.min_rect()),"cursor":rect(ui.cursor()),"reserved_task_height":height});
             }
         });
+        self.ribbon_rect=[panel.response.rect.min.x,panel.response.rect.min.y,panel.response.rect.max.x,panel.response.rect.max.y];
         self.remember_ribbon_height(ctx,panel.response.rect.height());
         multi_action
+    }
+
+    fn ribbon_task(&mut self,ui:&mut egui::Ui,ctx:&egui::Context,tab:&str,row_right:f32)->Option<RibbonAction>{
+        match tab {
+            "Measure"=>self.ribbon_measure(ui),"Coordinates"=>self.ribbon_coordinates(ui),
+            #[cfg(feature="pro")] "Analysis"|"Catalogues"|"Export"=>self.ribbon_pro(ui),
+            _=>self.ribbon_view(ui,ctx),
+        }
+        #[cfg(feature="pro")] {return self.ribbon_comparison(ui,row_right);}
+        #[cfg(not(feature="pro"))] {let _=row_right;None}
+    }
+
+    fn basic_task_height(&mut self,ui:&mut egui::Ui,ctx:&egui::Context,row_right:f32)->f32{
+        #[derive(Clone)]struct Measured {key:String,height:f32}
+        let spacing=ui.spacing();
+        #[cfg(feature="pro")] let comparison=self.multi.is_some();
+        #[cfg(not(feature="pro"))] let comparison=false;
+        let key=format!("{:?}",(
+            (row_right-ui.cursor().left()).to_bits(),ctx.pixels_per_point().to_bits(),&self.tools.prefs.language,&self.tools.prefs.mode,&self.tools.prefs.theme,
+            (egui::TextStyle::Body.resolve(ui.style()),egui::TextStyle::Button.resolve(ui.style())),
+            (spacing.interact_size,spacing.button_padding,spacing.item_spacing),
+            (self.stretch.name(),self.tools.prefs.render.stretch_exponent.to_bits(),format!("{:.0}%",self.zoom*ctx.pixels_per_point()*100.),comparison),
+            ["Auto display","Display parameters","Pan","Circle","Aperture photometry","Gaia coordinate recognition / calibration","Compare"].map(t)));
+        let id=egui::Id::new("ribbon-basic-task-height");
+        if let Some(value)=ctx.data(|data|data.get_temp::<Measured>(id)).filter(|v|v.key==key){return value.height;}
+        #[cfg(test)] ctx.data_mut(|data|data.insert_temp(egui::Id::new("ribbon-measuring"),true));
+        let mut height=0_f32;
+        for tab in BASIC_TABS {
+            // Dedicated stable IDs and invisible => disabled: these widgets cannot act or take focus.
+            let mut measured=egui::Ui::new(ctx.clone(),ui.id().with(("ribbon-task-measure",tab)),egui::UiBuilder::new()
+                .max_rect(egui::Rect::from_min_max(ui.cursor().min,egui::pos2(row_right,ui.max_rect().bottom())))
+                .layout(egui::Layout::top_down(egui::Align::Min)).style(ui.style().clone()).layer_id(ui.layer_id()).sizing_pass().invisible());
+            let row=measured.horizontal_wrapped(|ui|{let _=self.ribbon_task(ui,ctx,tab,row_right);});
+            height=height.max(row.response.rect.height());
+        }
+        #[cfg(test)] ctx.data_mut(|data|data.insert_temp(egui::Id::new("ribbon-measuring"),false));
+        ctx.data_mut(|data|data.insert_temp(id,Measured{key,height}));height
     }
 
     #[cfg(feature="pro")]
@@ -411,10 +496,11 @@ impl FitsApp {
                 });
             }
         });
+        self.ribbon_rect=[panel.response.rect.min.x,panel.response.rect.min.y,panel.response.rect.max.x,panel.response.rect.max.y];
         self.remember_ribbon_height(ctx,panel.response.rect.height());action
     }
 
-    fn ribbon_file(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn ribbon_file(&mut self, ui: &mut egui::Ui, ctx: &egui::Context)->egui::Rect {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("FitsViewer").size(16.).strong().color(Color32::from_rgb(100, 210, 225)));
             #[cfg(not(target_arch = "wasm32"))]
@@ -469,7 +555,7 @@ impl FitsApp {
                 ui.add_space((ui.available_width()-window_width).max(0.));
                 if ui.add(egui::Button::new("↗").min_size(Vec2::new(window_width,0.))).on_hover_text(t("Open in window")).clicked(){let _=crate::text_io::browser("openWindow",&[]);}
             }
-        });
+        }).response.rect
     }
 
     fn ribbon_hdu(&mut self,ui:&mut egui::Ui,ctx:&egui::Context){
