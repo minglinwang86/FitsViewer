@@ -21,14 +21,13 @@ pub fn load_file_with_options(path: &Path, options: LoadOptions) -> Result<FitsI
 pub fn load_header(path: &Path, hdu: usize) -> Result<String, String> {
     std::panic::catch_unwind(|| {
         let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-        if file.metadata().map_err(|e| e.to_string())?.len() > MAX_FILE_BYTES {
-            return Err("File exceeds the 512 MiB input limit".into());
-        }
+        let size=file.metadata().map_err(|e|e.to_string())?.len();
         let mut reader = BufReader::new(file);
         let mut magic = [0; 2];
         reader.read_exact(&mut magic).map_err(|e| e.to_string())?;
         reader.rewind().map_err(|e| e.to_string())?;
         if magic == [0x1f, 0x8b] {
+            if size>MAX_FILE_BYTES{return Err("Compressed file exceeds the 512 MiB input limit".into());}
             let mut bytes = Vec::new();
             flate2::read::MultiGzDecoder::new(reader).take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
             if bytes.len() as u64 > MAX_FILE_BYTES { return Err("Decoded input exceeds the size limit".into()); }
@@ -226,6 +225,8 @@ pub(crate) fn metadata_from_reader<R: Read + Seek + Debug>(mut reader: R, path: 
     if !info.bscale.is_finite() || !info.bzero.is_finite() { return Err("Non-finite BSCALE/BZERO".into()); }
     Ok(Metadata { info, summary, data_start: stop, data_size })
 }
+
+pub(super) fn compressed_tile<R:Read+Seek>(reader:&mut R,info:ImageInfo,start:u64,size:u64,level:u8,x:usize,y:usize)->Result<FitsImage,String>{compressed::read_sampled(reader,info,start,size,level,x,y)}
 
 fn read_selected<R: Read + Seek + Debug>(mut reader: R, path: &Path, options: LoadOptions) -> Result<FitsImage, String> {
     let Metadata { info, summary, data_start:stop, data_size } = metadata_from_reader(&mut reader,path,options,false)?;

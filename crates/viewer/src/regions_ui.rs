@@ -165,7 +165,7 @@ impl Regions {
     }
     pub fn panel(&mut self,ctx:&egui::Context,image:Option<&FitsImage>,pro:bool,windows:&mut crate::window_layout::Runtime){
         if self.open {let mut open=self.open;
-            windows.show(ctx,crate::window_layout::Key::Photometry,crate::i18n::t("Aperture photometry"),&mut open,egui::vec2(430.,300.),|ui|self.ui(ui,ctx,image,pro));self.open=open;
+            windows.show(ctx,crate::window_layout::Key::Photometry,crate::i18n::t("Aperture photometry"),&mut open,egui::vec2(430.,440.),|ui|self.ui(ui,ctx,image,pro));self.open=open;
         }
         if self.growth_open {let mut open=self.growth_open;windows.show(ctx,crate::window_layout::Key::Growth,crate::i18n::t("Aperture growth curve"),&mut open,egui::vec2(440.,300.),|ui|self.growth_ui(ui,ctx));self.growth_open=open;}
     }
@@ -182,7 +182,6 @@ impl Regions {
             ui.horizontal_wrapped(|ui|{for (tool,label) in [(Tool::Pan,"Pan"),(Tool::Circle,"Circle")]{if ui.selectable_value(&mut self.tool,tool,crate::i18n::t(&label)).clicked(){self.draft.clear();self.drag=None;}}});
             #[cfg(feature="pro")]
 if pro{ui.horizontal_wrapped(|ui|{for (tool,label) in [(Tool::Ellipse,"Ellipse"),(Tool::Rectangle,"Rectangle"),(Tool::Polygon,"Polygon"),(Tool::Line,"Line"),(Tool::Polyline,"Polyline"),(Tool::Curve,"Curve")]{if ui.selectable_value(&mut self.tool,tool,crate::i18n::t(&label)).clicked(){self.draft.clear();}}});}
-            self.selection_ui(ui,image.unwrap());
             let current=image.unwrap();
             ui.horizontal_wrapped(|ui|{
                 let ready=if pro{!self.apertures.is_empty()}else{self.selected.is_some_and(|index|index<self.apertures.len())};
@@ -195,6 +194,9 @@ if pro{ui.horizontal_wrapped(|ui|{for (tool,label) in [(Tool::Ellipse,"Ellipse")
             if self.measurement_pending{ui.horizontal(|ui|{ui.spinner();ui.label(crate::i18n::t("Measuring…"));});}
             if !self.message.is_empty(){ui.add(egui::Label::new(crate::i18n::t(&self.message)).wrap());}
             if self.has_error_map() && !self.error_source_ready(current){ui.label(crate::i18n::t("Choose an uncertainty HDU and sigma, variance or ivar explicitly."));}
+
+            self.result_ui(ui,ctx,image);
+            self.selection_ui(ui,image.unwrap());
 
             egui::CollapsingHeader::new(crate::i18n::t("Defaults for new apertures")).id_salt("aperture-defaults").default_open(self.apertures.is_empty()).show(ui,|ui|{
                 ui.horizontal_wrapped(|ui|{ui.label(crate::i18n::t("Radius"));ui.add(egui::DragValue::new(&mut self.radius).range(0.1..=512.).speed(0.1));ui.label(crate::i18n::t("Sky ring"));ui.add(egui::DragValue::new(&mut self.inner).range(0.2..=1024.).speed(0.1));ui.add(egui::DragValue::new(&mut self.outer).range(0.3..=2048.).speed(0.1));});
@@ -235,16 +237,6 @@ if pro{ui.horizontal_wrapped(|ui|{for (tool,label) in [(Tool::Ellipse,"Ellipse")
                 });
                 if error_changed{self.changed();}
             });
-            if let Some(result)=self.selected.and_then(|i|self.results.get(i)).and_then(|r|r.as_ref()){
-                if let Some(image)=image{let unit=header_unit(&image.info.header);ui.label(format!("{}: {}",crate::i18n::t("Flux unit"),if unit.is_empty(){crate::i18n::t("unit unknown")}else{unit.as_str()}));}
-                if let Some(hdu)=self.uncertainty_source["hdu"].as_u64(){ui.label(format!("{}: {}",crate::i18n::t("Uncertainty HDU"),hdu));}
-                ui.label(format!("{} {:0.4} px² · {} {:0.8e}",crate::i18n::t("Area"),result.effective_area,crate::i18n::t("Weighted sum"),result.aperture_sum));
-                ui.label(format!("{} {} · {} {:0.8e}",crate::i18n::t("Background"),result.background_per_pixel.map(|v|format!("{v:0.6}")).unwrap_or_else(||crate::i18n::t("not subtracted").into()),crate::i18n::t("Net weighted sum"),result.net_flux));
-                ui.label(format!("{} {} · SNR {}",crate::i18n::t("Error"),result.total_error.map(|v|format!("{v:0.6e}")).unwrap_or_else(||crate::i18n::t("not computed").into()),result.snr.map(|v|format!("{v:0.3}")).unwrap_or_else(||crate::i18n::t("not computed").into())));
-                for flag in &result.flags{ui.weak(crate::i18n::t(flag));}
-                if ui.button(crate::i18n::t("Export current result / Copy JSON")).clicked(){if let Some(image)=image{let params=self.measurement_params(image,false);
-                    let text=serde_json::to_string_pretty(&serde_json::json!({"schema":1,"coordinates":"zero_based_pixels","revision":self.revision,"path":image.info.path,"hdu":image.info.hdu,"BUNIT":header_unit(&image.info.header),"error_path":params["error_path"],"error_hdu":params["error_hdu"],"error_kind":params["error_kind"],"error_same_file":self.error_same_file,"resolved_uncertainty_source":self.uncertainty_source,"aperture":self.apertures[self.selected.unwrap()],"measurement":result,"options":self.options})).unwrap_or_default();ctx.copy_text(text);}}
-            }
             #[cfg(feature="pro")]
 if pro{
                 if let Some(index)=self.selected.filter(|&i|i<self.apertures.len()){
@@ -273,6 +265,20 @@ if pro{
                     }
                 });
                 });
+            }
+    }
+    // Results and their validity belong before geometry and optional configuration.
+    // 首屏先显示结果与有效性，几何编辑和可选误差配置仍可直接访问。
+    fn result_ui(&self,ui:&mut egui::Ui,ctx:&egui::Context,image:Option<&FitsImage>){
+            if let Some(result)=self.selected.and_then(|i|self.results.get(i)).and_then(|r|r.as_ref()){
+                if let Some(image)=image{let unit=header_unit(&image.info.header);ui.label(format!("{}: {}",crate::i18n::t("Flux unit"),if unit.is_empty(){crate::i18n::t("unit unknown")}else{unit.as_str()}));}
+                if let Some(hdu)=self.uncertainty_source["hdu"].as_u64(){ui.label(format!("{}: {}",crate::i18n::t("Uncertainty HDU"),hdu));}
+                ui.label(format!("{} {:0.4} px² · {} {:0.8e}",crate::i18n::t("Area"),result.effective_area,crate::i18n::t("Weighted sum"),result.aperture_sum));
+                ui.label(format!("{} {} · {} {:0.8e}",crate::i18n::t("Background"),result.background_per_pixel.map(|v|format!("{v:0.6}")).unwrap_or_else(||crate::i18n::t("not subtracted").into()),crate::i18n::t("Net weighted sum"),result.net_flux));
+                ui.label(format!("{} {} · SNR {}",crate::i18n::t("Error"),result.total_error.map(|v|format!("{v:0.6e}")).unwrap_or_else(||crate::i18n::t("not computed").into()),result.snr.map(|v|format!("{v:0.3}")).unwrap_or_else(||crate::i18n::t("not computed").into())));
+                for flag in &result.flags{ui.weak(crate::i18n::t(flag));}
+                if ui.button(crate::i18n::t("Export current result / Copy JSON")).clicked(){if let Some(image)=image{let params=self.measurement_params(image,false);
+                    let text=serde_json::to_string_pretty(&serde_json::json!({"schema":1,"coordinates":"zero_based_pixels","revision":self.revision,"path":image.info.path,"hdu":image.info.hdu,"BUNIT":header_unit(&image.info.header),"error_path":params["error_path"],"error_hdu":params["error_hdu"],"error_kind":params["error_kind"],"error_same_file":self.error_same_file,"resolved_uncertainty_source":self.uncertainty_source,"aperture":self.apertures[self.selected.unwrap()],"measurement":result,"options":self.options})).unwrap_or_default();ctx.copy_text(text);}}
             }
     }
     #[cfg(feature="pro")]

@@ -26,6 +26,29 @@ requests stay separate from sampled display data. Scientific jobs pass a bounded
 `crates/server/src/science.rs` into `fitsviewer_science.py`. Results are checked against
 the current document/generation before changing overlays or derived state.
 
+In 0.1.7, `server/src/native_images.rs` exposes that same bounded store to the
+native UI through an in-process callback, rather than reading the full array before
+creating a window. `core/src/display_tile.rs` can encode Minimal-mode display tiles
+as 16-bit samples with a physical-value scale/offset and an invalid code. PRO requests
+original-bit-depth tiles. Scientific files, exact pixel reads and measurements are
+separate. `compressed_reader.rs` can decode only the source compression tiles needed
+for a view, retaining the original per-compression-tile dithering sequence.
+
+`server/src/native_windows.rs` maintains private same-user window mailboxes for
+acknowledged open requests and graceful exit. Only local-file viewers accept local
+open forwarding; paired remote helpers can participate in exit without gaining local
+file capabilities. No process-name kill or Jupyter shutdown is used. Browser windows
+use an origin-scoped channel, and the Jupyter adapter closes only FitsViewer widgets.
+
+The shared translations live under `web/locales/`: one registry and one JSON
+dictionary per language. `crates/viewer/src/i18n.rs` embeds those same files for
+native/WASM use; `web/locales/index.js` loads them for the browser shell. English
+message keys and unknown values fall back unchanged. Dictionaries are parsed on
+selection rather than all at startup. Adding a language must preserve placeholders,
+scientific identifiers and units, and pass both dictionary and narrow-layout checks;
+see `web/locales/README.md`. Do not add another independent translation table inside
+the HTML page or a tool controller.
+
 `lib.rs` coordinates the document lifecycle. `ribbon.rs` owns the top task/options
 rows, `controls.rs` preferences, `coordinates.rs` WCS/Gaia, `regions_ui.rs` apertures.
 `ui_style.rs` owns shared control geometry, interaction colors and popup/window
@@ -57,6 +80,20 @@ starting Python. See [resource ownership](RESOURCE_LIFECYCLE.md).
 
 `server/src/supervisor.rs` observes the Jupyter server's lifetime independently
 of third-party proxy cleanup. It observes only; it never signals the parent.
+
+The Jupyter adapter creates a private per-proxy backend credential. Its environment
+and `request_headers_override` callbacks share that credential; it is not added to
+browser URLs. Jupyter-mode host routes require the private header. Standalone
+authentication and the separate fver capability namespace retain their own boundaries.
+
+Manual star picking is an independent bounded session in `server/src/selection.rs`.
+`viewer/src/selection_ui.rs` uses the existing original-image transform and separate
+markers, without creating photometry apertures. `web/index.html` follows source/HDU,
+writer identity, revisions, cancellation and actual display-setting acknowledgements.
+The stdlib clients `jupyter/fitsviewer/interactive.py` and `pyec.py` expose final-list
+selection and a narrow incremental DS9-style adapter respectively. Browser/Jupyter
+selection is implemented; native selection IPC and a complete XPA server are not.
+See [the manual selection contract](MANUAL_STAR_SELECTION.md).
 
 The independent SSH entry is `jupyter/fitsviewer/remote.py` / `fver`. It uses a
 separate broker namespace, rather than a Jupyter server or its master credential.
@@ -151,8 +188,10 @@ that module. Base-only custom builds can be installed directly with pip.
   be treated as an original array or passed to full-image rendering/photometry.
 - The host bounds its preparation cache to 192 MiB and gzip spool storage to
   1 GiB, with sixteen admitted image operations. Ordinary FITS supports seeked
-  tiles; gzip requires bounded disk preparation, and tiled compression currently
-  requires a bounded decoded cache. These are format-specific limits, not a
+  tiles; gzip requires bounded disk preparation. Internally tile-compressed FITS
+  decodes the source blocks needed for the requested samples, with a 16 MiB bound
+  on each compressed and decoded source block for display reads. Small full-transfer
+  products may still use the bounded decoded cache. These are format-specific limits, not a
   promise to decode arbitrary image sizes. Source revisions are checked again
   after reads; cached display statistics are labelled as samples.
 - Closing a document releases its view/worker owners; collapsing a panel must keep

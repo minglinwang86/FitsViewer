@@ -97,6 +97,8 @@ instance changes. An unpaired machine still has the basic clickable-URL route.
 | --- | --- |
 | Selected HDU's complete decoded packet ≤ `20_000_000` bytes | Transfer the full typed packet once; ordinary pan, zoom and display changes then use local data. |
 | Larger supported two-dimensional image | Transfer a bounded preview and visible numeric tiles; local stretch/brightness changes reuse cached values. |
+| 0.1.7 Minimal-mode compact display | Optional 16-bit display tiles reduce numeric transfer; invalid samples and the physical-value mapping are retained within the quantization bound. |
+| 0.1.7 PRO display | Original-bit-depth numeric tiles; switching modes clears compact display caches. |
 | Precise cursor value | Read the original sample through a separate pixel request; the preview is not used as the measurement. |
 | Scientific operations | Run against original files in the selected external Python environment, subject to that operation's normal bounds. |
 

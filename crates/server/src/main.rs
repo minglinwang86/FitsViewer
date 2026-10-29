@@ -15,8 +15,13 @@ mod remote_data;
 mod environment;
 mod remote_broker;
 mod remote_sources;
+mod selection;
 #[cfg(feature="desktop")]
 mod remote_native;
+#[cfg(feature="desktop")]
+mod native_images;
+#[cfg(feature="desktop")]
+mod native_windows;
 use measurement::{measure_json,header_json};
 
 use axum::{
@@ -114,6 +119,7 @@ struct Runtime {
     public_url: String,
     epoch: String,
     #[serde(default)]fver:bool,
+    #[serde(default)]jupyter:bool,
 }
 #[derive(Clone, Serialize)]
 struct OpenRequest {
@@ -121,6 +127,7 @@ struct OpenRequest {
     path: String,
     hdu: Option<usize>,
     session:Option<serde_json::Value>,
+    selection_id:Option<String>,
 }
 struct Queue {
     seq: u64,
@@ -134,6 +141,7 @@ struct AppState {
     science: Arc<science::Bridge>,
     images: Arc<remote_data::Store>,
     broker:Arc<Mutex<remote_broker::Broker>>,
+    selections:Arc<Mutex<selection::Store>>,
 }
 #[derive(Deserialize)]
 struct ScienceInput {operation:String,#[serde(default)]params:serde_json::Value}
@@ -163,6 +171,7 @@ struct TileQuery {
     #[serde(default)]level:u8,
     #[serde(default)]x:usize,
     #[serde(default)]y:usize,
+    #[serde(default)]display_bits:u8,
 }
 // Extract both flat query views directly from the URI. serde(flatten) buffers
 // query values as strings, bypassing serde_urlencoded's numeric conversion.
@@ -245,6 +254,10 @@ fn authorize(
     headers: &HeaderMap,
     token: Option<&str>,
 ) -> Result<(), (StatusCode, String)> {
+    if state.runtime.jupyter {
+        return if !state.runtime.fver && session_token_matches(&state.runtime,headers,token){Ok(())}
+            else{Err((StatusCode::FORBIDDEN,"Authenticated Jupyter proxy credential required".into()))};
+    }
     if state.runtime.fver {
         remote_broker::verify_transport(state,headers)?;
         let key=remote_broker::credential(headers).unwrap_or("");
@@ -252,19 +265,55 @@ fn authorize(
         if state.broker.lock().unwrap().scope(key).is_some(){return Ok(());}
         return Err((StatusCode::UNAUTHORIZED,"A live file capability in the request header is required".into()));
     }
-    if state.runtime.token.is_empty()
-        || token == Some(state.runtime.token.as_str())
-        || headers
-            .get("x-fitsviewer-token")
-            .and_then(|v| v.to_str().ok())
-            == Some(state.runtime.token.as_str())
-    {
+    if session_token_matches(&state.runtime,headers,token) {
         Ok(())
     } else {
         Err((
             StatusCode::UNAUTHORIZED,
             "FitsViewer session token required".into(),
         ))
+    }
+}
+// Jupyter's backend credential is private to its proxy and owner-side CLI.
+// Jupyter 后端密钥只经代理请求头传递，不能用浏览器 URL/query 绕过代理。
+fn session_token_matches(runtime:&Runtime,headers:&HeaderMap,token:Option<&str>)->bool{
+    !runtime.token.is_empty() && (
+        headers.get("x-fitsviewer-token").and_then(|value|value.to_str().ok())==Some(runtime.token.as_str())
+        || !runtime.jupyter && token==Some(runtime.token.as_str()))
+}
+fn browser_token(runtime:&Runtime)->Option<&str>{(!runtime.jupyter && !runtime.token.is_empty()).then_some(runtime.token.as_str())}
+fn jupyter_backend_token(value:Option<String>)->Result<String,std::io::Error>{
+    value.filter(|token|(32..=256).contains(&token.len()) && token.bytes().all(|byte|byte.is_ascii_alphanumeric() || byte==b'-' || byte==b'_'))
+        .ok_or_else(||std::io::Error::other("Jupyter mode requires a private proxy credential. Update FitsViewer's Python integration and restart Jupyter; do not start --jupyter directly."))
+}
+#[cfg(test)]
+mod authentication_tests {
+    use super::*;
+    fn runtime(jupyter:bool,token:&str)->Runtime{
+        Runtime{port:0,pid:0,root:String::new(),token:token.into(),public_url:"http://127.0.0.1/owned-proxy/".into(),epoch:String::new(),fver:false,jupyter}
+    }
+    #[test]fn jupyter_requires_header_even_when_query_contains_the_private_credential(){
+        let token="owned-test-credential-not-a-live-secret";let state=runtime(true,token);
+        let mut headers=HeaderMap::new();assert!(!session_token_matches(&state,&headers,None));
+        assert!(!session_token_matches(&state,&headers,Some(token)));
+        headers.insert("x-fitsviewer-token","wrong".parse().unwrap());assert!(!session_token_matches(&state,&headers,None));
+        headers.insert("x-fitsviewer-token",token.parse().unwrap());assert!(session_token_matches(&state,&headers,None));
+    }
+    #[test]fn standalone_query_compatibility_does_not_allow_empty_credentials(){
+        let state=runtime(false,"owned-test-token");assert!(session_token_matches(&state,&HeaderMap::new(),Some("owned-test-token")));
+        for jupyter in [false,true]{let empty=runtime(jupyter,"");let mut headers=HeaderMap::new();headers.insert("x-fitsviewer-token","".parse().unwrap());
+            assert!(!session_token_matches(&empty,&headers,Some("")));assert!(!session_token_matches(&empty,&headers,None));}
+    }
+    #[test]fn jupyter_private_credential_is_never_a_browser_url_token(){
+        assert!(browser_token(&runtime(true,"owned-test-token")).is_none());
+        assert_eq!(browser_token(&runtime(false,"owned-test-token")),Some("owned-test-token"));
+    }
+    #[test]fn jupyter_startup_rejects_missing_short_or_invalid_credentials(){
+        for value in [None,Some(String::new()),Some("short".into()),Some("x\r\n".repeat(20))]{assert!(jupyter_backend_token(value).is_err());}
+        assert!(jupyter_backend_token(Some("a".repeat(43))).is_ok());
+    }
+    #[test]fn jupyter_and_fver_broker_modes_are_mutually_exclusive(){
+        assert!(Args::try_parse_from(["fitsviewer","--serve","--jupyter","--fver-broker"]).is_err());
     }
 }
 fn scoped<'a>(state:&AppState,headers:&'a HeaderMap)->Option<&'a str>{
@@ -383,6 +432,7 @@ async fn image_pixel(State(state):State<AppState>,headers:HeaderMap,Query(image)
 }
 async fn image_piece(state:AppState,headers:HeaderMap,image:ImageQuery,q:TileQuery,kind:&'static str)->Response{
     if let Err(error)=authorize(&state,&headers,image.token.as_deref()){return error.into_response();}
+    if ![0,16].contains(&q.display_bits){return (StatusCode::BAD_REQUEST,"Display tiles support original or 16-bit samples").into_response();}
     let _permit=match scoped_io(&state,&headers){Ok(permit)=>permit,Err(error)=>return error.into_response()};
     let path=match resolve_for(&state,&headers,&image.path){Ok(path)=>path,Err(error)=>return error.into_response()};
     if let Err(error)=claim_image(&state,&headers,&image){return error.into_response();}
@@ -393,7 +443,7 @@ async fn image_piece(state:AppState,headers:HeaderMap,image:ImageQuery,q:TileQue
         let source=stable_source(&lease)?;let path=source.as_ref().map_or(path.as_path(),|s|s.path());
         let value=if kind=="pixel"{images.pixel(path,&image.path,options,&q.version,q.x,q.y).and_then(|v|serde_json::to_vec(&v).map_err(|e|e.to_string()))}
         else if kind=="full"{images.full(path,&image.path,options,&q.version)}
-        else{images.tile(path,&image.path,options,&q.version,q.level,q.x,q.y)}?;if let Some(source)=source{source.verify()?;}Ok::<_,String>(value)
+        else{images.display_tile(path,&image.path,options,&q.version,q.level,q.x,q.y,q.display_bits==16)}?;if let Some(source)=source{source.verify()?;}Ok::<_,String>(value)
     }).await;
     if state.runtime.fver{if let Err(error)=authorize(&state,&headers,None){return error.into_response();}}
     match result{
@@ -551,6 +601,7 @@ async fn open(
         path: virtual_path.clone(),
         hdu: q.hdu,
         session:q.session.clone(),
+        selection_id:None,
     };
     queue.items.push_back(request);
     if queue.items.len() > 32 {
@@ -565,8 +616,8 @@ async fn open(
         url.push_str(&format!("&hdu={hdu}"));
     }
     if q.session.is_some(){url.push_str(&format!("&session_seq={}",queue.seq));}
-    if !state.runtime.token.is_empty() {
-        url.push_str(&format!("&token={}", state.runtime.token));
+    if let Some(token)=browser_token(&state.runtime) {
+        url.push_str(&format!("&token={token}"));
     }
     Json(serde_json::json!({"url":url,"path":virtual_path,"seq":queue.seq})).into_response()
 }
@@ -637,13 +688,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
             return Err("No display is available. Use the default SSH/browser mode, or start an X11/X2Go session before --native.".into());
         }
-        let app = if let Some(path) = args.file {
-            let image =
-                fitsviewer_core::load_file_with_options(&path,fitsviewer_core::LoadOptions{hdu:args.hdu,x_column:args.x_column,y_column:args.y_column,error_column:args.error_column,error_hdu:args.error_hdu,error_kind:fitsviewer_core::ErrorKind::parse(&args.error_kind).unwrap(),ignore_errors:args.no_error}).map_err(std::io::Error::other)?;
-            fitsviewer_web::FitsApp::from_image(image)
-        } else {
-            fitsviewer_web::FitsApp::new(String::new(), None, String::new(), None)
-        };
+        let options=fitsviewer_core::LoadOptions{hdu:args.hdu,x_column:args.x_column,y_column:args.y_column,error_column:args.error_column,error_hdu:args.error_hdu,error_kind:fitsviewer_core::ErrorKind::parse(&args.error_kind).unwrap(),ignore_errors:args.no_error};
+        options.validate().map_err(std::io::Error::other)?;
+        let path=args.file.as_ref().map(|p|p.to_string_lossy().into_owned()).unwrap_or_default();
+        let registry=fitsviewer_web::FitsApp::window_registry_path();
+        if restored_session.is_none() && !path.is_empty() && fitsviewer_web::FitsApp::reuse_existing_window() && native_windows::Instance::forward(&registry,path.clone(),options){return Ok(());}
+        let windows=native_windows::Instance::new(registry).map_err(std::io::Error::other)?;
+        let app=fitsviewer_web::FitsApp::new(path,None,String::new(),args.hdu).with_load_options(options)
+            .with_image_bridge(native_images::bridge(runtime_path().parent().unwrap_or(Path::new(".")).join("native-images")))
+            .with_window_control(windows.control());
         let app=if let Some(session)=restored_session{app.with_session(session).map_err(std::io::Error::other)?}else{app};
         #[cfg(all(windows,feature="desktop"))]
         let app = app.with_file_picker(desktop_windows::pick_file);
@@ -694,6 +747,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .call()
                 .is_ok()
         });
+    if active.as_ref().is_some_and(|runtime|runtime.token.is_empty()){
+        return Err("The linked viewer uses legacy unauthenticated Jupyter mode. Update the Python integration and restart Jupyter before opening files.".into());
+    }
     if active.is_none() {
         // Installed resources may be read-only. / 安装目录可为只读，运行记录放用户缓存。
         let logs = if std::env::var_os("FITSVIEWER_RUNTIME_DIR").is_some() {
@@ -757,7 +813,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .into_json()?;
     let url = reply["url"].as_str().ok_or("Invalid open response")?;
     println!("{url}");
-    if active.token.is_empty() {
+    if active.jupyter {
         println!("Queued for the connected JupyterLab window. Use its Open in window button for a separate browser window.");
     }
     if !args.no_browser && (cfg!(target_os="macos") || std::env::var_os("DISPLAY").is_some()) {
@@ -801,7 +857,7 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         pid: std::process::id(),
         root: root.to_string_lossy().into_owned(),
         token: if args.jupyter {
-            String::new()
+            jupyter_backend_token(std::env::var("FITSVIEWER_JUPYTER_TOKEN").ok())?
         } else {
             uuid::Uuid::new_v4().simple().to_string()
         },
@@ -816,6 +872,7 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 .as_secs()
         ),
         fver:args.fver_broker,
+        jupyter:args.jupyter,
     };
     let supervisor=args.supervisor_pid.map(supervisor::Parent::observe).transpose().map_err(std::io::Error::other)?;
     std::fs::create_dir_all(runtime_path().parent().unwrap())?;
@@ -829,6 +886,7 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     science::Bridge::start_reaper(&science);
     let state = AppState {
         broker:Arc::new(Mutex::new(remote_broker::Broker::new(args.fver_broker))),
+        selections:Arc::new(Mutex::new(selection::Store::default())),
         runtime,
         roots,
         queue: Arc::new(Mutex::new(Queue {
@@ -858,6 +916,7 @@ async fn serve(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/image/tile",get(image_tile))
         .route("/api/image/pixel",get(image_pixel))
         .route("/api/open", post(open))
+        .route("/api/selection",get(selection::get).post(selection::post))
         .route("/api/session", get(session))
         .route("/api/requests", get(requests))
         .route("/api/science",post(scientific))

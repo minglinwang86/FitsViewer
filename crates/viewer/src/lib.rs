@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 mod spectrum;
 mod plot_geometry;
 mod image_transform;
+mod selection_ui;
 mod image_display;
 mod remote_image;
 mod environment_ui;
@@ -47,15 +48,40 @@ pub fn install_cjk_font(ctx: &egui::Context, bytes: Vec<u8>) {
 }
 
 enum ImageLoad { Full(FitsImage), Remote(fitsviewer_core::remote::Manifest) }
+pub type ImageBridge=Arc<dyn Fn(String)->Result<Vec<u8>,String>+Send+Sync>;
+#[derive(Clone,serde::Serialize,serde::Deserialize)]
+pub enum WindowEvent{Open{path:String,options:LoadOptions},Exit}
+#[derive(Clone)]
+pub struct WindowControl{
+    pub poll:Arc<dyn Fn(bool)->Vec<WindowEvent>+Send+Sync>,
+    pub exit_all:Arc<dyn Fn()->Result<(),String>+Send+Sync>,
+}
+
+#[cfg(all(test,not(target_arch="wasm32")))]mod native_spectrum_loading_tests{
+    use super::*;
+    #[test]fn native_spectra_keep_the_existing_full_dataset_reader(){
+        let path=std::env::temp_dir().join(format!("fv-native-spectrum-{}-{}.dat",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::write(&path,b"4000 1\n5000 2\n6000 3\n").unwrap();
+        let mut app=FitsApp::new(path.to_string_lossy().into_owned(),None,String::new(),None).with_image_bridge(Arc::new(|_|Err("Native full dataset reader".into())));
+        app.request(&egui::Context::default(),None);
+        let deadline=std::time::Instant::now()+std::time::Duration::from_secs(5);
+        let result=loop{if let Some(result)=app.pending.lock().unwrap().1.take(){break result;}assert!(std::time::Instant::now()<deadline);std::thread::sleep(std::time::Duration::from_millis(5));};
+        assert!(matches!(result,Ok(ImageLoad::Full(image)) if image.spectrum.is_some() && image.pixels.len()==3));std::fs::remove_file(path).unwrap();
+    }
+}
 type Pending = Arc<Mutex<(u64,Option<Result<ImageLoad, String>>)>>;
 /// The egui viewer shared by desktop and browser builds.
 pub struct FitsApp {
     image: Option<Arc<FitsImage>>,
+    selection:selection_ui::Selection,
     stats: Statistics,
     texture: Option<egui::TextureHandle>,
     remote: Option<remote_image::RemoteImage>,
     path: String,
     api: Option<String>,
+    local_images:Option<ImageBridge>,
+    pending_load_options:Option<LoadOptions>,
+    window_control:Option<WindowControl>,
     token: String,
     pending: Pending,
     pending_group:Option<String>,
@@ -125,6 +151,7 @@ impl FitsApp {
     pub fn new(path: String, api: Option<String>, token: String, hdu: Option<usize>) -> Self {
         Self {
             image: None,
+            selection:Default::default(),
             stats: Statistics::default(),
             texture: None,
             remote: None,
@@ -134,6 +161,9 @@ impl FitsApp {
             token,
             pending: Arc::new(Mutex::new((0,None))),
             pending_group:None,
+            local_images:None,
+            pending_load_options:None,
+            window_control:None,
             loading: false,
             first_frame:false,
             error: String::new(),
@@ -189,7 +219,21 @@ impl FitsApp {
         app
     }
     pub fn with_science(mut self,callback:science_client::LocalScience)->Self{self.science.local=Some(callback);self}
+    pub fn with_image_bridge(mut self,callback:ImageBridge)->Self{self.local_images=Some(callback);self}
+    pub fn with_load_options(mut self,options:LoadOptions)->Self{self.pending_load_options=Some(options);self}
+    pub fn reuse_existing_window()->bool{controls::load().open_in_same_window}
+    pub fn with_window_control(mut self,control:WindowControl)->Self{self.window_control=Some(control);self}
+    #[cfg(not(target_arch="wasm32"))]
+    pub fn window_registry_path()->std::path::PathBuf{controls::settings_path().parent().unwrap_or(std::path::Path::new(".")).join("windows-v1")}
+    fn exit_all_windows(&mut self,ctx:&egui::Context){
+        #[cfg(not(target_arch="wasm32"))]{
+            if let Some(control)=&self.window_control{if let Err(error)=(control.exit_all)(){self.error=error;return;}}
+            self.close_document(ctx);ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        #[cfg(target_arch="wasm32")]{let _=crate::text_io::browser("exitAll",&[]);}
+    }
     pub fn with_session(mut self,value:serde_json::Value)->Result<Self,String>{
+        self.pending_load_options=None;
         let views=value["views"].as_array().filter(|v|!v.is_empty() && v.len()<=32).ok_or("Session requires one to 32 views")?;
         if value["schema"].as_u64().unwrap_or(1)!=1 || value.to_string().len()>1024*1024{return Err("Unsupported or oversized session".into());}
         for entry in views{
@@ -254,7 +298,7 @@ impl FitsApp {
         self.stats=manifest.statistics.clone();
         if !saved_view{(self.low,self.high)=self.stats.bounds(self.limits);}
         let group=format!("{}-{}",self.science.session,self.generation);
-        self.remote=Some(remote_image::RemoteImage::new(manifest,self.api.clone().unwrap_or_default(),self.token.clone(),query,group));
+        self.remote=Some(remote_image::RemoteImage::new(manifest,self.api.clone().unwrap_or_default(),self.token.clone(),query,group,self.local_images.clone(),self.tools.prefs.compact_large_images && self.tools.prefs.mode!="PRO"));
         self.dirty=true;
     }
     #[cfg(feature="pro")]
@@ -315,6 +359,7 @@ if let Some(pro)=&mut self.pro{pro.annotations=snapshot["view"]["annotations"].a
         if self.path.trim().is_empty() {
             return;
         }
+        self.selection.cancel();
         self.cancel_image_load();
         let preserve=self.path.clone();self.abandon_document(ctx,Some(&preserve));
         self.loading = true;
@@ -327,23 +372,31 @@ if let Some(pro)=&mut self.pro{pro.annotations=snapshot["view"]["annotations"].a
         if let Some(value)=self.pending_view.as_ref().map(|v|&v["view"]["load_options"]).filter(|v|v.is_object()){
             self.load_options=LoadOptions{hdu,x_column:value["x_column"].as_u64().map(|v|v as usize),y_column:value["y_column"].as_u64().map(|v|v as usize),error_column:value["error_column"].as_u64().map(|v|v as usize),error_hdu:value["error_hdu"].as_u64().map(|v|v as usize),error_kind:ErrorKind::parse(value["error_kind"].as_str().unwrap_or("auto")).unwrap_or_default(),ignore_errors:value["no_error"].as_bool().unwrap_or(false)};
         }
+        if let Some(options)=self.pending_load_options.take(){self.load_options=options;}
         let options = LoadOptions {hdu, ..self.load_options};
         let pending = self.pending.clone();
         let serial={let mut slot=pending.lock().unwrap();slot.0+=1;slot.1=None;slot.0};
         let group=format!("load-{}-{serial}",self.science.session);self.pending_group=Some(group.clone());
         let ctx = ctx.clone();
-        if let Some(base) = &self.api {
+        if let Some(base) = self.api.as_deref().or(self.local_images.as_ref().map(|_|"")) {
             let query=format!("{}&session={}&generation={}&fv_image={}",remote_image::query(&self.path,options),urlencoding::encode(&self.science.session),self.generation,urlencoding::encode(&group));
-            let url=format!("{base}/api/image/metadata?{query}");let base=base.clone();let token=self.token.clone();
+            let url=format!("{base}/api/image/metadata?{query}");let base=base.to_owned();let token=self.token.clone();let local=self.local_images.clone();let native_path=self.path.clone();
             let busy=pending.clone();let busy_ctx=ctx.clone();
-            if !remote_image::get(url,&self.token,2*1024*1024,move|response|{
+            if !remote_image::get(url,&self.token,2*1024*1024,local.clone(),move|response|{
                 if pending.lock().unwrap().0!=serial{return;}
+                #[cfg(not(target_arch="wasm32"))]
+                if local.is_some() && response.as_ref().is_err_and(|error|error=="Native full dataset reader"){
+                    let literal=std::path::Path::new(&native_path);let path=if literal.exists(){literal}else{std::path::Path::new(fitsviewer_core::pasted_path(&native_path))};
+                    let result=fitsviewer_core::load_file_with_options(path,options).map(ImageLoad::Full);
+                    let mut slot=pending.lock().unwrap();if slot.0==serial{slot.1=Some(result);}drop(slot);ctx.request_repaint();return;
+                }
+                #[cfg(target_arch="wasm32")]let _=&native_path;
                 let manifest=response.and_then(|bytes|serde_json::from_slice::<fitsviewer_core::remote::Manifest>(&bytes).map_err(|e|e.to_string()));
                 match manifest{
                     Ok(manifest) if manifest.transport=="full"=>{
                         let url=format!("{base}/api/image/full?{query}&version={}",urlencoding::encode(&manifest.source_version));
                         let busy=pending.clone();let busy_ctx=ctx.clone();
-                        if !remote_image::get(url,&token,fitsviewer_core::remote::FULL_TRANSFER_BYTES as usize,move|response|{
+                        if !remote_image::get(url,&token,fitsviewer_core::remote::FULL_TRANSFER_BYTES as usize,local,move|response|{
                             let result=response.and_then(|bytes|FitsImage::from_packet(&bytes)).map(ImageLoad::Full);
                             let mut slot=pending.lock().unwrap();if slot.0==serial{slot.1=Some(result);}ctx.request_repaint();
                         }){let mut slot=busy.lock().unwrap();if slot.0==serial{slot.1=Some(Err("Too many image requests; retry opening the file".into()));}busy_ctx.request_repaint();}
@@ -610,6 +663,7 @@ if let Some(pro)=&mut self.pro {pro.reply(reply);}
     fn state(&self)->serde_json::Value{
         let image=self.image.as_deref();
         let mut state=serde_json::json!({"schema":1,"loaded":image.is_some(),"loading":self.loading,"error":self.error,"path":self.path,"hdu":image.map(|m|m.info.hdu),"width":image.map(|m|m.info.width),"height":image.map(|m|m.info.height),"spectrum":image.and_then(|m|m.info.spectrum.as_ref()),"plot_bounds":self.plot.bounds,"status_height":self.status_height,"view_rect":self.view_rect,"stretch":self.stretch.name(),"limits":self.limits.name(),"low":self.low,"high":self.high,"bias":self.tone.bias,"contrast":self.tone.contrast,"zoom":self.zoom,"rotation_deg":self.rotation_deg,"pan":[self.pan.x,self.pan.y],"cursor":self.cursor,"texture":self.texture.is_some(),"mode":self.tools.prefs.mode,"theme":self.tools.prefs.theme,"preferences":self.tools.prefs,"histogram_builds":self.tools.histogram_builds,"histogram_loaded":self.tools.histogram.is_some(),"science_session":self.science.session,"generation":self.generation,"j2000":self.wcs_text,"wcs":self.wcs_result,"apertures":self.regions.apertures,"measurements":self.regions.results,"region_message":self.regions.message,"measurement_pending":self.regions.measurement_pending,"measurement_revision":self.regions.revision});
+        state["selection"]=self.selection.state();
         state["ribbon_height"]=serde_json::json!(self.ribbon_height);
         state["first_frame_ready"]=serde_json::json!(self.first_frame_ready());
         state["remote_image"]=self.remote.as_ref().map_or(serde_json::Value::Null,|remote|remote.state());
@@ -652,6 +706,23 @@ if let Some(pro)=&mut self.pro {pro.reply(reply);}
         let params=&input["params"];
         match operation {
             "state"=>return Ok(self.state()),
+            "selection.begin"=>{
+                if self.loading{return Err("Wait for the selection image to load".into());}
+                let image=self.image.as_ref().filter(|i|i.spectrum.is_none()).ok_or("Selection requires a two-dimensional image")?;
+                let identity=self.remote.as_ref().map(|r|r.manifest.source_version.as_str()).or_else(||params["identity"].as_str()).ok_or("Selection requires a source identity")?;
+                let source=json!({"path":image.info.path,"hdu":image.info.hdu,"width":image.info.width,"height":image.info.height,"identity":identity});
+                self.selection.begin(params,source,self.generation)?;
+            },
+            "selection.cancel"=>self.selection.cancel(),
+            "selection.fail"=>self.selection.fail(),
+            "selection.finish"=>self.selection.finish(),
+            "selection.undo"=>self.selection.undo(),
+            "selection.clear"=>self.selection.clear(),
+            "selection.configure"=>{
+                let cmap=params["cmap"].as_str().map(|name|match name.to_ascii_lowercase().as_str(){"grey"|"gray"=>Ok("Gray"),"heat"=>Ok("Heat"),"cool"=>Ok("Cool"),"red"=>Ok("Red"),"blue-orange"=>Ok("Blue-orange"),_=>Err("Unsupported selection color map")}).transpose()?;
+                self.selection.configure(params)?;if let Some(name)=cmap{self.tools.prefs.render.palette=fitsviewer_core::display::Palette::builtin(name);self.dirty=true;}
+            },
+            "exit_all"=>self.exit_all_windows(ctx),
             #[cfg(not(feature="pro"))]
             "session.export"=>return Ok(json!({"schema":1,"mode":"Minimal","views":[{"path":self.path,"hdu":self.image.as_ref().map(|i|i.info.hdu),"view":self.view_configuration(),"apertures":self.regions.apertures}]})),
             #[cfg(feature="pro")]
@@ -784,7 +855,7 @@ if let Some(pro)=&mut self.pro {pro.reply(reply);}
             },
             #[cfg(feature="pro")]
             "pro.run"=>{if self.tools.prefs.mode!="PRO"{return Err("Select PRO before using scientific tools".into());}let operation=params["operation"].as_str().ok_or("Missing PRO operation")?;if !pro::OPERATIONS.iter().any(|(o,_)|*o==operation){return Err("Unknown PRO tool".into());}let view=self.view_configuration();let pro=self.pro.get_or_insert_with(pro::Workspace::default);if pro.busy{return Err("Another PRO job is running".into());}pro.operation=operation.into();pro.parameters=serde_json::to_string(&params["params"]).map_err(|e|e.to_string())?;pro.submit(ctx,&self.science,self.generation,self.image.as_deref(),&view);},
-            "close"=>{self.close_document(ctx);
+            "close"=>{self.selection.cancel();self.close_document(ctx);
                 #[cfg(all(target_arch="wasm32",feature="offline"))] WEB_OFFLINE_SOURCE.with(|slot|*slot.borrow_mut()=None);
             },
             _=>return Err("Unknown viewer command".into()),
@@ -909,6 +980,15 @@ if let Some(multi)=&mut self.multi{multi.invalidate_wcs();}
 }
 impl eframe::App for FitsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(control)=self.window_control.clone(){
+            for event in (control.poll)(ctx.input(|input|input.focused)){
+                match event{
+                    WindowEvent::Open{path,options}=>{self.path=path;self.pending_load_options=Some(options);self.request(ctx,options.hdu);ctx.send_viewport_cmd(egui::ViewportCommand::Focus);},
+                    WindowEvent::Exit=>{self.close_document(ctx);ctx.send_viewport_cmd(egui::ViewportCommand::Close);return;},
+                }
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
         self.sync_coordinates(ctx);
         if i18n::set(&self.tools.prefs.language){
             #[cfg(target_arch="wasm32")] let _=text_io::browser("setLanguage",&[&self.tools.prefs.language]);
@@ -938,6 +1018,7 @@ impl eframe::App for FitsApp {
         }
         let mut preview_changed=false;
         if let Some(remote)=&mut self.remote{
+            remote.set_compact(self.tools.prefs.compact_large_images && self.tools.prefs.mode!="PRO");
             if remote.poll(){preview_changed=true;self.tools.histogram=None;self.scale_mapping=None;self.dirty=true;}
             if self.tools.histogram.is_none(){if let Some(preview)=remote.preview(){let mut histogram=fitsviewer_core::display::Histogram::new(preview,128);histogram.sampled=true;self.tools.histogram=Some(histogram);self.tools.histogram_builds+=1;}}
         }
@@ -945,10 +1026,12 @@ impl eframe::App for FitsApp {
         self.prepare_popup_windows();
         #[cfg(feature="pro")] self.prepare_pro_dock(ctx,false);
         self.commands(ctx);
+        self.selection.validate(self.generation,self.image.as_ref().map(|i|i.info.path.as_str()),self.image.as_ref().map(|i|i.info.hdu),self.remote.as_ref().map(|r|r.manifest.source_version.as_str()),self.loading);
+        self.selection.toolbar(ctx);
         self.tools.apply_theme(ctx);
         self.sync_coordinates(ctx);
         self.shortcuts(ctx);
-        if let Some(action)=self.tools.shortcut(ctx){self.action(&action,ctx);}
+        if !self.selection.active(){if let Some(action)=self.tools.shortcut(ctx){self.action(&action,ctx);}}
         #[cfg(not(target_arch = "wasm32"))]
         {
             let dropped = ctx.input(|i| {
@@ -1047,6 +1130,9 @@ if let Some(pro)=&mut self.pro{if !pro.busy{pro.select("line_profile");pro.param
             self.popup_windows=windows;
             self.header_open=open;
         }
+        if let Some((low,high))=self.tools.histogram_limits.take(){
+            if low.is_finite() && high.is_finite() && low<high{self.low=low;self.high=high;self.limits=Limits::Manual;self.dirty=true;}
+        }
         if self.dirty && self.low.is_finite() && self.high.is_finite() && self.low < self.high {
             if let Some(remote)=&mut self.remote{
                 if self.scale_mapping.as_ref().is_none_or(|m|!m.matches(self.low,self.high,self.stretch,self.tools.prefs.render.stretch_exponent)){
@@ -1079,6 +1165,7 @@ if let Some(pro)=&mut self.pro{if !pro.busy{pro.select("line_profile");pro.param
             }
             self.dirty = false;
         }
+        self.selection.observe_view(self.low,self.high);
         self.cursor_pixel=None;
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(Color32::from_rgb(13, 17, 23)).inner_margin(egui::Margin{right:if is_pro && !self.tools.prefs.pro_collapsed(spectrum){6}else{0},..Default::default()}))
@@ -1119,7 +1206,7 @@ if let Some(pro)=&mut self.pro{if !pro.busy{pro.select("line_profile");pro.param
                     let transform=image_transform::ImageTransform::new(center+self.pan,dimensions,self.zoom,self.rotation_deg);
                     #[cfg(feature="pro")] let picking=self.pro.as_ref().is_some_and(|pro|pro.picking());
                     #[cfg(not(feature="pro"))] let picking=false;
-                    if !controls_hover && (response.dragged_by(egui::PointerButton::Middle) || (response.dragged_by(egui::PointerButton::Primary) && !picking && !self.regions.editing() && !self.regions.claims_primary_drag_transformed(ctx,transform))) {
+                    if !controls_hover && (response.dragged_by(egui::PointerButton::Middle) || (response.dragged_by(egui::PointerButton::Primary) && !picking && !self.selection.active() && !self.regions.editing() && !self.regions.claims_primary_drag_transformed(ctx,transform))) {
                         self.pan += response.drag_delta();
                         self.auto_fit = false;
                     }
@@ -1174,8 +1261,9 @@ if let Some(pro)=&mut self.pro{if !pro.busy{pro.select("line_profile");pro.param
                         {transform.paint_texture(&clipped,texture.id(),Color32::WHITE);}
                         }
                         self.first_frame=self.texture.is_some() || self.remote.as_ref().is_some_and(|remote|remote.preview().is_some());
-                        self.regions.canvas_transformed(ctx,&response,&clipped,transform,image,self.tools.prefs.mode=="PRO",!picking && !controls_hover);
-                        #[cfg(feature="pro")] if let Some(pro)=&mut self.pro{pro.image_interaction(ctx,&response,&clipped,transform,!controls_hover);}
+                        self.regions.canvas_transformed(ctx,&response,&clipped,transform,image,self.tools.prefs.mode=="PRO",!picking && !self.selection.active() && !controls_hover);
+                        #[cfg(feature="pro")] if let Some(pro)=&mut self.pro{pro.image_interaction(ctx,&response,&clipped,transform,!controls_hover && !self.selection.active());}
+                        self.selection.canvas(ctx,&response,&clipped,transform,!controls_hover);
                         image_display::paint(&clipped,area,transform,&self.tools.prefs,self.wcs_result.as_ref());
                         #[cfg(feature="pro")]
 if let Some(pro)=&mut self.pro{pro.overlay(&clipped,transform,self.wcs_result.as_ref(),response.hover_pos());}

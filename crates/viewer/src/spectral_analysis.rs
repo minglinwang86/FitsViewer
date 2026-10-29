@@ -71,6 +71,15 @@ pub struct Analysis{
     region_json:String,flux_scale:f64,
 }
 fn valid_interval(value:&[f64;2])->bool{value.iter().all(|n|n.is_finite()) && value[0]<value[1]}
+fn metric_needs_attention(metric:&Value)->bool{metric["status"]!="ok" || metric["uncertainty_status"]!="independent_pixel_MC"}
+fn summary_metric(metric:&Value)->bool{matches!(metric["key"].as_str(),Some("equivalent_width_observed"|"net_flux_observed")) || metric_needs_attention(metric)}
+fn metric_ui(ui:&mut egui::Ui,metric:&Value){
+    let value=metric["value"].as_f64().map(|value|format!("{value:.6e}")).unwrap_or_else(||"—".into());
+    let uncertainty=metric["uncertainty"].as_f64().map(|error|format!(" ± {error:.3e}")).unwrap_or_default();
+    ui.label(format!("{}: {value}{uncertainty} {}",metric["name"].as_str().unwrap_or("Result"),metric["unit"].as_str().unwrap_or("")));
+    let state=format!("{} · {}",metric["status"].as_str().unwrap_or("unknown"),metric["uncertainty_status"].as_str().unwrap_or("unspecified"));
+    if metric_needs_attention(metric){ui.colored_label(egui::Color32::YELLOW,state);}else{ui.label(state);}
+}
 pub fn format_number(value:f64)->String{if value!=0. && (value.abs()<1e-4 || value.abs()>=1e7){format!("{value:.6e}")}else{format!("{value:.6}")}}
 fn scientific_drag(ui:&mut egui::Ui,value:&mut f64,speed:f64)->egui::Response{
     ui.add(egui::DragValue::new(value).speed(speed.max(f64::MIN_POSITIVE)).custom_formatter(|value,_|format_number(value))
@@ -156,7 +165,9 @@ impl Analysis{
             self.series.push(Series{name,kind,x:x.iter().map(|v|v.as_f64().unwrap_or(f64::NAN)).collect(),y:y.iter().map(|v|v.as_f64().unwrap_or(f64::NAN)).collect()});
         }}
         let action=value["action"].as_str().unwrap_or("analysis").to_owned();self.results.insert(action,value["measurements"].clone());
-        self.message=value["warnings"].as_array().map(|v|v.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n")).unwrap_or_default();
+        // The controller presents complete response warnings once, alongside run status.
+        // 分析局部消息只保留编辑/验证反馈，避免科学警告全文在面板中重复。
+        self.message.clear();
         self.display_generation=self.display_generation.saturating_add(1);true
     }
     pub fn summary(&self)->Value{json!({"source":self.source,"revision":self.revision,"display_generation":self.display_generation,"task":self.task,"parameters":self.parameters,"display":self.display,"keep_regions":self.keep_regions,"selection_target":self.drag_target,
@@ -174,6 +185,7 @@ impl Analysis{
     }
     pub fn ui(&mut self,ui:&mut egui::Ui,image:&FitsImage,lines:&mut Controls,busy:bool,multi:&mut crate::multiview::Workspace)->Option<String>{
         self.sync_context(lines);let before=serde_json::to_value(&self.parameters).unwrap();let mut action=None;
+        if !self.message.is_empty(){ui.label(t(&self.message));}
         ui.horizontal_wrapped(|ui|{for task in ["Display","Measure","Process","Fit","Compare"]{ui.selectable_value(&mut self.task,task.into(),t(if task=="Fit"{"Model fit"}else{task}));}
             crate::pro::information(ui,"analysis-info",|ui|{
                 let hints:&[&str]=match self.task.as_str(){
@@ -185,6 +197,7 @@ impl Analysis{
                 };for text in hints{ui.label(t(text));}
             });
         });
+        match self.task.as_str(){"Measure"=>self.results_ui(ui,"measure"),"Fit"=>self.results_ui(ui,"fit"),_=>{}}
         match self.task.as_str(){
             "Display"=>self.display_ui(ui,lines),
             "Compare"=>multi.spectrum_comparison_ui(ui),
@@ -193,7 +206,7 @@ impl Analysis{
                 self.continuum_ui(ui);
                 match self.task.as_str(){
                     "Measure"=>{ui.horizontal(|ui|{ui.label(t("Uncertainty draws"));ui.add(egui::DragValue::new(&mut self.parameters.mc_samples).range(0..=512));});
-                        if ui.add_enabled(!busy,egui::Button::new(t("Measure EW / flux / profile"))).clicked(){action=Some("measure".into());}self.results_ui(ui,"measure");},
+                        if ui.add_enabled(!busy,egui::Button::new(t("Measure EW / flux / profile"))).clicked(){action=Some("measure".into());}},
                     "Process"=>{
                         ui.horizontal(|ui|{ui.label(t("Smoothing"));egui::ComboBox::from_id_salt("smoothing-method").selected_text(t(&self.parameters.smooth_method)).show_ui(ui,|ui|{for name in ["boxcar","gaussian","savgol"]{ui.selectable_value(&mut self.parameters.smooth_method,name.into(),t(name));}});});
                         ui.horizontal(|ui|{ui.label(t("Window (odd samples)"));ui.add(egui::DragValue::new(&mut self.parameters.smooth_window).range(3..=1001).speed(2));});
@@ -201,14 +214,14 @@ impl Analysis{
                         if self.parameters.smooth_method=="savgol"{ui.add(egui::DragValue::new(&mut self.parameters.smooth_polyorder).range(0..=5).prefix(t("Polynomial degree: ")));}
                         if ui.add_enabled(!busy,egui::Button::new(t("Preview smoothing"))).clicked(){action=Some("smooth".into());}
                     },
-                    "Fit"=>{self.fit_ui(ui);if ui.add_enabled(!busy,egui::Button::new(t("Fit bounded components"))).clicked(){action=Some("fit".into());}self.results_ui(ui,"fit");},_=>{}
+                    "Fit"=>{self.fit_ui(ui);if ui.add_enabled(!busy,egui::Button::new(t("Fit bounded components"))).clicked(){action=Some("fit".into());}},_=>{}
                 }
                 if ui.add_enabled(!busy,egui::Button::new(t("Preview continuum"))).clicked(){action=Some("continuum".into());}
                 self.preview_ui(ui);
             }
         }
         if before!=serde_json::to_value(&self.parameters).unwrap(){self.invalidate();}
-        self.sync_context(lines);if !self.message.is_empty(){ui.label(t(&self.message));}
+        self.sync_context(lines);
         action
     }
     fn regions_ui(&mut self,ui:&mut egui::Ui,image:&FitsImage){
@@ -259,11 +272,11 @@ impl Analysis{
                 if let Some(components)=result["components"].as_array(){for (index,component) in components.iter().enumerate(){let center=component["center"].as_f64().map(format_number).unwrap_or_else(||"—".into());let error=component["uncertainty"]["center"].as_f64().map(|v|format!(" ± {}",format_number(v))).unwrap_or_default();ui.label(format!("{} {} · {} {center}{error} {}",t("Component"),index+1,t("Center"),self.unit));}}
                 if fit["boundary_parameters"].as_array().is_some_and(|v|!v.is_empty()) || fit["covariance_status"]=="rank_deficient"{ui.label(t("Bounds or covariance warning: inspect fit details."));}
             }
-            if let Some(metrics)=result["metrics"].as_array(){for metric in metrics{let value=metric["value"].as_f64().map(|value|format!("{value:.6e}")).unwrap_or_else(||"—".into());
-                let uncertainty=metric["uncertainty"].as_f64().map(|error|format!(" ± {error:.3e}")).unwrap_or_default();
-                ui.label(format!("{}: {value}{uncertainty} {}",metric["name"].as_str().unwrap_or("Result"),metric["unit"].as_str().unwrap_or("")));
-                ui.label(format!("{} · {}",metric["status"].as_str().unwrap_or("unknown"),metric["uncertainty_status"].as_str().unwrap_or("unspecified")));}}
-            egui::CollapsingHeader::new(t("Measurement / fit details")).id_salt(("analysis-details",action)).show(ui,|ui|{ui.add(egui::Label::new(serde_json::to_string_pretty(result).unwrap_or_default()).wrap());});
+            if let Some(metrics)=result["metrics"].as_array(){for metric in metrics.iter().filter(|metric|summary_metric(metric)){metric_ui(ui,metric);}}
+            egui::CollapsingHeader::new(t("Measurement / fit details")).id_salt(("analysis-details",action)).show(ui,|ui|{
+                if let Some(metrics)=result["metrics"].as_array(){for metric in metrics.iter().filter(|metric|!summary_metric(metric)){metric_ui(ui,metric);}}
+                egui::CollapsingHeader::new(t("Result details")).id_salt(("analysis-json",action)).show(ui,|ui|{ui.add(egui::Label::new(serde_json::to_string_pretty(result).unwrap_or_default()).wrap());});
+            });
         }
     }
     fn display_ui(&mut self,ui:&mut egui::Ui,lines:&mut Controls){
@@ -317,6 +330,14 @@ mod tests{
     #[test]fn relative_blackbody_is_normalized_and_finite(){for temperature in [1000.,10000.,50000.]{assert!((planck_relative(5500.,temperature,5500.).unwrap()-1.).abs()<1e-12);assert!(planck_relative(4000.,temperature,5500.).unwrap().is_finite());}assert!(planck_relative(-1.,10000.,5500.).is_none());assert!(planck_relative(5000.,f64::NAN,5500.).is_none());}
     #[test]fn invalid_selection_intervals_are_rejected(){assert!(!valid_interval(&[1.,1.]));assert!(!valid_interval(&[f64::NAN,2.]));assert!(valid_interval(&[-2.,3.]));}
     #[test]fn scientific_flux_formatter_preserves_small_physical_values(){let value=1.234567e-17;let text=format_number(value);assert!(text.contains('e'));assert!((text.parse::<f64>().unwrap()/value-1.).abs()<1e-6);assert_eq!(format_number(0.),"0.000000");}
+    #[test]fn measurement_summary_keeps_primary_values_and_every_validity_failure_visible(){
+        let good=json!({"key":"centroid_rest","status":"ok","uncertainty_status":"independent_pixel_MC"});
+        assert!(!summary_metric(&good));
+        for key in ["equivalent_width_observed","net_flux_observed"]{let mut metric=good.clone();metric["key"]=json!(key);assert!(summary_metric(&metric));}
+        for status in ["multiple_peaks","no_samples","unknown"]{let mut metric=good.clone();metric["status"]=json!(status);assert!(summary_metric(&metric));assert!(metric_needs_attention(&metric));}
+        for status in ["insufficient_success","not_available","disabled","not_propagated_correlated_preview"]{let mut metric=good.clone();metric["uncertainty_status"]=json!(status);assert!(summary_metric(&metric));assert!(metric_needs_attention(&metric));}
+        assert!(summary_metric(&json!({"key":"future_metric"})));
+    }
     fn analysis()->Analysis{
         Analysis{source:"test-spectrum".into(),revision:1,display_generation:1,task:"Measure".into(),parameters:Parameters::default(),display:Display::default(),series:vec![],results:BTreeMap::new(),drag_target:"Pan".into(),keep_regions:false,message:String::new(),unit:"Angstrom".into(),air:false,redshift:0.,region_json:String::new(),flux_scale:1e-17}
     }

@@ -30,13 +30,28 @@ def digest(path):
 
 def lock():
     value = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
-    if value.get("schema") != 1 or value["repository"] != "minglinwang86/FitsViewer":
+    if value.get("schema") not in {1, 2} or value["repository"] != "minglinwang86/FitsViewer":
         raise ValueError("Unexpected shared-assets lock")
     if Path(value["wheel_asset"]).name != value["wheel_asset"]:
         raise ValueError("Invalid asset name")
-    for name in ["release_id", "asset_id"]:
-        if not isinstance(value[name], int) or value[name] <= 0:
-            raise ValueError("Invalid locked GitHub release/asset ID")
+    if value["schema"] == 1:
+        for name in ["release_id", "asset_id"]:
+            if not isinstance(value[name], int) or value[name] <= 0:
+                raise ValueError("Invalid locked GitHub release/asset ID")
+    else:
+        # CI resources are accepted only by this exact run/attempt and checkout.
+        # 同 run 的资源不能替代已审阅的发行资产锁，也不能跨提交复用。
+        if value.get("origin") != "github-actions-same-run":
+            raise ValueError("Unexpected CI resource origin")
+        expected = {"repository": "GITHUB_REPOSITORY", "source_commit": "GITHUB_SHA",
+                    "run_id": "GITHUB_RUN_ID", "run_attempt": "GITHUB_RUN_ATTEMPT"}
+        if os.environ.get("GITHUB_ACTIONS") != "true" or any(
+                not os.environ.get(env) or str(value.get(key)) != os.environ[env]
+                for key, env in expected.items()):
+            raise ValueError("CI resource lock belongs to another run or source")
+        revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+        if not re.fullmatch(r"[0-9a-f]{40}", value["source_commit"]) or revision != value["source_commit"]:
+            raise ValueError("CI resource source commit differs from this checkout")
     for name in ["wheel_sha256", "wasm_sha256"]:
         if not re.fullmatch(r"[0-9a-f]{64}", value[name]):
             raise ValueError("Invalid locked SHA256")
@@ -131,16 +146,26 @@ def stage_remote_entry(resources, payload):
 
 
 def main():
+    global LOCK_PATH
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fetch-assets", type=Path, help="Download only the locked release asset using gh")
-    parser.add_argument("--wheel", type=Path, help="Reviewed Linux Full wheel; only shared resources are used")
+    parser.add_argument("--wheel", type=Path, help="Locked Full wheel or same-run CI resource wheel; only shared resources are used")
+    parser.add_argument("--assets-lock", type=Path, help="Explicit same-run CI resource lock; default is the reviewed release lock")
     parser.add_argument("--output", type=Path, default=ROOT / "dist/macos")
     parser.add_argument("--execute", action="store_true", help="Explicitly compile and package on macOS")
+    parser.add_argument("--reuse-common-tests", action="store_true",
+                        help="Same-run CI only: reuse recorded Linux common tests; retain macOS package/runtime checks")
     args = parser.parse_args()
+    if args.assets_lock:
+        LOCK_PATH = args.assets_lock.resolve()
     expected = lock()
+    if args.reuse_common_tests and expected["schema"] != 2:
+        parser.error("Reusing common tests requires the exact same-run CI resource lock")
     if args.fetch_assets:
         if args.wheel or args.execute:
             parser.error("Asset fetching is a separate operation")
+        if expected["schema"] != 1:
+            parser.error("CI resources must come from this run's artifact, never a release download")
         target = args.fetch_assets.resolve()
         if target.exists():
             raise ValueError("Refusing to replace an existing asset download")
@@ -178,7 +203,8 @@ def main():
         raise ValueError("Use a new package output directory inside this checkout")
     output.mkdir(parents=True)
     version = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
-    if "v" + version != expected["release_tag"]:
+    locked_version = expected["release_tag"].removeprefix("v") if expected["schema"] == 1 else expected["version"]
+    if version != locked_version:
         raise ValueError("Source version differs from the shared-resource release")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     build = {"schema": 1, "source_commit": revision, "version": version, "architecture": architecture,
@@ -194,7 +220,12 @@ def main():
         raise ValueError("Use an unmodified RUSTFLAGS environment for this release build")
     environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
     environment["CARGO_TARGET_DIR"] = str(ROOT / "target/macos-full")
-    command(["cargo", "test", "--locked", "--release", "-p", "fitsviewer-core"], environment)
+    if not args.reuse_common_tests:
+        command(["cargo", "test", "--locked", "--release", "-p", "fitsviewer-core"], environment)
+        command(["cargo", "test", "--locked", "--release", "-p", "fitsviewer-web", "--lib"], environment)
+        command(["cargo", "test", "--locked", "--release", "-p", "fitsviewer",
+                 "--no-default-features", "--features", "desktop,pro"], environment)
+    build["common_tests"] = "reused recorded Linux evidence" if args.reuse_common_tests else "executed on this platform"
     command(["cargo", "build", "--locked", "--release", "-p", "fitsviewer",
              "--no-default-features", "--features", "desktop,pro"], environment)
     package_version = version.replace("-rc.", "rc")

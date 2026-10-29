@@ -60,7 +60,15 @@ impl Runtime {
             // Explicitly reset egui's in-session area/resize memory too when an
             // imported/default layout has no geometry for this window.
             // 导入或恢复默认未提供几何时，也重置 egui 本次会话的旧位置与尺寸。
-            let position=position.unwrap_or_else(||bounds.min+(bounds.size()-size-egui::vec2(16.,40.)).max(Vec2::ZERO)/2.);
+            let position=position.unwrap_or_else(||{
+                let free=(bounds.size()-size-egui::vec2(16.,40.)).max(Vec2::ZERO);
+                if key==Key::Photometry && context==Context::Image {
+                    // Keep the central target visible on first use. A saved position
+                    // always wins; Settings/Header retain their centered defaults.
+                    // 首次测光靠右，避免挡住中心目标；保存位置优先，设置/文件头仍居中。
+                    egui::pos2(bounds.left()+free.x,ctx.available_rect().top().max(bounds.top()).min(bounds.top()+free.y))
+                }else{bounds.min+free/2.}
+            });
             window=window.current_pos(position).fixed_size(padded(size));
             let mut collapsing=egui::collapsing_header::CollapsingState::load_with_default_open(ctx,id.with("collapsing"),!saved.collapsed);
             collapsing.set_open(!saved.collapsed);collapsing.store(ctx);

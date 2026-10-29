@@ -24,15 +24,19 @@
 | 外部环境与依赖安装 | `environment_ui.rs`, `server/src/environment.rs` | `fitsviewer_environment.py`, `science.rs`, View-role job lifetime |
 | 显示旋转/比例尺/选点 | `image_transform.rs`, `image_display.rs`, `pro_points.rs` | regions/layers/WCS/viewport export; never rotate original arrays |
 | HTTP 大图与精确像素 | `core/src/remote.rs`, `server/src/remote_data.rs` | `viewer/src/remote_image.rs`, browser fetch boundary; decoded-HDU threshold, caches, source versions |
+| 原生异步大图与显示位深 | `server/src/native_images.rs`, `core/src/display_tile.rs` | Same metadata/preview/tile store; Minimal-only 16-bit samples, original PRO tiles and exact pixel requests |
+| 同窗打开与全部退出 | `server/src/native_windows.rs`, `viewer/src/controls.rs` | `lib.rs`/`ribbon.rs`, `remote_native.rs`, `web/index.html`, `jupyter/src/index.ts`; acknowledge opens, separate local/remote file capabilities, preserve Jupyter |
 | 普通 SSH 的独立查看 | `jupyter/fitsviewer/remote.py`, `server/src/remote_broker.rs` | `remote_native.rs`, `remote_sources.rs`, `web/remote.js`, `scripts/check_remote.py`; scopes and pairing never share master credentials |
 | 孔径测光 | `regions_ui.rs`, `core/src/regions.rs` | bridge `measure`, optional `fitsviewer_measure.py` |
+| Python/PyEC 人工选星 | `jupyter/fitsviewer/interactive.py`, `pyec.py` | `server/src/selection.rs`, `viewer/src/selection_ui.rs`, `web/index.html`; [接入说明](MANUAL_STAR_SELECTION.md)，来源/HDU/起点必须显式 |
 | CLI/API/worker | `server/src/main.rs`, `science.rs` | `jupyter/fitsviewer/cli.py`, `scientific.py` |
 | Lab 双击、关闭释放 | `jupyter/src/index.ts` | Python `server.py`, shared viewer `release_view` |
 | Jupyter 退出与子进程回收 | `server/src/supervisor.rs` | `server.py` supervisor PID, HTTP shutdown, science process tree |
 | 环境/端口/默认查看器 | `jupyter/fitsviewer/` | `install.py`, `management.py`, `defaults.py`, platform helpers |
 | 模块与打包 | `config/build-modules.json` | both Cargo manifests, `build_profiles.py`, `build_wheel.py`, `hatch_build.py` |
 | macOS 原生便携包 | `scripts/build_macos_full.py`, `macos/launcher.c` | `config/macos-full-assets.json`, `macos_licenses.py`, `verify_macos_full.py`; keep resource locks and native license coverage |
-| 翻译、中文字库 | `viewer/src/i18n.rs` | `scripts/prepare_cjk_font.py`, font license/subset coverage |
+| 多语言文本、增加语言 | `web/locales/registry.json`, `web/locales/{code}.json` | `web/locales/README.md`, `crates/viewer/src/i18n.rs`, `web/locales/index.js`, locale key/placeholder/layout checks |
+| 中文字库、符号显示 | `scripts/prepare_cjk_font.py`, `crates/viewer/src/ui_style.rs` | font license/subset coverage; prefer vector disclosure icons over unverified font glyphs |
 
 上表的 viewer 文件位于 `crates/viewer/src/`，Python 科学适配器位于 `web/python/`。
 顶层 `lib.rs` 负责调度，避免把新的完整 UI/科学工具继续堆进其每帧更新函数。
@@ -44,7 +48,7 @@
 2. 用 `rg` 定位入口、状态写入和所有调用方；阅读相关分支、取消、关闭和错误处理。
 3. 明确作用于基础还是 PRO，图像还是光谱，native/WASM 哪些入口；再做小范围修改。
 4. 新 Python 科学适配器必须在模块 registry 中恰好归属一次；共享能力提取为单一实现。
-5. 更新中英翻译、接口/科学限制和相应检查记录。区分源码静态检查、编译、实际 GUI
+5. 更新注册表内所有语言的翻译、接口/科学限制和相应检查记录。区分源码静态检查、编译、实际 GUI
    操作和科学数值验证；不得用“编译成功”代替科学正确性或截图审美验收。
 
 ## 模块边界
@@ -75,7 +79,7 @@ PRO 标题以整个边框为中心，不能只在扣除右侧按钮后的区域�
 辅助说明进入模块右侧“…”；运行、取消、错误、科学单位、结果有效性与不确定度状态应
 可见。收起/停靠/浮动是视图状态，不应重置任务、释放仍在使用的科学结果或停止轮询。
 
-真实视觉验收至少覆盖中英、Mini/PRO、图像/光谱、窄窗、长中文路径，以及展开的定标、
+真实视觉验收至少覆盖已维护的六种语言、Mini/PRO、图像/光谱、窄窗、长 Unicode 路径，以及展开的定标、
 测光、光谱测量/处理/拟合/比较、空/运行/失败状态。逐张实看截图；不能只截图默认图层。
 使用小型公开真实科学数据；合成样本只用于可控数值与边界测试。
 
@@ -100,6 +104,9 @@ Linux 父线程退出也可能触发 parent-death signal；稳定创建线程必
 远程图块的内部坐标仍是原图零基像素。不得把图块宽高当作原图宽高做孔径、WCS 或
 图层配准。低分辨率预览只供绘制/抽样统计，精确读数调用原始 pixel 接口，测量调用
 原始源文件。轮廓掩膜要检查相邻图块，不能把每个 256 像素块的边界画成物理轮廓。
+0.1.7 的 16 位量化只用于极简模式的大图显示；PRO 必须请求原始位深图块。切换精度
+必须清空纹理/图块并隔离迟到响应；不能将极简量化预览存入 PRO 多图缓存。内部 FITS
+压缩按所需源压缩块解码，保留整块内的 dithering 序列，不能按显示图块重新播种。
 修改 packet 阈值时同时检查元数据、存储类型及光谱坐标/误差数组；不得按 `.gz` 文件
 大小判断传输路径。浏览器取消要覆盖响应体读取，不能收到 headers 后就移除取消器。
 

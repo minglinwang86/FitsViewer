@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 
 from build_macos_full import ROOT, digest, lock
+import build_macos_full as mac
 from macos_licenses import TARGETS, verify_inventory
 
 REAL_FITS_URL = ("https://raw.githubusercontent.com/astropy/astropy-data/"
@@ -73,8 +74,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--assets-lock", type=Path, help="Explicit same-run CI resource lock")
     parser.add_argument("--probe-gui", action="store_true", help="Try startup only; no interactive acceptance")
     args = parser.parse_args()
+    if args.assets_lock:
+        mac.LOCK_PATH = args.assets_lock.resolve()
     if sys.platform != "darwin":
         raise RuntimeError("This acceptance script must run on macOS")
     import numpy as np
@@ -252,9 +256,12 @@ def main():
                         server.wait()
 
             if args.probe_gui:
+                gui_state = output / "native-state.json"
+                gui_environment = dict(environment, FITSVIEWER_DIAGNOSTICS=str(gui_state),
+                                       FITSVIEWER_CONFIG=str(work / "native-settings.json"))
                 with (output / "native-startup.log").open("wb") as log:
                     gui = subprocess.Popen([str(wrapper), str(real_file), "--python", sys.executable],
-                                           env=environment, stdout=log, stderr=subprocess.STDOUT,
+                                           env=gui_environment, stdout=log, stderr=subprocess.STDOUT,
                                            start_new_session=True)
                 try:
                     time.sleep(5)
@@ -263,6 +270,10 @@ def main():
                     if gui.poll() is not None:
                         raise RuntimeError("Native GUI exited during startup probe: " + str(gui.returncode))
                     if gui.poll() is None:
+                        state = json.loads(gui_state.read_text())
+                        assert state["loaded"] and state["texture"] and not state["error"], state
+                        assert (state["width"], state["height"]) == (891, 893), state
+                        report["gui"]["real_fits_texture_loaded"] = True
                         captured = subprocess.run(["screencapture", "-x", str(output / "native-startup.png")],
                                                   capture_output=True, timeout=10)
                         report["gui"]["screenshot_captured"] = captured.returncode == 0

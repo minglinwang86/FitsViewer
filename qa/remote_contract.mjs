@@ -14,6 +14,16 @@ boundary.keep('one',['0:3:2']);
 assert.equal(await a,'AbortError');assert.equal(calls[1].options.signal.aborted,false);assert.equal(calls[2].options.signal.aborted,false);
 calls[1].resolve(new Response('tile bytes'));assert.equal(await (await b).text(),'tile bytes');
 boundary.keep('other',[]);assert.equal(await other,'AbortError');
+// A precision switch must use a fresh group: reopening an old group would also
+// permit late requests from the retired renderer generation.
+boundary.keep('image-display-0',[]);
+boundary.keep('image-display-0',['0:0:0']);
+await assert.rejects(boundary.fetch('http://127.0.0.1:8877/api/image/tile?fv_image=image-display-0&level=0&x=0&y=0'),{name:'AbortError'});
+for(const kind of ['tile','pixel']){
+ const next=boundary.fetch(`http://127.0.0.1:8877/api/image/${kind}?fv_image=image-display-1&level=0&x=0&y=0`);
+ assert.equal(calls.at(-1).options.signal.aborted,false);
+ calls.at(-1).resolve(new Response('original value'));assert.equal(await (await next).text(),'original value');
+}
 const headersOnly=boundary.fetch('http://127.0.0.1:8877/api/image/full?fv_image=body');
 let bodyController;
 calls.at(-1).resolve(new Response(new ReadableStream({start(controller){bodyController=controller;}})));

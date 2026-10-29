@@ -1,6 +1,8 @@
 """Bind the viewer to its Jupyter server. / 将查看器绑定到实际的 Jupyter 服务。"""
 import json
 import os
+import secrets
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from .runtime import process_environment, resources, runtime_dir
@@ -56,8 +58,25 @@ def _command(port, base_url):
 
 def setup_server():
     """Jupyter Server Proxy starts the packaged viewer on demand with matching roots."""
+    # Fail closed on unsupported integrations; never restore an unauthenticated backend.
+    # 只允许受支持的私有请求头 hook；旧环境明确报错，不降级为空密钥模式。
+    from packaging.version import Version
+    try:
+        proxy_version=version("jupyter-server-proxy")
+    except PackageNotFoundError as error:
+        raise RuntimeError("FitsViewer Jupyter integration requires jupyter-server-proxy>=4.4,<5; install the Jupyter extra and restart Jupyter.") from error
+    if not Version("4.4") <= Version(proxy_version) < Version("5"):
+        raise RuntimeError(f"FitsViewer Jupyter integration requires jupyter-server-proxy>=4.4,<5; found {proxy_version}. Update it and restart Jupyter.")
     _, _, web = resources()
-    config = {"command": _command, "environment": process_environment, "timeout": 30,
+    backend_token=secrets.token_urlsafe(32)
+    def environment():
+        return dict(process_environment(),FITSVIEWER_JUPYTER_TOKEN=backend_token)
+    def request_headers():
+        return {"X-Fitsviewer-Token":backend_token}
+    # Closures keep the secret out of command arguments, browser URLs and config reprs.
+    # 密钥不进入命令参数、浏览器 URL 或配置字典的可打印值。
+    config = {"command": _command, "environment": environment, "timeout": 30,
+              "request_headers_override": request_headers,
               # The Lab extension owns the card and its icon; avoid a duplicate.
               # Lab 扩展注册带图标的卡片，避免代理再显示重复入口。
               "launcher_entry": {"enabled": False, "title": "FitsViewer", "category": "Other",

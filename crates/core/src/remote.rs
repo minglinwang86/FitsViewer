@@ -176,6 +176,10 @@ mod access {
     /// Read only sampled rows/columns for a display tile; no original full-plane allocation.
     /// 显示采用明确的最近邻采样；测量从原分辨率单独读取，不能使用这些样本替代。
     pub fn read_tile(path: &Path, plane: &Plane, level: u8, tx: usize, ty: usize) -> Result<FitsImage,String> {
+        if plane.compression=="tile"{
+            let mut reader=BufReader::new(std::fs::File::open(path).map_err(|e|e.to_string())?);
+            return crate::reader::compressed_tile(&mut reader,plane.info.clone(),plane.data_start,plane.data_size,level,tx,ty);
+        }
         if plane.compression != "none" { return Err("Compressed data needs the prepared reader".into()); }
         let (x,y,width,height,step) = tile_bounds(&plane.info,level,tx,ty)?;
         let unit = (plane.info.bitpix.unsigned_abs()/8) as usize;
@@ -227,6 +231,11 @@ mod access {
     /// Exact original physical/raw value; remote UI must label pending values separately.
     pub fn read_pixel(path:&Path,plane:&Plane,x:usize,y:usize)->Result<serde_json::Value,String>{
         if x>=plane.info.width || y>=plane.info.height{return Err("Pixel is outside the image".into());}
+        if plane.compression=="tile"{
+            let tile=read_tile(path,plane,0,x/TILE_SIZE,y/TILE_SIZE)?;
+            let index=(y%TILE_SIZE)*tile.info.width+x%TILE_SIZE;
+            return Ok(serde_json::json!({"x":x,"y":y,"raw":tile.pixels.raw_string(index),"value":tile.physical(index),"original_samples":true}));
+        }
         if plane.compression!="none"{return Err("Compressed pixel requires a prepared reader".into());}
         let unit=(plane.info.bitpix.unsigned_abs()/8) as usize;
         let offset=(y as u64).checked_mul(plane.info.width as u64).and_then(|n|n.checked_add(x as u64)).and_then(|n|n.checked_mul(unit as u64)).and_then(|n|n.checked_add(plane.data_start)).ok_or("Pixel offset overflow")?;

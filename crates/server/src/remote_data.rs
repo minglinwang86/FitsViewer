@@ -79,7 +79,7 @@ impl Store {
             info.path=logical.into();
             let full=remote::packet_bytes(&info)?;
             if let Some(metadata)=&mut plane{metadata.info=info.clone();}
-            if plane.as_ref().is_some_and(|p|p.compression=="tile"){
+            if full<=remote::FULL_TRANSFER_BYTES && plane.as_ref().is_some_and(|p|p.compression=="tile"){
                 let estimate=info.width.checked_mul(info.height).and_then(|n|n.checked_mul((info.bitpix.unsigned_abs()/8) as usize)).ok_or("Decoded image size overflow")?;
                 if estimate>CACHE_BYTES-4*1024*1024{return Err("Compressed image exceeds the bounded decoder cache; decompress externally for ROI access".into());}
                 self.trim(estimate,0);
@@ -124,6 +124,9 @@ impl Store {
         Self::check_version(&prepared)?;Ok(bytes)
     }
     pub fn tile(&self,path:&Path,logical:&str,options:LoadOptions,version:&str,level:u8,x:usize,y:usize)->Result<Vec<u8>,String>{
+        self.display_tile(path,logical,options,version,level,x,y,false)
+    }
+    pub fn display_tile(&self,path:&Path,logical:&str,options:LoadOptions,version:&str,level:u8,x:usize,y:usize,compact:bool)->Result<Vec<u8>,String>{
         let _permit=self.enter()?;
         let _guard=self.io.lock().map_err(|_|"Remote image cache lock failed")?;
         let prepared=self.prepare(path,logical,options)?;
@@ -131,7 +134,7 @@ impl Store {
         let tile=if level==prepared.manifest.preview_level && x==0 && y==0{
             prepared.preview.clone().map(Ok).unwrap_or_else(||self.tile_image(&prepared,level,x,y).map(Arc::new))?
         }else{Arc::new(self.tile_image(&prepared,level,x,y)?)};
-        let bytes=tile.to_packet()?;Self::check_version(&prepared)?;Ok(bytes)
+        let bytes=if compact{fitsviewer_core::display_tile::compact((*tile).clone()).to_packet()?}else{tile.to_packet()?};Self::check_version(&prepared)?;Ok(bytes)
     }
     fn tile_image(&self,prepared:&Prepared,level:u8,x:usize,y:usize)->Result<FitsImage,String>{
         if prepared.manifest.info.spectrum.is_some(){return Err("Spectrum does not use two-dimensional tiles".into());}

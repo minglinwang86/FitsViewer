@@ -9,7 +9,7 @@ struct Process {child:OwnedChild,tree:OwnedTree,input:ChildStdin,output:mpsc::Re
 struct Bus {sequence:u64,events:VecDeque<Value>,heartbeat:Option<Instant>}
 struct Artifact {path:PathBuf,owner:String,group:String,epoch:u64,document:u64,pins:HashSet<String>,created:Instant}
 #[cfg(feature="pro")]
-struct ActiveSave {owner:String,document:u64,epoch:u64,cancel:Arc<AtomicBool>}
+struct ActiveSave {owner:String,document:u64,epoch:u64,cancel:Arc<crate::download_save::SaveControl>}
 #[cfg(feature="pro")]
 struct SaveGuard<'a>(&'a Mutex<Option<ActiveSave>>);
 #[cfg(feature="pro")]
@@ -20,6 +20,8 @@ pub struct Bridge {
     sessions:Mutex<Sessions>,artifacts:Mutex<HashMap<String,Artifact>>,bus:Mutex<Bus>,stopping:AtomicBool,stop_pending:AtomicBool,
     #[cfg(feature="pro")]
     active_save:Mutex<Option<ActiveSave>>,
+    #[cfg(all(test,feature="pro"))]
+    save_checkpoint:Mutex<Option<Arc<crate::download_save::TestCheckpoint>>>,
 }
 impl Bridge {
     pub fn new(python:Option<PathBuf>,project:&Path,cache:PathBuf)->Self {
@@ -27,7 +29,7 @@ impl Bridge {
         let environment_config=cache.join("environment.json");
         let python=python.or_else(||std::env::var_os("FITSVIEWER_PYTHON").map(PathBuf::from)).or_else(||crate::environment::selected(&environment_config)).or(linked).unwrap_or_else(||PathBuf::from(if cfg!(windows){"python"}else{"python3"}));
         let instance=format!("host-{}-{}",std::process::id(),uuid::Uuid::new_v4().simple());
-        Self{python:Mutex::new(python),environment_config,script:project.join("web/python/fitsviewer_science.py"),cache:cache.join(&instance),instance,serial:Mutex::new(()),process:Mutex::new(None),child:Mutex::new(None),sessions:Mutex::new(Sessions::default()),artifacts:Mutex::new(HashMap::new()),bus:Mutex::new(Bus{sequence:0,events:VecDeque::new(),heartbeat:None}),stopping:AtomicBool::new(false),stop_pending:AtomicBool::new(false),#[cfg(feature="pro")] active_save:Mutex::new(None)}
+        Self{python:Mutex::new(python),environment_config,script:project.join("web/python/fitsviewer_science.py"),cache:cache.join(&instance),instance,serial:Mutex::new(()),process:Mutex::new(None),child:Mutex::new(None),sessions:Mutex::new(Sessions::default()),artifacts:Mutex::new(HashMap::new()),bus:Mutex::new(Bus{sequence:0,events:VecDeque::new(),heartbeat:None}),stopping:AtomicBool::new(false),stop_pending:AtomicBool::new(false),#[cfg(feature="pro")] active_save:Mutex::new(None),#[cfg(all(test,feature="pro"))] save_checkpoint:Mutex::new(None)}
     }
     pub fn cache_root(&self)->&Path{&self.cache}
     pub fn ensure_cache(&self)->Result<(),String>{std::fs::create_dir_all(&self.cache).map_err(|e|e.to_string())?;std::fs::write(self.cache.join(".owner"),&self.instance).map_err(|e|e.to_string())}
@@ -198,7 +200,7 @@ impl Bridge {
         let save=self.active_save.lock().map_err(|_|"Save state lock failed")?;
         let requested=save.as_ref().is_some_and(|save|{
             let matches=save.owner==owner && save.document==document && save.epoch==epoch;
-            if matches{save.cancel.store(true,Ordering::Release);}matches
+            matches && save.cancel.request_cancel()
         });
         Ok(json!({"cancel_requested":requested,"reason":if requested{"Save cancellation requested"}else{"Save already completed or has not started"}}))
     }
@@ -212,7 +214,7 @@ impl Bridge {
             let matches=save.owner==owner && if operation=="release_pro"{
                 params["_role_epoch"].as_u64().is_none_or(|epoch|save.epoch<=epoch)
             }else{params["_document_generation"].as_u64().is_none_or(|document|save.document<=document)};
-            if matches{save.cancel.store(true,Ordering::Release);}
+            if matches{save.cancel.request_cancel();}
         }Ok(())
     }
     #[cfg(feature="pro")]
@@ -227,7 +229,9 @@ impl Bridge {
         if artifact.owner!=owner || artifact.group!="pro" || artifact.document!=document || artifact.epoch!=epoch{return Err("Download artifact does not belong to the current document and PRO role".into());}
         let path=artifact.path.clone();drop(artifacts);
         let source=params["source_path"].as_str().unwrap_or("");
-        let cancel=Arc::new(AtomicBool::new(self.stopping.load(Ordering::Acquire)));
+        let cancel=crate::download_save::SaveControl::new(self.stopping.load(Ordering::Acquire));
+        #[cfg(test)] let cancel=cancel.with_checkpoint(self.save_checkpoint.lock().unwrap().clone());
+        let cancel=Arc::new(cancel);
         *self.active_save.lock().map_err(|_|"Save state lock failed")?=Some(ActiveSave{owner:owner.into(),document,epoch,cancel:cancel.clone()});
         let _save_guard=SaveGuard(&self.active_save);
         if !self.sessions.lock().map_err(|_|"Session lock failed")?.active_pro(owner,document,epoch){return Err("Download save belongs to a released document or role".into());}
@@ -313,7 +317,7 @@ fn bridge_command(&self,operation:&str,params:&Value)->Result<Value,String>{
     pub fn shutdown(&self){
         self.stopping.store(true,Ordering::Release);
         #[cfg(feature="pro")]
-        if let Ok(save)=self.active_save.lock(){if let Some(save)=save.as_ref(){save.cancel.store(true,Ordering::Release);}}
+        if let Ok(save)=self.active_save.lock(){if let Some(save)=save.as_ref(){save.cancel.request_cancel();}}
         self.stop_worker();
         self.artifacts.lock().unwrap().clear();
         // Delete only this host's unique, marked directory, never the shared cache parent.
@@ -347,32 +351,57 @@ mod download_tests {
         assert!(saved.is_file());assert_eq!(std::fs::read(&original).unwrap(),bytes);
         assert!(bridge.call("persist_download",params).is_err());drop(bridge);std::fs::remove_dir_all(root).unwrap();
     }
+    fn paused_save(phase:crate::download_save::TestPhase)->(PathBuf,Arc<Bridge>,Value,Vec<u8>,crate::download_save::TestGate){
+        let root=std::env::temp_dir().join(format!("fv-save-cancel-{}",uuid::Uuid::new_v4()));std::fs::create_dir_all(&root).unwrap();
+        let bridge=Arc::new(Bridge::new(None,&root,root.join("cache")));bridge.ensure_cache().unwrap();
+        let(checkpoint,gate)=crate::download_save::TestCheckpoint::new(phase);*bridge.save_checkpoint.lock().unwrap()=Some(checkpoint);
+        let mut header=vec![b' ';2880];for(index,card)in["SIMPLE  =                    T","BITPIX  =                   64","NAXIS   =                    2","NAXIS1  =                  512","NAXIS2  =                  512","END"].iter().enumerate(){header[index*80..index*80+card.len()].copy_from_slice(card.as_bytes());}
+        let original=root.join("original.fits");std::fs::write(&original,&header).unwrap();let artifact=bridge.cache.join("owned.fits");
+        let mut file=std::fs::File::create(&artifact).unwrap();file.write_all(&header).unwrap();let size=2880u64+512*512*8;file.set_len(size.div_ceil(2880)*2880).unwrap();drop(file);
+        bridge.artifacts.lock().unwrap().insert("owned".into(),Artifact{path:artifact,owner:"viewer".into(),group:"pro".into(),epoch:2,document:3,pins:HashSet::new(),created:Instant::now()});
+        let params=json!({"artifact_id":"owned","source_path":original,"_viewer_session":"viewer","_document_generation":3,"_role_epoch":2,"_science_role":"pro"});
+        (root,bridge,params,header,gate)
+    }
     #[test]
-    fn concurrent_cancel_and_document_role_releases_interrupt_actual_copy(){
-        for operation in ["persist_cancel","release_document","release_pro","release_view"]{
-            let root=std::env::temp_dir().join(format!("fv-save-cancel-{}",uuid::Uuid::new_v4()));std::fs::create_dir_all(&root).unwrap();
-            let bridge=Arc::new(Bridge::new(None,&root,root.join("cache")));bridge.ensure_cache().unwrap();
-            let mut header=vec![b' ';2880];for(index,card)in["SIMPLE  =                    T","BITPIX  =                   64","NAXIS   =                    2","NAXIS1  =                 4096","NAXIS2  =                 4096","END"].iter().enumerate(){header[index*80..index*80+card.len()].copy_from_slice(card.as_bytes());}
-            let original=root.join("original.fits");std::fs::write(&original,&header).unwrap();let artifact=bridge.cache.join("owned.fits");
-            let mut file=std::fs::File::create(&artifact).unwrap();file.write_all(&header).unwrap();let size=2880u64+4096*4096*8;file.set_len(size.div_ceil(2880)*2880).unwrap();drop(file);
-            bridge.artifacts.lock().unwrap().insert("owned".into(),Artifact{path:artifact,owner:"viewer".into(),group:"pro".into(),epoch:2,document:3,pins:HashSet::new(),created:Instant::now()});
-            let params=json!({"artifact_id":"owned","source_path":original,"_viewer_session":"viewer","_document_generation":3,"_role_epoch":2,"_science_role":"pro"});
+    fn cancellation_and_releases_before_commit_remove_the_partial_copy(){
+        use crate::download_save::TestPhase;
+        for phase in [TestPhase::Copying,TestPhase::BeforeCommit]{for operation in ["persist_cancel","release_document","release_pro","release_view"]{
+            let(root,bridge,params,header,gate)=paused_save(phase);
             let copy_bridge=bridge.clone();let copy_params=params.clone();let copying=std::thread::spawn(move||copy_bridge.call("persist_download",copy_params));
-            let deadline=Instant::now()+Duration::from_secs(10);let mut copying_seen=false;
-            while Instant::now()<deadline{
-                copying_seen=std::fs::read_dir(&root).unwrap().flatten().any(|entry|entry.file_name().to_string_lossy().ends_with(".part") && entry.metadata().is_ok_and(|metadata|metadata.len()>80));
-                if copying_seen || copying.is_finished(){break;}std::thread::sleep(Duration::from_millis(1));
-            }
-            assert!(copying_seen,"must cancel an actual in-progress copy: {operation}");
+            gate.reached.recv_timeout(Duration::from_secs(10)).unwrap();
+            assert!(std::fs::read_dir(&root).unwrap().flatten().any(|entry|entry.file_name().to_string_lossy().ends_with(".part") && entry.metadata().is_ok_and(|metadata|metadata.len()>80)));
             let mut wrong=params.clone();wrong["_role_epoch"]=json!(1);assert!(bridge.call("persist_cancel",wrong).is_err());
             // A late close for an older document must leave this copy alone.
             bridge.release_save("release_document",&json!({"_viewer_session":"viewer","_document_generation":2})).unwrap();
-            assert!(!bridge.active_save.lock().unwrap().as_ref().unwrap().cancel.load(Ordering::Acquire));
-            let cancellation=bridge.call(operation,params).unwrap();if operation=="persist_cancel"{assert_eq!(cancellation["cancel_requested"],true);}
+            assert!(!bridge.active_save.lock().unwrap().as_ref().unwrap().cancel.is_cancelled());
+            let cancel_bridge=bridge.clone();let cancelling=std::thread::spawn(move||cancel_bridge.call(operation,params));
+            assert!(gate.cancel_requests.recv_timeout(Duration::from_secs(10)).unwrap(),"{phase:?}: {operation}");
+            gate.resume.send(()).unwrap();
+            let cancellation=cancelling.join().unwrap().unwrap();if operation=="persist_cancel"{assert_eq!(cancellation["cancel_requested"],true);}
             assert!(copying.join().unwrap().unwrap_err().contains("cancel"));
-            assert!(bridge.active_save.lock().unwrap().is_none());assert_eq!(std::fs::read(&original).unwrap(),header);
+            assert!(bridge.active_save.lock().unwrap().is_none());assert_eq!(std::fs::read(root.join("original.fits")).unwrap(),header);
             assert!(!std::fs::read_dir(&root).unwrap().flatten().any(|entry|entry.file_name().to_string_lossy().contains(".part") || entry.file_name().to_string_lossy().starts_with("fitsviewer-download-")));
             bridge.shutdown();drop(bridge);std::fs::remove_dir_all(root).unwrap();
+        }}
+    }
+    #[test]
+    fn committed_save_rejects_late_cancel_and_survives_releases_and_user_replacement(){
+        for operation in ["persist_cancel","release_document","release_pro","release_view"]{
+            let(root,bridge,params,header,gate)=paused_save(crate::download_save::TestPhase::Committed);
+            let copy_bridge=bridge.clone();let copy_params=params.clone();let copying=std::thread::spawn(move||copy_bridge.call("persist_download",copy_params));
+            gate.reached.recv_timeout(Duration::from_secs(10)).unwrap();
+            let saved=std::fs::read_dir(&root).unwrap().flatten().find(|entry|entry.file_name().to_string_lossy().starts_with("fitsviewer-download-")).unwrap().path();
+            assert!(saved.metadata().unwrap().len()>1024*1024);
+            std::fs::remove_file(&saved).unwrap();std::fs::write(&saved,b"user replacement after commit").unwrap();
+            let cancel_bridge=bridge.clone();let cancelling=std::thread::spawn(move||cancel_bridge.call(operation,params));
+            assert!(!gate.cancel_requests.recv_timeout(Duration::from_secs(10)).unwrap(),"{operation}");
+            gate.resume.send(()).unwrap();
+            let cancellation=cancelling.join().unwrap().unwrap();if operation=="persist_cancel"{assert_eq!(cancellation["cancel_requested"],false);}
+            let result=copying.join().unwrap().unwrap();assert_eq!(result["status"],"saved");assert_eq!(result["persistent"],true);
+            assert_eq!(PathBuf::from(result["saved_path"].as_str().unwrap()),saved.canonicalize().unwrap());
+            assert!(bridge.active_save.lock().unwrap().is_none());assert_eq!(std::fs::read(root.join("original.fits")).unwrap(),header);
+            assert!(!std::fs::read_dir(&root).unwrap().flatten().any(|entry|entry.file_name().to_string_lossy().ends_with(".part")));
+            bridge.shutdown();drop(bridge);assert_eq!(std::fs::read(saved).unwrap(),b"user replacement after commit");std::fs::remove_dir_all(root).unwrap();
         }
     }
 }

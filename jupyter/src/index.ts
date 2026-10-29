@@ -49,6 +49,7 @@ class FitsContent extends Widget {
 }
 
 class FitsFactory extends ABCWidgetFactory<DocumentWidget<FitsContent>> {
+  created?: (widget: DocumentWidget<FitsContent>) => void;
   protected createNewWidget(context: DocumentRegistry.Context): DocumentWidget<FitsContent> {
     const content = new FitsContent(context);
     void context.ready.then(() => { context.model.readOnly = true; context.model.dirty = false; });
@@ -58,6 +59,7 @@ class FitsFactory extends ABCWidgetFactory<DocumentWidget<FitsContent>> {
     // 父窗口先发 disposed 信号再移除 DOM，必须在这里释放 iframe 内部资源。
     widget.disposed.connect(content.release, content);
     widget.title.caption = 'FitsViewer';
+    queueMicrotask(() => { if (!widget.isDisposed) { this.created?.(widget); } });
     return widget;
   }
 }
@@ -68,6 +70,16 @@ const plugin: JupyterFrontEndPlugin<void> = {
   requires: [IDocumentManager],
   optional: [ILauncher],
   activate: async (app: JupyterFrontEnd, documents: IDocumentManager, launcher: ILauncher | null) => {
+    const viewers = new Set<DocumentWidget<FitsContent>>();
+    const reuseWindow = (): boolean => {
+      try { return JSON.parse(localStorage.getItem('fitsviewer-ui-v1') || '{}').open_in_same_window === true; }
+      catch { return false; }
+    };
+    window.addEventListener('message', event => {
+      if (event.origin !== location.origin || event.data?.type !== 'fitsviewer-exit-window') { return; }
+      if (![...viewers].some(widget => !widget.isDisposed && widget.content.iframe.contentWindow === event.source)) { return; }
+      for (const widget of [...viewers]) { widget.close(); }
+    });
     const settings = ServerConnection.makeSettings();
     const response = await ServerConnection.makeRequest(URLExt.join(settings.baseUrl, 'fitsviewer-settings'), {method: 'GET'}, settings);
     if (!response.ok && response.status !== 404) { throw new Error('FitsViewer settings could not be loaded'); }
@@ -88,10 +100,18 @@ const plugin: JupyterFrontEndPlugin<void> = {
       mimeTypes: ['application/fits', 'image/fits'], contentType: 'file', fileFormat: 'text'
     });
     app.docRegistry.addFileType({name:'fitsviewer-spectrum',displayName:'Spectrum data',extensions:['.dat','.txt','.csv','.ascii','.dat.gz','.txt.gz','.csv.gz'],mimeTypes:['text/plain'],contentType:'file',fileFormat:'text'});
-    app.docRegistry.addWidgetFactory(new FitsFactory({
+    const factory = new FitsFactory({
       name: FACTORY, label: FACTORY, fileTypes: ['fitsviewer-fits','fitsviewer-spectrum','text','csv'], defaultFor: preferences.default_viewer ? ['fitsviewer-fits'] : [],
       modelName: 'text', readOnly: true, contentProviderId: PROVIDER
-    }));
+    });
+    factory.created = widget => {
+      // Replace only FitsViewer tabs; each replacement keeps its own file context.
+      // 只替换查看器标签；不改动旧文件的 Context，不关闭 Notebook 或普通编辑器。
+      if (reuseWindow()) { for (const previous of [...viewers]) { previous.close(); } }
+      viewers.add(widget);
+      widget.disposed.connect(() => { viewers.delete(widget); });
+    };
+    app.docRegistry.addWidgetFactory(factory);
 
     // Non-kernel launcher cards use their command's LabIcon, not kernelIconUrl.
     // 普通启动卡片直接使用命令图标，代理只负责按需启动服务。
@@ -101,7 +121,9 @@ const plugin: JupyterFrontEndPlugin<void> = {
       caption: 'Open FitsViewer in a window',
       icon: fitsviewerIcon,
       execute: () => {
-        window.open(URLExt.join(PageConfig.getBaseUrl(), 'fitsviewer/'), '_blank', 'noopener');
+        const reuse = reuseWindow();
+        const opened = window.open(URLExt.join(PageConfig.getBaseUrl(), 'fitsviewer/'), reuse ? 'FitsViewer' : '_blank', reuse ? '' : 'noopener');
+        if (opened) { opened.opener = null; }
       }
     });
     launcher?.add({command: openViewer, category: 'Other'});

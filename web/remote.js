@@ -90,6 +90,7 @@ export function imageFetchBoundary(base, credential, originalFetch = window.fetc
 export function remoteSession(base, bootstrapTicket, ui) {
   let credential = '', instance = '', target = '', fixed = false, downloadOnly = false, current, pending, timer, stopped = false, failures = 0;
   const status = (text, fallback) => ui.status(text, fallback);
+  const t = ui.translate || ((text, values = {}) => text.replace(/\{(\w+)\}/g, (match, name) => Object.hasOwn(values, name) ? String(values[name]) : match));
   async function api(route, data, keepalive = false) {
     const headers = {'Content-Type': 'application/json'};
     if (credential) headers['X-Fitsviewer-Token'] = credential;
@@ -98,7 +99,7 @@ export function remoteSession(base, bootstrapTicket, ui) {
       const response = await fetch(new URL('api/fver/' + route, base), {headers, method: data === undefined ? 'GET' : 'POST', body: data === undefined ? undefined : JSON.stringify(data), signal: controller.signal, keepalive, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer'});
       if (!response.ok) {const error = new Error(await response.text()); error.status = response.status; throw error;}
       const value = await response.json();
-      if (instance && value.instance && value.instance !== instance) throw new Error('Server identity changed; run fver again');
+      if (instance && value.instance && value.instance !== instance) throw new Error(t('Server identity changed; run fver again'));
       return value;
     } finally { clearTimeout(timeout); }
   }
@@ -108,7 +109,7 @@ export function remoteSession(base, bootstrapTicket, ui) {
   async function open(request, alreadyAccepted = false) {
     if (!alreadyAccepted) request = (await acknowledge(request, 'claim')).request;
     current = request; pending = request;
-    status(`Target ${target}: accepted; waiting for first frame`);
+    status(t('Target {target}: accepted; waiting for first frame', {target}));
     if (ui.started()) await ui.open(request);
     await acknowledge(request, 'visible');
     return request;
@@ -122,7 +123,7 @@ export function remoteSession(base, bootstrapTicket, ui) {
       if (own && (own.attempt_epoch !== current.attempt_epoch || ['cancelled', 'expired', 'superseded', 'closed'].includes(own.state))) {
         pending = null;
         if (ui.started()) await ui.close();
-        status(`Target ${target}: ${own.state}; file permission ended`);
+        status(t('Target {target}: {state}; file permission ended', {target, state: own.state}));
         current = null;
       }
       if (pending && ui.started()) {
@@ -130,24 +131,24 @@ export function remoteSession(base, bootstrapTicket, ui) {
         if (state?.path === pending.path && state.first_frame_ready) {
           await acknowledge(pending, 'first_frame');
           pending = null;
-          status(`Target ${target}: first frame displayed`);
+          status(t('Target {target}: first frame displayed', {target}));
         } else if (state?.path === pending.path && state.error && !state.loading) {
           await acknowledge(pending, 'failed'); pending = null;
-          status(`Target ${target}: unable to display file: ${state.error}`);
+          status(t('Target {target}: unable to display file: {error}', {target, error: state.error}));
         }
       }
       const queued = event.requests.filter(request => request.state === 'queued' && request.route === 'browser').at(-1);
       if (queued && !fixed && ui.started() && !ui.state()?.loading) await open(queued);
       const remote = event.requests.filter(request => request.route === 'helper' && ['accepted', 'visible', 'unknown', 'first_frame'].includes(request.state)).at(-1);
       if (remote && !fixed && (!current || remote.seq > current.seq)) {
-        status(`Target ${target}: helper ${remote.state}${remote.state === 'first_frame' ? ' (displayed)' : '; HTML is available'}`, async () => {
+        status(t('Target {target}: helper {state}{detail}', {target, state: remote.state, detail: t(remote.state === 'first_frame' ? ' (displayed)' : '; HTML is available')}), async () => {
           const result = await acknowledge(remote, 'fallback'); await open(result.request);
         });
       }
     } catch (error) {
-      if ([401,403].includes(error.status)) {stopped = true;pending = null;if(ui.started())await ui.close();status(`Viewing permission ended: ${error}. Run fver again for a fresh link.`);return;}
+      if ([401,403].includes(error.status)) {stopped = true;pending = null;if(ui.started())await ui.close();status(t('Viewing permission ended: {error}. Run fver again for a fresh link.', {error}));return;}
       failures += 1;
-      status(`Connection interrupted (${failures}/6): ${error}. ${failures >= 6 ? 'Run fver again for a fresh link.' : 'Retrying…'}`);
+      status(t('Connection interrupted ({failures}/6): {error}. {next}', {failures, error, next: t(failures >= 6 ? 'Run fver again for a fresh link.' : 'Retrying…')}));
     }
     if (!stopped && failures < 6) timer = setTimeout(tick, failures ? Math.min(8000, 500 * 2 ** failures) : 1000);
   }
@@ -160,14 +161,14 @@ export function remoteSession(base, bootstrapTicket, ui) {
       const request = result.request;
       if (fixed || request.route === 'browser' && request.state === 'queued') return open(request, fixed);
       if (request.route === 'browser' && ['accepted', 'visible', 'unknown', 'first_frame'].includes(request.state)) return open(request, true);
-      status(`Target ${target}: waiting for paired helper; HTML will follow if it cannot accept`);
+      status(t('Target {target}: waiting for paired helper; HTML will follow if it cannot accept', {target}));
       return null;
     },
     follow() { if(!downloadOnly)tick(); },
     async openWindow() {
-      if (!current) throw new Error('No active browser request');
+      if (!current) throw new Error(t('No active browser request'));
       const popup = window.open('about:blank', '_blank', 'popup,width=1200,height=850,resizable=yes');
-      if (!popup) throw new Error('Allow this site to open a viewer window');
+      if (!popup) throw new Error(t('Allow this site to open a viewer window'));
       popup.opener = null;
       try { const link = await api('browser-link', {request_id: current.request_id, attempt_epoch: current.attempt_epoch}); popup.location.replace(base + '#open=' + link.ticket); }
       catch (error) { popup.close(); throw error; }

@@ -51,7 +51,7 @@ files.extend(root / "scripts" / name for name in scripts)
 files.append(root / "scripts/build_profiles.py")
 files.extend(root / name for name in ["AGENTS.md", "AgentWorkLog.md"])
 files.extend(root / "scripts" / name for name in ["verify_science.py","verify_spectra.py","verify_spectral_analysis.py","verify_image_matching.py","verify_vo.py","verify_interactive.cjs","build_static.py"])
-files.extend(root / "scripts" / name for name in ["build_macos_full.py", "verify_macos_full.py", "macos_licenses.py"])
+files.extend(root / "scripts" / name for name in ["build_macos_full.py", "build_ci_resources.py", "stage_ci_platform.py", "verify_ci_linux_package.py", "verify_macos_full.py", "macos_licenses.py"])
 files.extend(root / "scripts" / name for name in ["check_remote.py", "verify_online_services.py"])
 files.extend(root / name for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "requirements-build.txt", "requirements.txt", "requirements-spectra.txt", "DEPENDENCIES.txt",
              ".gitignore", ".gitattributes", "README.md", "README.zh-CN.md", "LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md",

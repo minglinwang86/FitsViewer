@@ -22,11 +22,20 @@ pub fn horizontal_angular_scale(wcs:Option<&Value>,rotation_deg:f32)->Option<f64
     }
     (rotation_deg.rem_euclid(180.).abs()<0.0001).then(||angular_scale(wcs)).flatten()
 }
+fn chevron_menu(ui:&mut egui::Ui,label:&str,contents:impl FnOnce(&mut egui::Ui)){
+    // Draw the disclosure mark; the bundled fonts need not contain U+25BE.
+    let response=ui.menu_button(format!("{label}   "),contents).response;
+    let x=if label.is_empty(){response.rect.center().x}else{response.rect.right()-9.};
+    let center=egui::pos2(x,response.rect.center().y);
+    let stroke=ui.style().interact(&response).fg_stroke;
+    ui.painter().line_segment([center+egui::vec2(-3.,-1.5),center+egui::vec2(0.,1.5)],stroke);
+    ui.painter().line_segment([center+egui::vec2(0.,1.5),center+egui::vec2(3.,-1.5)],stroke);
+}
 pub fn scale_controls(ui:&mut egui::Ui,prefs:&mut Preferences,wcs:Option<&Value>,rotation_deg:f32){
     ui.horizontal(|ui|{
         ui.spacing_mut().item_spacing.x=1.;
         if ui.selectable_label(prefs.scale_bar,t("Scale bar")).clicked(){prefs.scale_bar=!prefs.scale_bar;}
-        ui.menu_button("▾",|ui|{
+        chevron_menu(ui,"",|ui|{
             let scale=horizontal_angular_scale(wcs,rotation_deg);let mut length=prefs.scale_pixels*scale.unwrap_or(1.);
             ui.label(t(if scale.is_some(){"Length [arcsec]"}else{"Length [pixels]"}));
             if ui.add(egui::Slider::new(&mut length,0.01..=100000.).logarithmic(true)).changed(){prefs.scale_pixels=(length/scale.unwrap_or(1.)).clamp(0.001,1e7);}
@@ -73,7 +82,7 @@ pub fn rotation_controls(ui:&mut egui::Ui,viewport:Rect,angle:&mut f32)->bool{
         egui::Frame::new().fill(ui.visuals().window_fill()).corner_radius(4.).inner_margin(3.).show(ui,|ui|{
             if ui.button("↶ 90°").on_hover_text(t("Rotate left 90°")).clicked(){*angle-=90.;}
             if ui.button("↷ 90°").on_hover_text(t("Rotate right 90°")).clicked(){*angle+=90.;}
-            ui.menu_button(format!("{:.0}° ▾",*angle),|ui|{
+            chevron_menu(ui,&format!("{:.0}°",*angle),|ui|{
                 ui.label(t("Display rotation"));ui.add(egui::Slider::new(angle,-180. ..=180.).suffix("°"));
             });
             if ui.button(t("Reset")).on_hover_text(t("Reset rotation")).clicked(){*angle=0.;}

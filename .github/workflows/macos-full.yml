@@ -3,20 +3,19 @@ name: Native macOS Full candidate
 on:
   workflow_dispatch:
   push:
-    branches: [codex/macos-full-validation]
+    branches: [codex/macos-full-validation, codex/v0.1.7-ci]
 
 permissions:
   contents: read
 
 jobs:
-  fetch-resources:
-    name: Fetch reviewed draft resources
+  shared-resources:
+    name: Build Full resources from this commit
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
-    # Draft releases are visible only with push access. No release mutation occurs.
-    # 草稿下载需要 push 权限；写权限仅限此资源获取 job，不传入原生构建。
-    permissions:
-      contents: write
+    timeout-minutes: 40
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@v6
         with:
@@ -24,24 +23,45 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-      - name: Download and verify exact locked draft asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/build_macos_full.py --fetch-assets "$RUNNER_TEMP/full-assets.whl"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.22.0'
+          cache: npm
+          cache-dependency-path: jupyter/package-lock.json
+      - name: Prepare pinned WASM toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/wasm-bindgen*
+            ~/.cargo/.crates*
+            target/wasm32-unknown-unknown
+            target/release
+          key: macos-shared-v1-rust1.99.1-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**', 'vendor/**', 'web/locales/**') }}
+          restore-keys: macos-shared-v1-rust1.99.1-
+      - name: Build and hash Full WASM and Jupyter resources
+        run: python scripts/build_ci_resources.py --execute --output "$RUNNER_TEMP/ci-resources"
+      - name: Check CI lock identity rejection
+        run: python -B qa/test_ci_resource_lock.py
       - name: Check line-ending and stale-source packaging regression
-        run: python -B qa/test_macos_packaging.py --wheel "$RUNNER_TEMP/full-assets.whl"
+        run: python -B qa/test_macos_packaging.py --assets-lock "$RUNNER_TEMP/ci-resources/assets-lock.json" --wheel "$(find "$RUNNER_TEMP/ci-resources" -maxdepth 1 -name '*.whl' -print -quit)"
       - name: Check relocated helper source and external Python boundary
         run: python -B qa/test_remote_bundle_entry.py
       - uses: actions/upload-artifact@v5
         with:
-          name: reviewed-macos-full-resources-${{ github.run_id }}
-          path: ${{ runner.temp }}/full-assets.whl
+          name: macos-full-resources-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ci-resources/*.whl
+            ${{ runner.temp }}/ci-resources/assets-lock.json
+            ${{ runner.temp }}/ci-resources/resources-manifest.json
           if-no-files-found: error
           retention-days: 3
 
   native-full:
     name: Full / ${{ matrix.arch }}
-    needs: fetch-resources
+    needs: shared-resources
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -66,8 +86,8 @@ jobs:
       - name: Receive this run's verified resources
         uses: actions/download-artifact@v6
         with:
-          name: reviewed-macos-full-resources-${{ github.run_id }}
-          path: ${{ runner.temp }}
+          name: macos-full-resources-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-resources
       - name: Prepare pinned native Rust toolchain
         run: rustup toolchain install 1.99.1 --profile minimal
       - name: Restore this source's native compiler cache
@@ -78,11 +98,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target/macos-full
-          key: macos-full-v1-${{ matrix.runner }}-rust1.99.1-macos11-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**', 'vendor/**', 'windows/app.png') }}
+          key: macos-full-v1-${{ matrix.runner }}-rust1.99.1-macos11-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**', 'vendor/**', 'windows/app.png', 'web/locales/**') }}
           restore-keys: |
             macos-full-v1-${{ matrix.runner }}-rust1.99.1-macos11-
       - name: Build native Full app and portable archive
-        run: python scripts/build_macos_full.py --wheel "$RUNNER_TEMP/full-assets.whl" --execute
+        run: python scripts/build_macos_full.py --assets-lock "$RUNNER_TEMP/ci-resources/assets-lock.json" --wheel "$(find "$RUNNER_TEMP/ci-resources" -maxdepth 1 -name '*.whl' -print -quit)" --execute
       - name: Save successful native build for acceptance reruns
         if: steps.native-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
@@ -95,7 +115,9 @@ jobs:
       - name: Install external validation packages
         run: python -m pip install 'numpy>=2,<3' 'astropy>=6,<8'
       - name: Validate packaged CLI, real FITS, server and worker shutdown
-        run: python scripts/verify_macos_full.py --package dist/macos --output reports/macos --probe-gui
+        run: |
+          python scripts/verify_macos_full.py --assets-lock "$RUNNER_TEMP/ci-resources/assets-lock.json" --package dist/macos --output reports/macos --probe-gui
+          cp "$RUNNER_TEMP/ci-resources/assets-lock.json" "$RUNNER_TEMP/ci-resources/resources-manifest.json" reports/macos/
       - name: Upload validated candidate and evidence
         uses: actions/upload-artifact@v5
         with:

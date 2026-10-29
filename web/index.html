@@ -1,40 +1,97 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FitsViewer</title>
 <meta name="referrer" content="no-referrer">
-<script>const fverFragment=new URLSearchParams(location.hash.slice(1));if(fverFragment.has('open')){window.__fverBootstrapTicket=fverFragment.get('open');history.replaceState(null,'',location.pathname+location.search);}</script>
+<script>const fverFragment=new URLSearchParams(location.hash.slice(1));if(fverFragment.has('fv_token')){window.__fvBootstrapToken=fverFragment.get('fv_token');fverFragment.delete('fv_token');history.replaceState(null,'',location.pathname+location.search+(fverFragment.size?'#'+fverFragment:''));}if(fverFragment.has('open')){window.__fverBootstrapTicket=fverFragment.get('open');history.replaceState(null,'',location.pathname+location.search);}</script>
 <link rel="icon" type="image/png" sizes="256x256" href="./icons/fitsviewer.png"><link rel="icon" type="image/svg+xml" href="./icons/fitsviewer.svg">
 <style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0d1117;color:#c9d1d9;font:13px system-ui,sans-serif}body{display:flex;flex-direction:column}#stage{position:relative;flex:1;min-height:0}canvas{width:100%;height:100%;display:block}#startup{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}</style></head>
 <body><div id="stage"><canvas id="fitsviewer-canvas"></canvas><div id="startup">Starting FitsViewer…</div></div>
 <script type="module">
 import init,{start,stop,command} from './pkg/fitsviewer_web.js';
 import {imageFetchBoundary,remoteSession} from './remote.js';
+import {createLocalization} from './locales/index.js';
 let disposed=false,started=false,followTimer;
+let interfaceLanguage='en';
+try{interfaceLanguage=JSON.parse(localStorage.getItem('fitsviewer-ui-v1')||'{}').language||'en';}catch{}
+const localization=createLocalization(interfaceLanguage);
+function pageText(key,values={}){return localization.text(key,values);}
+async function setInterfaceLanguage(language){await localization.setLanguage(language);interfaceLanguage=localization.language;document.documentElement.lang=interfaceLanguage;const startup=document.getElementById('startup');if(startup)startup.textContent=pageText('Starting FitsViewer…');}
+void setInterfaceLanguage(interfaceLanguage);
 const base=new URL('.',location.href).href,originalFetch=window.fetch.bind(window),originalOpen=window.open.bind(window),downloadUrls=new Set(),downloads=new Set();
+const standaloneToken=window.__fvBootstrapToken||new URLSearchParams(location.search).get('token')||'';delete window.__fvBootstrapToken;
 let remote;
-const boundary=imageFetchBoundary(base,()=>remote?.token()||'');window.fetch=boundary.fetch;
+const boundary=imageFetchBoundary(base,()=>remote?.token()||standaloneToken);window.fetch=boundary.fetch;
 async function downloadArtifact(url,complete){
  const notice=document.createElement('div');notice.style.cssText='padding:8px;background:#18212d;flex:none';document.body.prepend(notice);
- const controller=new AbortController();downloads.add(controller);const timeout=setTimeout(()=>controller.abort(),300000);notice.textContent='Downloading export / 正在下载导出文件… ';const cancel=document.createElement('button');cancel.textContent='Cancel / 取消';cancel.onclick=()=>controller.abort();notice.append(cancel);
- try{const response=await fetch(url,{signal:controller.signal,credentials:'omit',referrerPolicy:'no-referrer'});if(!response.ok)throw new Error(await response.text());const blob=await response.blob(),href=URL.createObjectURL(blob);downloadUrls.add(href);const name=(response.headers.get('content-disposition')?.match(/filename="([^"]+)"/)?.[1]||'fitsviewer-export.bin').split(/[\\/]/).at(-1);const link=document.createElement('a');link.href=href;link.download=name;link.textContent='Save export / 保存导出文件';notice.replaceChildren(link);link.click();if(complete)await complete();}
- catch(error){notice.textContent='Export download: '+error;}
+ const controller=new AbortController();downloads.add(controller);const timeout=setTimeout(()=>controller.abort(),300000);notice.textContent=pageText('Downloading export… ');const cancel=document.createElement('button');cancel.textContent=pageText('Cancel');cancel.onclick=()=>controller.abort();notice.append(cancel);
+ try{const response=await fetch(url,{signal:controller.signal,credentials:'omit',referrerPolicy:'no-referrer'});if(!response.ok)throw new Error(await response.text());const blob=await response.blob(),href=URL.createObjectURL(blob);downloadUrls.add(href);const name=(response.headers.get('content-disposition')?.match(/filename="([^"]+)"/)?.[1]||'fitsviewer-export.bin').split(/[\\/]/).at(-1);const link=document.createElement('a');link.href=href;link.download=name;link.textContent=pageText('Save export');notice.replaceChildren(link);link.click();if(complete)await complete();}
+ catch(error){notice.textContent=pageText('Export download: ')+error;}
  finally{clearTimeout(timeout);downloads.delete(controller);}
 }
 window.open=(url,...args)=>{if(remote&&url){const target=new URL(url,base);if(target.origin===new URL(base).origin&&target.pathname===new URL('api/artifact',base).pathname){downloadArtifact(target);return null;}}return originalOpen(url,...args);};
 let commandChain=Promise.resolve();
 window.FitsViewer={state:()=>window.__fitsviewerState,dispose:()=>dispose(),command(operation,params={}){
-  const task=()=>new Promise((resolve,reject)=>{if(disposed||!started){reject(new Error('Viewer is not ready'));return;}const id=crypto.randomUUID();command(JSON.stringify({id,operation,params}));const deadline=Date.now()+15000;function result(){const response=window.__fitsviewerCommandResult;if(response?.id===id){response.ok?resolve(response.result):reject(new Error(response.error));return;}if(disposed||Date.now()>deadline){reject(new Error('Viewer command timed out'));return;}setTimeout(result,20);}result();});
+  const task=()=>new Promise((resolve,reject)=>{if(disposed||!started){reject(new Error(pageText('Viewer is not ready')));return;}const id=crypto.randomUUID();command(JSON.stringify({id,operation,params}));const deadline=Date.now()+15000;function result(){const response=window.__fitsviewerCommandResult;if(response?.id===id){response.ok?resolve(response.result):reject(new Error(response.error));return;}if(disposed||Date.now()>deadline){reject(new Error(pageText('Viewer command timed out')));return;}setTimeout(result,20);}result();});
   const result=commandChain.then(task);commandChain=result.catch(()=>{});return result;
 }};
 window.FitsViewer.keepImageRequests=(group,keys)=>boundary.keep(group,keys);
-window.FitsViewer.setLanguage=language=>{document.documentElement.lang=language==='zh-CN'?'zh-CN':'en';};
+window.FitsViewer.setLanguage=setInterfaceLanguage;
 window.FitsViewer.download=(name,text)=>{const blob=new Blob([text],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name.split(/[\\/]/).at(-1)||'fitsviewer.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-window.FitsViewer.importPreferences=()=>{const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.onchange=async()=>{try{const file=input.files?.[0];if(!file)return;if(file.size>65536)throw new Error('Preferences exceed 64 KiB');await window.FitsViewer.command('preferences',JSON.parse(await file.text()));}catch(error){window.alert(String(error));}};input.click();};
-window.FitsViewer.importRegions=()=>{const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.onchange=async()=>{try{const file=input.files?.[0];if(!file)return;if(file.size>262144)throw new Error('Region template exceeds 256 KiB');await window.FitsViewer.command('aperture.template_load',{template:JSON.parse(await file.text())});}catch(error){window.alert(String(error));}};input.click();};
+window.FitsViewer.importPreferences=()=>{const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.onchange=async()=>{try{const file=input.files?.[0];if(!file)return;if(file.size>65536)throw new Error(pageText('Preferences exceed 64 KiB'));await window.FitsViewer.command('preferences',JSON.parse(await file.text()));}catch(error){window.alert(String(error));}};input.click();};
+window.FitsViewer.importRegions=()=>{const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.onchange=async()=>{try{const file=input.files?.[0];if(!file)return;if(file.size>262144)throw new Error(pageText('Region template exceeds 256 KiB'));await window.FitsViewer.command('aperture.template_load',{template:JSON.parse(await file.text())});}catch(error){window.alert(String(error));}};input.click();};
 const embeddingOrigin=new URLSearchParams(location.search).get('parentOrigin')||location.origin;
+const windowChannel=typeof BroadcastChannel==='function'?new BroadcastChannel('fitsviewer-windows:'+base):null;
+function closeViewerWindow(){
+  if(disposed)return;
+  if(window.parent!==window)window.parent.postMessage({type:'fitsviewer-exit-window'},embeddingOrigin);
+  dispose();
+  if(window.parent===window){window.close();document.getElementById('stage').replaceChildren(Object.assign(document.createElement('div'),{textContent:pageText('FitsViewer closed')}));}
+}
+if(windowChannel)windowChannel.onmessage=event=>{if(event.data?.type==='exit-all' && event.data?.scope===base)closeViewerWindow();};
+// Leave the active WASM render callback before disposing its WebRunner.
+// 先退出当前 WASM 绘制回调，再销毁查看器，避免可变借用重入。
+window.FitsViewer.exitAll=()=>{windowChannel?.postMessage({type:'exit-all',scope:base});setTimeout(closeViewerWindow,0);};
+window.FitsViewer.reuseWindow=()=>{try{return Boolean(window.__fitsviewerState?.preferences?.open_in_same_window??JSON.parse(localStorage.getItem('fitsviewer-ui-v1')||'{}').open_in_same_window);}catch{return false;}};
 window.addEventListener('message',async event=>{if(remote||event.source!==window.parent||event.origin!==embeddingOrigin||event.data?.type!=='fitsviewer-command')return;try{const result=await window.FitsViewer.command(event.data.operation,event.data.params);event.source.postMessage({type:'fitsviewer-result',id:event.data.id,ok:true,result},event.origin);}catch(error){event.source.postMessage({type:'fitsviewer-result',id:event.data.id,ok:false,error:String(error)},event.origin);}});
+// Selection sessions keep their API identity separate from aperture/science state.
+let selectionTimer,selectionSession=null,selectionLastRevision=0,selectionConfigRevision=-1;
+function selectionHeaders(){const headers={'Content-Type':'application/json'};const xsrf=document.cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith('_xsrf='));if(xsrf)headers['X-XSRFToken']=xsrf.slice(6);return headers;}
+async function selectionRequest(body,id){const url=new URL('api/selection',base);if(id)url.searchParams.set('id',id);const response=await fetch(url,body?{method:'POST',headers:selectionHeaders(),body:JSON.stringify(body)}:{});if(!response.ok){const error=new Error(await response.text());error.status=response.status;throw error;}return response.json();}
+function selectionUpdate(selection,state){return {action:'update',...selection,viewer_id:state.science_session,view:{low:state.low,high:state.high}};}
+function cancelSelectionOnClose(){const state=window.__fitsviewerState,s=state?.selection;if(!s || s.id!==selectionSession)return;const final=s.status==='selecting'?{...s,status:'cancelled',revision:s.revision+1}:s;if(final.revision<=selectionLastRevision)return;fetch(new URL('api/selection',base),{method:'POST',headers:selectionHeaders(),body:JSON.stringify(selectionUpdate(final,state)),keepalive:true}).catch(()=>{});}
+async function applySelectionConfiguration(session){
+ if((session.config_revision??0)===selectionConfigRevision)return;
+ const view=session.requested_view||{},display={};for(const key of ['stretch','invert','low','high'])if(Object.hasOwn(view,key))display[key]=view[key];
+ if(Object.keys(display).length)await window.FitsViewer.command('view',display);
+ if(view.limits==='zscale'||view.limits==='ZScale')await window.FitsViewer.command('action',{name:'ZScale'});
+ if(['minmax','Min/Max','MinMax'].includes(view.limits))await window.FitsViewer.command('action',{name:'Min/Max'});
+ if(view.fit===true)await window.FitsViewer.command('action',{name:'Fit'});
+ await window.FitsViewer.command('selection.configure',{id:session.id,prompt:session.prompt||'',markers:session.markers||[],cmap:view.cmap,config_revision:session.config_revision});
+ selectionConfigRevision=session.config_revision??0;
+}
+async function beginSelection(id){
+ if(remote)throw new Error('Selection sessions require the local authenticated API');
+ const session=await selectionRequest(null,id);if(!['waiting','selecting'].includes(session.status))return;
+ const deadline=Date.now()+30000;
+ while(!disposed){const state=window.__fitsviewerState;if(state?.loaded&&!state.loading&&state.path===session.path&&state.hdu===session.hdu)break;if(state?.error||Date.now()>deadline)throw new Error(state?.error||'Selection image did not load');await new Promise(resolve=>setTimeout(resolve,50));}
+ if(disposed)return;
+ selectionSession=id;selectionLastRevision=0;selectionConfigRevision=-1;
+ await window.FitsViewer.command('selection.begin',{id,path:session.path,hdu:session.hdu,max_points:session.max_points,identity:session.identity});
+ await applySelectionConfiguration(session);void followSelection();
+}
+async function followSelection(){
+ if(disposed||!selectionSession)return;
+ try{const state=window.__fitsviewerState,s=state?.selection;if(s?.id===selectionSession){
+   const session=await selectionRequest(null,selectionSession);if(['cancelled','expired','failed','completed'].includes(session.status)){await window.FitsViewer.command('selection.cancel');selectionSession=null;return;}
+   if(s.revision>selectionLastRevision){await selectionRequest(selectionUpdate(s,state));selectionLastRevision=s.revision;}
+   if(['completed','cancelled','failed'].includes(s.status)){selectionSession=null;return;}
+   await applySelectionConfiguration(session);
+ }}catch(error){if([403,409,404,410].includes(error.status)){selectionSession=null;await window.FitsViewer.command('selection.fail').catch(()=>{});return;}console.error('Selection synchronization failed',error);}
+ if(!disposed&&selectionSession)selectionTimer=setTimeout(followSelection,150);
+}
 function releaseResources(){
   const session=window.__fitsviewerState?.science_session;
   if(session){const query=new URLSearchParams(location.search);const headers={'Content-Type':'application/json'};if(query.get('token'))headers['X-Fitsviewer-Token']=query.get('token');const xsrf=document.cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith('_xsrf='));if(xsrf)headers['X-XSRFToken']=xsrf.slice(6);fetch(new URL('api/science',location.href),{method:'POST',headers,body:JSON.stringify({operation:'release_view',params:{_viewer_session:session,_document_generation:window.__fitsviewerState?.generation}}),keepalive:true}).catch(()=>{});}
+  cancelSelectionOnClose();
   stop();
   const canvas=document.getElementById('fitsviewer-canvas');
   const gl=canvas?.getContext('webgl2')||canvas?.getContext('webgl');
@@ -42,7 +99,8 @@ function releaseResources(){
 }
 function dispose(){
   if(disposed)return;
-  disposed=true;clearTimeout(followTimer);
+  disposed=true;clearTimeout(followTimer);clearTimeout(selectionTimer);
+  windowChannel?.close();
   remote?.dispose();boundary.dispose();
   for(const download of downloads)download.abort();for(const href of downloadUrls)URL.revokeObjectURL(href);downloads.clear();downloadUrls.clear();window.open=originalOpen;
   if(started)releaseResources();
@@ -54,34 +112,36 @@ window.addEventListener('pagehide',dispose,{once:true});
 window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
 // Keep right-drag available for colormap controls. / 图像画布右键用于亮度和对比度。
 document.getElementById('fitsviewer-canvas').addEventListener('contextmenu',event=>event.preventDefault());
-window.FitsViewer.openWindow=()=>{if(remote){remote.openWindow().catch(error=>window.alert(String(error)));return;}const url=new URL(location.href);url.searchParams.set('window','1');window.open(url.href,'FitsViewer','popup,width=1200,height=850,resizable=yes,scrollbars=no');};
+window.FitsViewer.openWindow=()=>{if(remote){remote.openWindow().catch(error=>window.alert(String(error)));return;}const url=new URL(location.href);if(standaloneToken)url.hash=new URLSearchParams({fv_token:standaloneToken}).toString();url.searchParams.set('window','1');window.open(url.href,window.FitsViewer.reuseWindow()?'FitsViewer':'_blank','popup,width=1200,height=850,resizable=yes,scrollbars=no');};
 try{
  const query=new URLSearchParams(location.search),api=new URL('.',location.href).href.replace(/\/$/,'');
+ await localization.ready;
  let initial;
  if(window.__fverBootstrapTicket){
   const ticket=window.__fverBootstrapTicket;delete window.__fverBootstrapTicket;
   const status=document.createElement('div');status.id='fver-status';status.style.cssText='padding:5px 10px;background:#18212d;flex:none;min-height:18px';document.body.prepend(status);
-  remote=remoteSession(base,ticket,{started:()=>started,state:()=>window.__fitsviewerState,open:request=>window.FitsViewer.command('open',{path:request.path,hdu:request.hdu}),close:()=>window.FitsViewer.command('close'),artifact(id,complete){document.getElementById('stage').style.display='none';status.textContent='Export ready / 导出文件已就绪 ';const button=document.createElement('button');button.textContent='Download / 下载';button.onclick=()=>{button.disabled=true;downloadArtifact(new URL('api/artifact?id='+encodeURIComponent(id),base),complete).finally(()=>{button.disabled=false;});};status.append(button);},status(text,fallback){status.replaceChildren(document.createTextNode(text));if(fallback){const button=document.createElement('button');button.textContent='Open in browser anyway / 改用浏览器';button.style.marginLeft='10px';button.onclick=()=>{button.disabled=true;fallback().catch(error=>{status.textContent=String(error);});};status.append(button);}}});
+  remote=remoteSession(base,ticket,{translate:pageText,started:()=>started,state:()=>window.__fitsviewerState,open:request=>window.FitsViewer.command('open',{path:request.path,hdu:request.hdu}),close:()=>window.FitsViewer.command('close'),artifact(id,complete){document.getElementById('stage').style.display='none';status.textContent=pageText('Export ready ');const button=document.createElement('button');button.textContent=pageText('Download');button.onclick=()=>{button.disabled=true;downloadArtifact(new URL('api/artifact?id='+encodeURIComponent(id),base),complete).finally(()=>{button.disabled=false;});};status.append(button);},status(text,fallback){status.replaceChildren(document.createTextNode(text));if(fallback){const button=document.createElement('button');button.textContent=pageText('Open in browser anyway');button.style.marginLeft='10px';button.onclick=()=>{button.disabled=true;fallback().catch(error=>{status.textContent=String(error);});};status.append(button);}}});
   initial=await remote.bootstrap();
  }
  if(!initial?.downloadOnly){
- const sessionRequest=async()=>{if(remote||!query.has('session_seq'))return null;const url=new URL('api/session',location.href);url.searchParams.set('seq',query.get('session_seq'));if(query.get('token'))url.searchParams.set('token',query.get('token'));const response=await fetch(url);if(!response.ok)throw new Error(await response.text());return response.json();};
+ const sessionRequest=async()=>{if(remote||!query.has('session_seq'))return null;const url=new URL('api/session',location.href);url.searchParams.set('seq',query.get('session_seq'));if(query.get('token'))url.searchParams.set('token',query.get('token'));const response=await fetch(url);if(!response.ok){const error=new Error(await response.text());error.status=response.status;throw error;}return response.json();};
  const [fontResponse,,session]=await Promise.all([fetch(new URL('./fonts/cjk.ttf',import.meta.url)),init(),sessionRequest()]);
  if(!fontResponse.ok)throw new Error('CJK font asset unavailable');
  const initialMode=query.get('mode')??session?.mode??(session?(session.views?.length>1?'PRO':'Minimal'):undefined);
  if(initialMode!==undefined&&!['Minimal','PRO'].includes(initialMode))throw new Error('Unknown UI mode');
- const font=new Uint8Array(await fontResponse.arrayBuffer());if(!disposed){await start(document.getElementById('fitsviewer-canvas'),api,remote?initial?.path||'':session?'':query.get('path')||'',remote?.token()||query.get('token')||'',remote?initial?.hdu??undefined:query.has('hdu')?Number(query.get('hdu')):undefined,font,initialMode);started=true;if(disposed)releaseResources();else {
+ const font=new Uint8Array(await fontResponse.arrayBuffer());if(!disposed){await start(document.getElementById('fitsviewer-canvas'),api,remote?initial?.path||'':session?'':query.get('path')||'',remote?.token()||standaloneToken,remote?initial?.hdu??undefined:query.has('hdu')?Number(query.get('hdu')):undefined,font,initialMode);started=true;if(disposed)releaseResources();else {
  if(session)await window.FitsViewer.command('session.apply',{...session,mode:initialMode});
+ if(query.has('selection'))await beginSelection(query.get('selection'));
  if(query.has('view')){const text=query.get('view');if(new TextEncoder().encode(text).length>16384)throw new Error('Embedded view exceeds 16 KiB');const view=JSON.parse(text);const deadline=Date.now()+30000;while(!window.__fitsviewerState?.loaded){if(disposed||Date.now()>deadline)throw new Error('Initial view timed out');await new Promise(resolve=>setTimeout(resolve,50));}await window.FitsViewer.command('view',view);}
  document.getElementById('startup').remove();
  if(remote)remote.follow();
 }}}}
-catch(error){if(!disposed){document.getElementById('startup').textContent='Unable to start FitsViewer: '+error;console.error(error);}}
+catch(error){if(!disposed){document.getElementById('startup').textContent=pageText('Unable to start FitsViewer: ')+error;console.error(error);}}
 // An explicitly opened window can follow later SSH CLI requests on its own.
 // 已打开的独立窗口可以直接响应后续 SSH 命令行请求。
 if(!disposed&&!remote&&new URLSearchParams(location.search).get('window')==='1'){
   let after=0,epoch='',initialized=false;
-  async function follow(){if(disposed)return;try{const base=new URL('.',location.href);const url=new URL('api/requests',base);url.searchParams.set('after',String(after));const token=new URLSearchParams(location.search).get('token');if(token)url.searchParams.set('token',token);const response=await fetch(url);if(disposed)return;if(response.ok){const data=await response.json();if(!initialized||epoch!==data.epoch){initialized=true;epoch=data.epoch;after=data.latest;}else{const request=data.requests.at(-1);after=data.latest;if(request){const next=new URL(location.href);next.searchParams.set('path',request.path);if(request.session)next.searchParams.set('session_seq',request.seq);else next.searchParams.delete('session_seq');if(request.hdu!==null&&request.hdu!==undefined)next.searchParams.set('hdu',request.hdu);else next.searchParams.delete('hdu');if(next.href!==location.href){location.replace(next.href);return;}}}}}catch{}if(!disposed)followTimer=setTimeout(follow,1500);}
+  async function follow(){if(disposed)return;try{const base=new URL('.',location.href);const url=new URL('api/requests',base);url.searchParams.set('after',String(after));const token=new URLSearchParams(location.search).get('token');if(token)url.searchParams.set('token',token);const response=await fetch(url);if(disposed)return;if(response.ok){const data=await response.json();if(!initialized||epoch!==data.epoch){initialized=true;epoch=data.epoch;after=data.latest;}else{const request=data.requests.at(-1);after=data.latest;if(request){const next=new URL(location.href);next.searchParams.set('path',request.path);if(request.selection_id)next.searchParams.set('selection',request.selection_id);else next.searchParams.delete('selection');if(standaloneToken)next.hash=new URLSearchParams({fv_token:standaloneToken}).toString();if(request.session)next.searchParams.set('session_seq',request.seq);else next.searchParams.delete('session_seq');if(request.hdu!==null&&request.hdu!==undefined)next.searchParams.set('hdu',request.hdu);else next.searchParams.delete('hdu');if(next.href!==location.href){location.replace(next.href);return;}}}}}catch{}if(!disposed)followTimer=setTimeout(follow,1500);}
   follow();
 }
 </script></body></html>

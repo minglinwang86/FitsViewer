@@ -1,6 +1,7 @@
 //! FITS numeric data and display transformations. / FITS 数值与显示变换。
 use serde::{Deserialize, Serialize};
 pub mod display;
+pub mod display_tile;
 pub mod regions;
 pub mod view;
 pub mod remote;

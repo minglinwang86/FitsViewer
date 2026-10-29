@@ -4,6 +4,23 @@
 > 本文以中文记录决策及故障经过，保留源码中的英文标识，方便检索。
 > Public, sanitized engineering handoff; historical evidence is separated from current implementation and execution results.
 
+**0.1.7 开发补充（2026-10-29，尚未发布）：** 下文的发布基线与旧测试数字保留为历史。
+当前开发验证请读 [0.1.7 验证记录](docs/releases/VALIDATION-0.1.7.md)，当前职责边界请读
+[架构](docs/ARCHITECTURE.md) 和 [AI 修改指南](docs/AI_DEVELOPMENT_GUIDE.md)。界面新增意大利语、
+西班牙语、德语、法语；六种语言改为 [`web/locales/`](web/locales/README.md) 中的共享注册表与
+独立 JSON 词典，native/WASM 与浏览器 shell 使用同一份译文，不再增加内联翻译表。
+增加语言后既要检查 key、占位符与科学单位，也要检查真实按钮边界；德语窄窗曾暴露整按钮
+不换行的缺陷，不能通过缩小字号或删掉科学含义来掩盖。当前执行环境为隔离 Linux 容器；
+候选构建、源码检查、实际 GUI 验收和跨平台发布仍须分别记录，不能互相替代。
+
+**本地 Linux 收尾已完成：** 测光结果前移、光谱结果摘要/独立滚动、大图精度切换、
+Jupyter 私有后端认证均已有针对性与实际运行证据。PyEC 通过显式
+`make_pyec_xparun(client)` 使用浏览器选星并取得一/零起点明确的原图坐标；具体接入和
+不支持的 XPA 范围见 [人工选星指南](docs/MANUAL_STAR_SELECTION.md)。不要改写 PyEC
+自己的质心、剔除或测光算法。最新 wheel/hash 与边界见上述 0.1.7 验证记录；此状态
+不代表 Windows/macOS 或 GitHub 发布已经完成。为控制消耗，子智能体已全部暂停，
+未修改的科学与布局检查沿用已有证据，只补测新增或失败的部分。
+
 ## 阅读入口与适用基线
 
 本项目是以 Rust / fitsrs 为内核的轻量 FITS 查看器，服务于本地、远程服务器、容器、
@@ -1280,3 +1297,78 @@ Mac ZIP。明确 Windows 桌面默认选 Setup、远程 Linux/Jupyter 选 Linux 
 6 个可运行包。公开发布正文通过定点插入更新，原文与两张截图逐字保留，附件身份、
 文件名、大小、摘要和下载 URL 均未改变。源码发布说明同步保存；文本扫描与差异检查
 通过。本次仍为文档更新，不重建程序、不移动 0.1.6 标签，不改已发布的源码包和校验值。
+
+## 20. 0.1.7 大图、直方图与窗口控制（2026-10-28）
+
+### 20.1 用户要求和实现入口
+
+用户要求直方图直接设显示上下限、全部退出、可选同窗打开，并修复大 FITS 卡顿和
+下载模板无法打开。确认“全部关闭”指退出程序窗口，不能只清空图像。随后明确
+**PRO 保留正常原精度图像**：16 位显示量化只用于极简模式的大图。最后要求完成后
+保存工作并关闭本机 Windows；这不授权关闭远程 Jupyter 或丢弃未知的未保存文档。
+
+| 源码 | 本次职责 |
+| --- | --- |
+| `viewer/src/controls.rs`, `lib.rs` | 直方图 Low/High 输入、点击/拖动，约束有限有序并触发共享显示映射更新 |
+| `server/src/native_images.rs` | 原生窗口复用有界 metadata/preview/tile store；光谱继续走原生完整读取 |
+| `core/src/display_tile.rs` | 仅显示图块的 16 位量化、物理 scale/offset 和无效码；不修改源数据 |
+| `core/src/compressed_reader.rs`, `remote.rs` | 所需源压缩块的 ROI 解码；保持边缘索引和源块内 dithering，精确像素另读 |
+| `server/src/native_windows.rs`, `remote_native.rs` | 私有同用户消息箱、打开 ACK、正常退出；远程助手不能接收本地路径 |
+| `web/index.html`, `jupyter/src/index.ts` | 浏览器窗口归属、延迟销毁、只关闭 FitsViewer 标签及记忆的同窗策略 |
+
+以上缩写路径相对 `crates/`，前端两项相对仓库根。版本同步至 Cargo、锁文件和
+Jupyter Python/JS 元数据的 0.1.7，工作分支为 `codex/v0.1.7`。已发布的 0.1.6
+标签和安装包未覆盖；生成资产在将来打包 0.1.7 时必须重新构建和锁定。
+
+### 20.2 具体问题、修复和失败记录
+
+- 原生入口原来先完整读取 FITS 再创建窗口；新入口先显示界面、后台读取元数据和
+  预览，再请求视野图块。浏览器原有分块协议同时保留，科学数组不靠显示精度替代。
+- 原来内部压缩图像要求完整解码数组进入缓存，超过缓存或像素上限便拒绝。现在
+  按显示采样所在的源压缩块解码，单源块限制 16 MiB，避免通过放大整图预算掩盖问题。
+- PRO 切换会丢弃极简量化图块/纹理和旧回调；`preview_shared` 不向 PRO 图层保存
+  量化预览。上下限、旋转、图块与源文件的物理像素、坐标和科学操作仍分离。
+- 原生光谱等非二维数据保留旧的完整读取器，避免把 HTTP 的 20 MB 门槛引入原生
+  光谱。新回归测试分别覆盖宿主回退协议和客户端实际读取。
+- 浏览器点击退出发生在 WASM 绘制栈内，必须排到下个事件任务后销毁 WebRunner，
+  避免可变借用重入。页面源码契约测试验证延迟、同服务广播、嵌入页关闭请求和不
+  发送服务关闭请求；这不是完整浏览器视觉验收。
+- 初次直方图鼠标回归已经产生正确交互，但断言误要求投影后的浮点上限严格等于
+  110；修正为像素投影容差后通过。浏览器脚本测试也修正了 Windows CRLF 截取夹具，
+  没有把测试夹具错误说成程序功能失败。
+- Windows 缓存工具链先遇到 Unicode 链接路径、缺少链接器/编译器，再遇到临时
+  目录权限失败。日志保留，没有为使测试通过修改系统安全策略，也不宣称 Windows
+  新包已验收。Linux 连接经过中断与备用路径恢复，最终保留可复用的已验证连接。
+- 中断期间仅清理了本任务目录内、命令行精确匹配的自有传输接收进程及其交互 shell，
+  没有按 Python/SSH 进程名批量终止进程。
+
+### 20.3 验证与交接边界
+
+Linux 核心回归 42 项、共享界面 94 项、宿主 40 项全部通过；包含最终原生光谱补测，结果保存在
+本地日志和 [0.1.7 验证说明](docs/releases/VALIDATION-0.1.7.md)。独立 HTTP 数值验证
+覆盖 5 个数据集，其中一个是真实 SDSS 下载，其他为可控合成数值夹具；对照使用
+Astropy/CFITSIO，不使用 Rust 自己的量化预览当标准答案。原精度读数、量化误差、
+无效掩码、输入文件哈希和测试服务回收分别核对。另保存 Python 服务 28 项、下载
+13 项、模块选择 9 项、入口 3 项、TypeScript、WASM 和中文字体检查。
+
+用户最初失败的具体模板没有提供，不能宣称已复现那个文件；已有真实下载能打开，
+大压缩图像的确定性限制已修复。Windows/macOS 发行包、完整原生多窗口手工操作及
+全部浏览器视觉状态不属于已完成验收。关闭电脑前需保存源码快照、Git 提交、机器
+状态和所有已有失败/成功日志；保留远程用户 Jupyter，正常关机不使用强制丢弃参数。
+
+
+### 0.1.7 cross-platform continuation (2026-10-29)
+
+The user authorized Windows/macOS Full builds in CI and publication after validation.
+Common Linux/science/UI evidence from the final local candidate is reused for unchanged
+runtime source; the platform workflow builds one same-run resource set and native
+Windows x86_64, macOS arm64/x86_64 and a publishable Linux wheel. New checks concern
+platform packaging, native startup/texture, Unicode relocation, authentication and
+process cleanup. Windows desktop tests run only on an isolated hosted runner. Its
+hash-pinned Mesa renderer is test infrastructure and must not enter release payloads.
+macOS is ad-hoc signed, not notarized; macOS 15 startup is distinct from manual GUI
+acceptance of every workflow. Platform results remain pending until CI completes.
+
+The local Linux candidate was installed independently into the user-requested local
+container without replacing its active older service, scientific dependencies or data.
+The versioned entry and rollback instructions are kept in the private installation log.

@@ -81,6 +81,16 @@ info = json.loads(output([python,'-c',
     'print(json.dumps(dict(python=sys.version.split()[0],jupyterlab=jupyterlab.__version__,prefix=sys.prefix,resources=[str(p) for p in resources()])))']))
 report.update(python=info['python'],jupyterlab=info['jupyterlab'],pip_check=True)
 vendor,binary,web = map(Path,info['resources'])
+mesa = os.environ.get('FITSVIEWER_CI_MESA_DIR')
+if mesa:
+    assert os.environ.get('GITHUB_ACTIONS') == 'true', 'Software renderer is limited to isolated CI'
+    mesa = Path(mesa).resolve()
+    assert mesa.is_relative_to(Path(os.environ['RUNNER_TEMP']).resolve())
+    renderer = list(mesa.glob('*.dll'))
+    assert renderer and (mesa/'opengl32.dll').is_file()
+    for file in renderer: shutil.copy2(file, binary.parent/file.name)
+    report['native_renderer'] = {'kind':'CI-only Mesa software OpenGL', 'bundled_in_release':False,
+        'files':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in renderer}}
 import ctypes
 shell=ctypes.WinDLL('shell32',use_last_error=True)
 shell.ExtractIconExW.argtypes=[ctypes.c_wchar_p,ctypes.c_int,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_uint]

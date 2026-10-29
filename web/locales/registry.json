@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "default": "en",
+  "languages": [
+    {"code": "en", "name": "English", "label": "Language: English", "file": "en.json"},
+    {"code": "zh-CN", "name": "简体中文", "label": "界面语言：简体中文", "file": "zh-CN.json"},
+    {"code": "it", "name": "Italiano", "label": "Lingua: Italiano", "file": "it.json"},
+    {"code": "es", "name": "Español", "label": "Idioma: español", "file": "es.json"},
+    {"code": "de", "name": "Deutsch", "label": "Sprache: Deutsch", "file": "de.json"},
+    {"code": "fr", "name": "Français", "label": "Langue : français", "file": "fr.json"}
+  ]
+}

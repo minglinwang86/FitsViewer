@@ -14,7 +14,8 @@ struct Tile {image:Arc<FitsImage>,texture:Option<egui::TextureHandle>,revision:u
 enum Reply {Tile(Key,Result<FitsImage,String>),Pixel([usize;2],Result<serde_json::Value,String>)}
 pub(super) struct RemoteImage {
     pub manifest:Manifest,
-    api:String,token:String,query:String,group:String,
+    api:String,token:String,query:String,group:String,request_epoch:u64,
+    local:Option<crate::ImageBridge>,compact:bool,
     tiles:HashMap<Key,Tile>,pending:HashSet<Key>,replies:Arc<Mutex<VecDeque<Reply>>>,active:Arc<AtomicBool>,
     frame:u64,revision:u64,desired:Vec<Key>,pixel_pending:bool,last_pixel_time:f64,
     now:f64,retry:HashMap<Key,(f64,u8)>,
@@ -30,12 +31,13 @@ pub(super) fn cancel_group(group:&str){
     #[cfg(target_arch="wasm32")]let _=js_sys::eval(&format!("window.FitsViewer?.keepImageRequests?.({},[])",serde_json::to_string(group).unwrap_or_default()));
     #[cfg(not(target_arch="wasm32"))]let _=group;
 }
-pub(super) fn get(url:String,token:&str,max_bytes:usize,done:impl FnOnce(Result<Vec<u8>,String>)+Send+'static)->bool{
+pub(super) fn get(url:String,token:&str,max_bytes:usize,local:Option<crate::ImageBridge>,done:impl FnOnce(Result<Vec<u8>,String>)+Send+'static)->bool{
     if IN_FLIGHT.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|(n<12).then_some(n+1)).is_err(){return false;}
     #[cfg(not(target_arch="wasm32"))]{
         let token=token.to_owned();
         let result=std::thread::Builder::new().name("fitsviewer-image".into()).spawn(move||{
             let response=(||{
+                if let Some(local)=local{let bytes=local(url)?;if bytes.len()>max_bytes{return Err("Local image response exceeds its negotiated size".into());}return Ok(bytes);}
                 use std::io::Read;
                 let seconds=if url.contains("/tile?") || url.contains("/pixel?"){20}else{60};
                 let mut request=ureq::get(&url).timeout(std::time::Duration::from_secs(seconds));
@@ -50,6 +52,7 @@ pub(super) fn get(url:String,token:&str,max_bytes:usize,done:impl FnOnce(Result<
         if result.is_err(){IN_FLIGHT.fetch_sub(1,Ordering::AcqRel);return false;}return true;
     }
     #[cfg(target_arch="wasm32")]{
+    let _=local;
     let mut request=ehttp::Request::get(url);if !token.is_empty(){request.headers.insert("X-Fitsviewer-Token",token);}
     ehttp::fetch(request,move|response|{
         IN_FLIGHT.fetch_sub(1,Ordering::AcqRel);
@@ -62,10 +65,11 @@ pub(super) fn get(url:String,token:&str,max_bytes:usize,done:impl FnOnce(Result<
 }
 
 impl RemoteImage {
-    pub fn new(manifest:Manifest,api:String,token:String,query:String,group:String)->Self{
-        Self{manifest,api,token,query,group,tiles:HashMap::new(),pending:HashSet::new(),replies:Arc::new(Mutex::new(VecDeque::new())),active:Arc::new(AtomicBool::new(true)),frame:0,revision:1,desired:vec![],pixel_pending:false,last_pixel_time:-100.,now:0.,retry:HashMap::new(),pixel:None,error:String::new(),network_bytes:0}
+    pub fn new(manifest:Manifest,api:String,token:String,query:String,group:String,local:Option<crate::ImageBridge>,compact:bool)->Self{
+        Self{manifest,api,token,query,group,request_epoch:0,local,compact,tiles:HashMap::new(),pending:HashSet::new(),replies:Arc::new(Mutex::new(VecDeque::new())),active:Arc::new(AtomicBool::new(true)),frame:0,revision:1,desired:vec![],pixel_pending:false,last_pixel_time:-100.,now:0.,retry:HashMap::new(),pixel:None,error:String::new(),network_bytes:0}
     }
-    fn url(&self,operation:&str)->String{format!("{}/api/image/{operation}?{}&version={}&fv_image={}",self.api,self.query,urlencoding::encode(&self.manifest.source_version),urlencoding::encode(&self.group))}
+    fn request_group(&self)->String{format!("{}-display-{}",self.group,self.request_epoch)}
+    fn url(&self,operation:&str)->String{format!("{}/api/image/{operation}?{}&version={}&fv_image={}",self.api,self.query,urlencoding::encode(&self.manifest.source_version),urlencoding::encode(&self.request_group()))}
     pub fn poll(&mut self)->bool{
         let replies:Vec<_>=self.replies.lock().unwrap().drain(..).collect();let mut preview_changed=false;
         for reply in replies{match reply{
@@ -85,8 +89,18 @@ impl RemoteImage {
         }}preview_changed
     }
     pub fn preview(&self)->Option<&FitsImage>{self.tiles.get(&Key{level:self.manifest.preview_level,x:0,y:0}).map(|tile|tile.image.as_ref())}
-    pub fn preview_shared(&self)->Option<Arc<FitsImage>>{self.tiles.get(&Key{level:self.manifest.preview_level,x:0,y:0}).map(|tile|tile.image.clone())}
+    pub fn preview_shared(&self)->Option<Arc<FitsImage>>{if self.compact{return None;}self.tiles.get(&Key{level:self.manifest.preview_level,x:0,y:0}).map(|tile|tile.image.clone())}
     pub fn dirty(&mut self){self.revision=self.revision.wrapping_add(1);}
+    pub fn set_compact(&mut self,compact:bool){
+        if self.compact==compact{return;}
+        // Closed browser request groups stay closed. A new precision starts a new
+        // group, so late old requests remain cancelled while new tiles can load.
+        // 浏览器取消组不可复用；精度切换创建新组并重新声明当前视野。
+        self.active.store(false,Ordering::Release);cancel_group(&self.request_group());
+        self.request_epoch=self.request_epoch.wrapping_add(1);
+        self.active=Arc::new(AtomicBool::new(true));self.replies=Arc::new(Mutex::new(VecDeque::new()));
+        self.tiles.clear();self.pending.clear();self.retry.clear();self.desired.clear();self.error.clear();self.pixel_pending=false;self.compact=compact;
+    }
     fn rgba(&self,key:Key,mapping:&ScaleMapping,invert:bool,tone:DisplayTone,options:&RenderOptions)->Vec<u8>{
         let image=&self.tiles[&key].image;
         let mut rgba=fitsviewer_core::display::render_with_mapping(image,invert,tone,options,mapping);
@@ -115,9 +129,9 @@ impl RemoteImage {
     fn request(&mut self,ctx:&egui::Context,key:Key){
         if self.tiles.contains_key(&key) || self.pending.contains(&key) || self.pending.len()>=4{return;}
         if self.retry.get(&key).is_some_and(|(time,_)|*time>self.now){return;}
-        let url=format!("{}&level={}&x={}&y={}",self.url("tile"),key.level,key.x,key.y);
+        let url=format!("{}&level={}&x={}&y={}&display_bits={}",self.url("tile"),key.level,key.x,key.y,if self.compact{16}else{0});
         let replies=self.replies.clone();let active=self.active.clone();let context=ctx.clone();
-        if get(url,&self.token,2*1024*1024,move|bytes|{
+        if get(url,&self.token,2*1024*1024,self.local.clone(),move|bytes|{
             if !active.load(Ordering::Acquire){return;}
             let result=bytes.and_then(|bytes|FitsImage::from_packet(&bytes));
             let mut queue=replies.lock().unwrap();if queue.len()<8{queue.push_back(Reply::Tile(key,result));}context.request_repaint();
@@ -140,12 +154,13 @@ impl RemoteImage {
     pub fn paint(&mut self,ctx:&egui::Context,painter:&egui::Painter,transform:ImageTransform,viewport:Rect,mapping:&ScaleMapping,invert:bool,tone:DisplayTone,options:&RenderOptions,color:Color32){
         self.frame=self.frame.wrapping_add(1);
         self.now=ctx.input(|input|input.time);
-        let preview=Key{level:self.manifest.preview_level,x:0,y:0};self.request(ctx,preview);
+        let preview=Key{level:self.manifest.preview_level,x:0,y:0};
         let desired=self.choose(transform,viewport);
         if desired!=self.desired{
-            #[cfg(target_arch="wasm32")]{let keep=desired.iter().chain(std::iter::once(&preview)).map(|k|format!("{}:{}:{}",k.level,k.x,k.y)).collect::<Vec<_>>();let _=js_sys::eval(&format!("window.FitsViewer?.keepImageRequests?.({},{})",serde_json::to_string(&self.group).unwrap_or_default(),serde_json::to_string(&keep).unwrap_or_default()));}
+            #[cfg(target_arch="wasm32")]{let keep=desired.iter().chain(std::iter::once(&preview)).map(|k|format!("{}:{}:{}",k.level,k.x,k.y)).collect::<Vec<_>>();let _=js_sys::eval(&format!("window.FitsViewer?.keepImageRequests?.({},{})",serde_json::to_string(&self.request_group()).unwrap_or_default(),serde_json::to_string(&keep).unwrap_or_default()));}
             self.desired=desired;
         }
+        self.request(ctx,preview);
         for key in self.desired.clone(){self.request(ctx,key);if self.pending.len()>=4{break;}}
         // A small neighboring ring is speculative and never precedes visible tiles.
         if self.desired.iter().all(|key|self.tiles.contains_key(key)) && self.pending.is_empty(){
@@ -180,16 +195,16 @@ impl RemoteImage {
         let now=ctx.input(|input|input.time);
         if !self.pixel_pending && now-self.last_pixel_time>=0.12 && self.pixel.as_ref().is_none_or(|(position,_)|*position!=[x,y]){
             let url=format!("{}&x={x}&y={y}",self.url("pixel"));let replies=self.replies.clone();let active=self.active.clone();let context=ctx.clone();
-            if get(url,&self.token,16384,move|response|{if active.load(Ordering::Acquire){let result=response.and_then(|bytes|serde_json::from_slice(&bytes).map_err(|e|e.to_string()));replies.lock().unwrap().push_back(Reply::Pixel([x,y],result));context.request_repaint();}}){self.pixel_pending=true;self.last_pixel_time=now;}
+            if get(url,&self.token,16384,self.local.clone(),move|response|{if active.load(Ordering::Acquire){let result=response.and_then(|bytes|serde_json::from_slice(&bytes).map_err(|e|e.to_string()));replies.lock().unwrap().push_back(Reply::Pixel([x,y],result));context.request_repaint();}}){self.pixel_pending=true;self.last_pixel_time=now;}
         }
         if let Some((position,value))=&self.pixel{if *position==[x,y]{return format!("x={}  y={} · value={} · raw={}",x+1,y+1,value["value"].as_f64().map(|n|format!("{n:.8}")).unwrap_or_else(||"invalid".into()),value["raw"].as_str().unwrap_or("unavailable"));}}
         format!("x={}  y={} · {}",x+1,y+1,crate::i18n::t("Original pixel pending…"))
     }
-    pub fn state(&self)->serde_json::Value{serde_json::json!({"transport":"tiles","source_version":self.manifest.source_version,"cached_tiles":self.tiles.len(),"cache_bytes":self.tiles.values().map(|tile|tile.bytes).sum::<usize>(),"cache_budget":CACHE_BUDGET,"in_flight":self.pending.len(),"numeric_bytes_received":self.network_bytes,"sampled_statistics":true,"error":self.error})}
+    pub fn state(&self)->serde_json::Value{serde_json::json!({"transport":"tiles","display_encoding":if self.compact{"quantized-int16"}else{"source"},"source_bitpix":self.manifest.info.bitpix,"source_version":self.manifest.source_version,"cached_tiles":self.tiles.len(),"cache_bytes":self.tiles.values().map(|tile|tile.bytes).sum::<usize>(),"cache_budget":CACHE_BUDGET,"in_flight":self.pending.len(),"numeric_bytes_received":self.network_bytes,"sampled_statistics":true,"error":self.error})}
 }
 impl Drop for RemoteImage{
     fn drop(&mut self){self.active.store(false,Ordering::Release);self.replies.lock().unwrap().clear();
-        cancel_group(&self.group);
+        cancel_group(&self.request_group());
     }
 }
 
@@ -197,9 +212,21 @@ impl Drop for RemoteImage{
     use super::*;
     fn view()->RemoteImage{
         let info=fitsviewer_core::ImageInfo{path:"numeric-boundary.fits".into(),hdu:0,width:512,height:256,bitpix:-64,bscale:1.,bzero:0.,blank:None,hdus:vec![],header:String::new(),spectrum:None};
-        RemoteImage::new(Manifest{schema:1,info,source_version:"fixed".into(),full_packet_bytes:None,threshold_bytes:20_000_000,transport:"tiles".into(),compression:"none".into(),hdus_complete:true,statistics:Default::default(),statistics_sampled:true,preview_level:1},String::new(),String::new(),String::new(),"test".into())
+        RemoteImage::new(Manifest{schema:1,info,source_version:"fixed".into(),full_packet_bytes:None,threshold_bytes:20_000_000,transport:"tiles".into(),compression:"none".into(),hdus_complete:true,statistics:Default::default(),statistics_sampled:true,preview_level:1},String::new(),String::new(),String::new(),"test".into(),None,true)
     }
     fn tile(view:&RemoteImage,value:f64)->Tile{let mut info=view.manifest.info.clone();info.width=256;info.height=256;Tile{image:Arc::new(FitsImage{info,pixels:fitsviewer_core::RawPixels::F64(vec![value;256*256]),spectrum:None}),texture:None,revision:0,used:0,bytes:256*256*20}}
+    #[test]fn original_precision_switch_discards_compact_cache_and_old_replies(){
+        let mut view=view();let preview=Key{level:view.manifest.preview_level,x:0,y:0};let compact=tile(&view,1.);view.tiles.insert(preview,compact);
+        assert!(view.preview_shared().is_none());let active=view.active.clone();let replies=view.replies.clone();
+        view.desired.push(preview);let old_group=view.request_group();let old_url=view.url("pixel");
+        view.set_compact(false);assert!(!active.load(Ordering::Acquire));assert!(view.tiles.is_empty());
+        assert!(view.desired.is_empty());assert_ne!(view.request_group(),old_group);assert_ne!(view.url("pixel"),old_url);
+        replies.lock().unwrap().push_back(Reply::Tile(preview,Ok((*tile(&view,2.).image).clone())));
+        assert!(!view.poll());assert!(view.tiles.is_empty());
+        let original=tile(&view,3.);view.tiles.insert(preview,original);assert_eq!(view.preview_shared().unwrap().info.bitpix,-64);assert_eq!(view.state()["display_encoding"],"source");
+        let pro_group=view.request_group();view.set_compact(false);assert_eq!(view.request_group(),pro_group);
+        view.set_compact(true);assert_ne!(view.request_group(),old_group);assert_ne!(view.request_group(),pro_group);assert!(view.tiles.is_empty());
+    }
     #[test]fn threshold_contours_do_not_outline_every_tile(){
         let mut view=view();let left=Key{level:0,x:0,y:0};let right=Key{level:0,x:1,y:0};view.tiles.insert(left,tile(&view,1.));view.tiles.insert(right,tile(&view,1.));
         let mut options=RenderOptions::default();options.mask=Some(fitsviewer_core::display::ThresholdMask{threshold:0.5,opacity:1.,color:[255,0,0],style:MaskStyle::Outline});

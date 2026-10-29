@@ -1,5 +1,21 @@
 # Changelog / 版本记录
 
+## 0.1.7 — In development / 开发中
+
+- Add Italian, Spanish, German and French through shared per-language dictionaries for native/WASM/browser UI; wrap long tool buttons without reducing their font size.
+- Add the Python manual-star-selection API and an opt-in adapter for PyEC's DS9 image-coordinate selection calls. See [integration guide](docs/MANUAL_STAR_SELECTION.md).
+- Bring aperture results and spectrum summaries/copy actions into view; preserve scientific warning details and keep task scrolling independent.
+- Fix large-image precision-switch request cancellation, native window mailbox lifecycle, download cancellation at commit, and private Jupyter proxy/backend authentication.
+- Set display Low/High by clicking or dragging histogram markers, with numeric inputs.
+- Exit all registered FitsViewer windows gracefully and optionally reuse an existing window when opening another image; Jupyter and unrelated applications remain running.
+- Native startup uses asynchronous metadata, previews and viewport tiles. Minimal mode can use compact 16-bit display tiles; PRO retains original-bit-depth tiles. Exact readouts and scientific calculations retain original data.
+- Large internally compressed FITS images use bounded decoding of the compression tiles required by the view, instead of requiring a full decoded-array cache. Original headers can be inspected independently of the full-array input limit.
+
+中文：直方图直接调节显示上下限；增加全部退出与同窗打开选项；改进原生大图异步加载，
+极简可使用 16 位显示图块，PRO 保持原精度；压缩 FITS 按需解码。具体失败模板仍需实际
+文件复现，开发和测试记录不代表已发布或已完成各平台验收。新增意/西/德/法语、PyEC
+人工选星接口，以及测光/光谱首屏和请求生命周期修复；当前 Linux 候选已验收，Windows/macOS 待更新。
+
 ## 0.1.6 — Full / 全功能版
 
 - Compact shared English/Chinese toolbars, horizontal PRO task buttons, standalone Settings/Header windows, and primary actions visible on dedicated tool pages.

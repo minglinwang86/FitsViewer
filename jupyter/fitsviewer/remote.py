@@ -192,8 +192,20 @@ def command(arguments=None):
         result = api(base, "pair", token, {"target": args.target})
         print("Target: %s; server instance: %s" % (args.target, result["instance"]))
         print("Pairing code (one use, 120 seconds): " + result["pair_code"], flush=True)
-        print("On your local computer: fver helper --url %s --target %s" % (active["public_url"], args.target))
-        print("Or: fver helper --ssh YOUR_TRUSTED_SSH_ALIAS --remote-port %s --target %s" % (active["port"], args.target))
+        try:
+            direct = endpoint(active["public_url"])
+        except ValueError:
+            # Browser gateways need not be valid direct helper endpoints.
+            # 浏览器网关地址与助手的直连 loopback 地址不可混用。
+            print("Browser address: " + active["public_url"])
+            print("To view a file in the browser, run remotely: fver YOUR_FILE.fits --target %s --route browser" % args.target)
+            print("Open the one-time URL printed by that command.")
+            print("This browser gateway/proxy address cannot be used with helper --url.")
+        else:
+            print("If this address is already forwarded to remote 127.0.0.1:%s:" % active["port"])
+            print("On your local computer: fver helper --url %s --target %s" % (direct, args.target))
+        print("To create a direct helper-owned SSH forward on your local computer:")
+        print("fver helper --ssh YOUR_TRUSTED_SSH_ALIAS --remote-port %s --target %s" % (active["port"], args.target))
         return 0
     if args.file in {"status", "cancel"}:
         if not args.request_id:

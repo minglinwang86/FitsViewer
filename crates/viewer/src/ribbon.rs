@@ -11,6 +11,17 @@ type RibbonAction=crate::multiview::Action;
 type RibbonAction=();
 const PRO_TABS: [&str; 3] = ["Analysis", "Catalogues", "Export"];
 
+// Tests inspect real interactive rectangles, not merely painted text bounds.
+// 测试记录真实交互区域；发布构建中此函数只原样返回 Response。
+#[inline]
+fn ribbon_tool(response:egui::Response,key:&str)->egui::Response{
+    #[cfg(test)]
+    response.ctx.data_mut(|data|data.get_temp_mut_or_default::<Vec<(String,egui::Rect)>>(egui::Id::new("ribbon-tool-responses")).push((key.into(),response.rect)));
+    #[cfg(not(test))]
+    let _=key;
+    response
+}
+
 // Task buttons share the normal control font; compact padding keeps them together.
 // 任务按钮与其余控件共用普通字号；通过紧凑边距保持同行，不缩小文字。
 fn image_task_tabs(ui:&mut egui::Ui,active:&mut String,pro:bool)->(bool,bool){
@@ -42,7 +53,7 @@ mod compact_spectrum_tests{
         }app
     }
     #[test]fn spectrum_header_wraps_only_used_controls_on_narrow_windows(){
-        for language in ["en","zh-CN"]{crate::i18n::set(language);
+        for (language,_) in crate::i18n::LANGUAGES{crate::i18n::set(language);
             for width in [650.,850.,1150.,1600.]{let mut heights=vec![];
                 for pro in [false,true]{let mut app=app(pro);let ctx=egui::Context::default();
                     let _=ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(width,850.))),..Default::default()},|ctx|{
@@ -67,7 +78,7 @@ mod compact_spectrum_tests{
     }
 
     #[test]fn wrapped_buttons_and_dropdowns_share_height_and_center(){
-        for language in ["en","zh-CN"]{crate::i18n::set(language);
+        for (language,_) in crate::i18n::LANGUAGES{crate::i18n::set(language);
             let ctx=egui::Context::default();let mut rects=vec![];
             crate::install_cjk_font(&ctx,include_bytes!("../../../web/fonts/cjk.ttf").to_vec());
             let _=ctx.run(egui::RawInput{screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(950.,300.))),..Default::default()},|ctx|{
@@ -83,7 +94,7 @@ mod compact_spectrum_tests{
     }
 
     #[test]fn image_hdu_uses_command_row_and_display_groups_have_no_fixed_gap(){
-        for language in ["en","zh-CN"]{crate::i18n::set(language);
+        for (language,_) in crate::i18n::LANGUAGES{crate::i18n::set(language);
             for pro in [false,true]{
                 let mut app=FitsApp::new(String::new(),Some("http://127.0.0.1".into()),String::new(),None);
                 app.tools.prefs=crate::controls::Preferences::default();app.tools.prefs.language=language.into();
@@ -110,7 +121,7 @@ mod compact_spectrum_tests{
     }
 
     #[test]fn file_actions_share_header_row_while_unicode_path_shrinks(){
-        for language in ["en","zh-CN"]{crate::i18n::set(language);
+        for (language,_) in crate::i18n::LANGUAGES{crate::i18n::set(language);
             for width in [650.,850.,1600.]{for pro in [false,true]{
                 let ctx=egui::Context::default();crate::install_cjk_font(&ctx,include_bytes!("../../../web/fonts/cjk.ttf").to_vec());
                 let full=format!("/workspace/{}/科学图像.fits","中文目录/".repeat(40));
@@ -145,7 +156,7 @@ mod compact_spectrum_tests{
     }
 
     #[test]fn image_and_multiview_rows_share_vertical_spacing(){
-        for language in ["en","zh-CN"]{crate::i18n::set(language);
+        for (language,_) in crate::i18n::LANGUAGES{crate::i18n::set(language);
             let ctx=egui::Context::default();crate::install_cjk_font(&ctx,include_bytes!("../../../web/fonts/cjk.ttf").to_vec());
             let mut app=FitsApp::new(String::new(),Some("http://127.0.0.1".into()),String::new(),None);
             app.tools.prefs=crate::controls::Preferences::default();app.tools.prefs.mode="PRO".into();app.multi=Some(crate::multiview::Workspace::default());let mut labels=vec![];
@@ -169,7 +180,7 @@ mod compact_spectrum_tests{
             egui::epaint::Shape::Text(text)=>labels.push((text.galley.job.text.clone(),egui::Rect::from_min_size(text.pos,text.galley.size()))),
             egui::epaint::Shape::Vec(shapes)=>for shape in shapes{collect(shape,labels);},_=>{},
         }}
-        for language in ["en","zh-CN"]{crate::i18n::set(language);
+        for (language,_) in crate::i18n::LANGUAGES{crate::i18n::set(language);
             for theme in ["Dark","Light"]{for width in [650.,850.]{for pro in [false,true]{
                 for tab in BASIC_TABS.into_iter().chain(PRO_TABS.into_iter().filter(|_|pro)){
                     let ctx=egui::Context::default();crate::install_cjk_font(&ctx,include_bytes!("../../../web/fonts/cjk.ttf").to_vec());
@@ -203,8 +214,13 @@ mod compact_spectrum_tests{
                         "Export"=>&["Figure export","MathText preview","Reprojection","RGB composition"],
                         _=>&["Auto display","Display parameters","Fit","Histogram"],
                     };
-                    for key in tools{let bounds=rect(key);assert!(bounds.left()>=0. && bounds.right()<width && bounds.bottom()<=app.ribbon_height,
-                        "Tool clipped: {key}, {language}, {theme}, width={width}, PRO={pro}, tab={tab}, {bounds:?}");}
+                    let responses=ctx.data(|data|data.get_temp::<Vec<(String,egui::Rect)>>(egui::Id::new("ribbon-tool-responses")).unwrap_or_default());
+                    for key in tools{let bounds=responses.iter().find(|(name,_)|name==key).map(|(_,bounds)|*bounds)
+                        .unwrap_or_else(||panic!("Missing tool response: {key}, {language}, tab={tab}"));
+                        assert!(bounds.left()>=0. && bounds.right()<=width && bounds.bottom()<=app.ribbon_height,
+                            "Tool response clipped: {key}, {language}, {theme}, width={width}, PRO={pro}, tab={tab}, {bounds:?}");
+                        assert!(labels.iter().any(|(text,text_bounds)|text==t(key) && bounds.expand(0.5).contains_rect(*text_bounds)),
+                            "Tool text extends beyond its response: {key}, {language}, {bounds:?}");}
                     assert_eq!(labels.iter().filter(|(text,_)|text==t("Settings")).count(),1,"Settings belongs only to the file row");
                     assert!(!labels.iter().any(|(text,_)|[t("Data"),t("Coordinate tools"),t("Move aperture"),t("Selected environment")].contains(&text.as_str())));
                 }
@@ -244,6 +260,8 @@ fn path_field(ui:&mut egui::Ui,path:&mut String,width:f32)->egui::Response{
 
 impl FitsApp {
     pub(crate) fn ribbon(&mut self, ctx: &egui::Context)->Option<RibbonAction> {
+        #[cfg(test)]
+        ctx.data_mut(|data|data.insert_temp(egui::Id::new("ribbon-tool-responses"),Vec::<(String,egui::Rect)>::new()));
         let allow_pro = cfg!(feature="pro") && (self.api.is_some() || self.science.local.is_some());
         if !allow_pro { self.tools.prefs.mode = "Minimal".into(); }
         let spectrum=self.image.as_ref().is_some_and(|image|image.spectrum.is_some());
@@ -407,7 +425,7 @@ impl FitsApp {
             let gap=ui.spacing().item_spacing.x;let open_width=button_width("Open");
             #[cfg(target_arch="wasm32")]
             let window_width=button_width("↗");
-            let mut reserved=open_width+button_width("Header")+button_width("Settings")+gap*3.;
+            let mut reserved=open_width+button_width("Header")+button_width("Settings")+button_width("Exit all")+gap*4.;
             #[cfg(feature="pro")]
             if self.tools.prefs.mode=="PRO"{reserved+=button_width("Work area")+gap;}
             #[cfg(not(target_arch="wasm32"))]
@@ -435,6 +453,7 @@ impl FitsApp {
             if ui.add_enabled(!self.loading && self.image.is_some(), egui::Button::new(t("Close image"))).clicked() {
                 let _ = self.command(ctx, serde_json::json!({"operation":"close"}));
             }
+            if ui.button(t("Exit all")).on_hover_text(t("Exit all FitsViewer windows")).clicked(){self.exit_all_windows(ctx);}
             if self.loading { ui.spinner(); }
             #[cfg(target_arch="wasm32")]
             {
@@ -462,7 +481,7 @@ impl FitsApp {
             if self.image.as_ref().is_some_and(|image|image.spectrum.is_none()){crate::image_display::scale_controls(ui,&mut self.tools.prefs,self.wcs_result.as_ref(),self.rotation_deg);}
     }
     fn ribbon_inspect(&mut self,ui:&mut egui::Ui){
-        if ui.selectable_label(self.tools.histogram_open,t("Histogram")).clicked(){self.tools.histogram_open=!self.tools.histogram_open;}
+        if ribbon_tool(ui.selectable_label(self.tools.histogram_open,t("Histogram")),"Histogram").clicked(){self.tools.histogram_open=!self.tools.histogram_open;}
         ui.checkbox(&mut self.tools.prefs.colorbar,t("Colorbar"));
     }
     fn ribbon_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -476,7 +495,7 @@ impl FitsApp {
             return;
         }
         let exponent = matches!(self.stretch, Stretch::Log | Stretch::Power);
-        if ui.add_enabled(self.image.is_some() && self.stats.finite>0,egui::Button::new(t("Auto display"))).on_hover_text(t("Automatic sampled limits and stretch; reset brightness/contrast. Display only.")).clicked(){self.action("Auto display",ctx);}
+        if ribbon_tool(ui.add_enabled(self.image.is_some() && self.stats.finite>0,egui::Button::new(t("Auto display"))).on_hover_text(t("Automatic sampled limits and stretch; reset brightness/contrast. Display only.")),"Auto display").clicked(){self.action("Auto display",ctx);}
         let old = self.limits;
         egui::ComboBox::from_id_salt("limits").selected_text(t(self.limits.name())).width(90.).show_ui(ui, |ui| {
             for value in Limits::ALL { ui.selectable_value(&mut self.limits, value, t(value.name())); }
@@ -491,10 +510,10 @@ impl FitsApp {
             ui.label(t("Exponent"));
             if ui.add(egui::DragValue::new(&mut self.tools.prefs.render.stretch_exponent).range(1.000001..=1e6).speed(10.).max_decimals(3)).changed() { self.dirty = true; }
         }
-        ui.menu_button(t("Display parameters"), |ui| { self.ribbon_display_parameters(ui); });
+        ribbon_tool(ui.menu_button(t("Display parameters"), |ui| { self.ribbon_display_parameters(ui); }).response,"Display parameters");
         ui.separator();
         for (label, action) in [("−", "Zoom -"), ("+", "Zoom +"), ("Fit", "Fit"), ("1:1", "1:1")] {
-            if ui.button(t(label)).clicked() { self.action(action, ctx); }
+            if ribbon_tool(ui.button(t(label)),label).clicked() { self.action(action, ctx); }
         }
         ui.label(format!("{:.0}%", self.zoom * ctx.pixels_per_point() * 100.));
         #[cfg(feature="pro")]
@@ -522,17 +541,17 @@ impl FitsApp {
 
     fn ribbon_measure(&mut self, ui: &mut egui::Ui) {
         for (tool, label) in [(Tool::Pan, "Pan"), (Tool::Circle, "Circle")] {
-            if ui.selectable_value(&mut self.regions.tool, tool, t(label)).clicked() { self.regions.draft.clear(); }
+            if ribbon_tool(ui.selectable_value(&mut self.regions.tool, tool, t(label)),label).clicked() { self.regions.draft.clear(); }
         }
-        if ui.selectable_label(self.regions.open, t("Aperture photometry")).clicked() { self.regions.open = !self.regions.open; }
+        if ribbon_tool(ui.selectable_label(self.regions.open, t("Aperture photometry")),"Aperture photometry").clicked() { self.regions.open = !self.regions.open; }
         crate::controls::information(ui,"ribbon-aperture-help",|ui|{
             ui.label(t("Circle: click a center. Drag an aperture to move it. Middle drag: pan. Displayed coordinates are one-based."));
         });
     }
 
     fn ribbon_coordinates(&mut self, ui: &mut egui::Ui) {
-        if ui.add(egui::Button::selectable(self.coordinates.open,t("Gaia coordinate recognition / calibration")).wrap_mode(egui::TextWrapMode::Extend))
-            .on_hover_text(t("Open coordinate settings to inspect WCS or configure Gaia calibration.")).clicked() { self.coordinates.open = !self.coordinates.open; }
+        if ribbon_tool(ui.add(egui::Button::selectable(self.coordinates.open,t("Gaia coordinate recognition / calibration")).wrap_mode(egui::TextWrapMode::Extend))
+            .on_hover_text(t("Open coordinate settings to inspect WCS or configure Gaia calibration.")),"Gaia coordinate recognition / calibration").clicked() { self.coordinates.open = !self.coordinates.open; }
         crate::controls::information(ui,"ribbon-coordinate-help",|ui|{
             ui.label(t("Open coordinate settings to inspect WCS or configure Gaia calibration."));
         });
@@ -554,8 +573,13 @@ impl FitsApp {
             for operation in *operations {
                 let label = crate::pro::OPERATIONS.iter().find(|(name, _)| name == operation).map(|(_, label)| *label).unwrap_or(operation);
                 let selected = self.pro.as_ref().is_some_and(|pro| pro.operation == *operation);
-                if ui.add_enabled(self.pro.as_ref().is_some_and(|pro| !pro.busy), egui::Button::selectable(selected, t(label)).wrap_mode(egui::TextWrapMode::Extend))
-                    .on_hover_text(format!("{}\n{}",t(title),t("Select parameters in the PRO workspace; run explicitly when ready."))).clicked() {
+                // Single-line tool labels still need widget-level wrapping when translations grow.
+                // 译文变长时整按钮换行，保持正常字号、组间距和完整科学名称。
+                let text_width=ui.painter().layout_no_wrap(t(label).into(),egui::TextStyle::Button.resolve(ui.style()),ui.visuals().text_color()).size().x;
+                let right=ui.max_rect().right().min(ui.clip_rect().right());
+                if ui.cursor().left()>ui.max_rect().left()+1. && text_width+2.*ui.spacing().button_padding.x>right-ui.cursor().left(){ui.end_row();}
+                if ribbon_tool(ui.add_enabled(self.pro.as_ref().is_some_and(|pro| !pro.busy), egui::Button::selectable(selected, t(label)).wrap_mode(egui::TextWrapMode::Extend))
+                    .on_hover_text(format!("{}\n{}",t(title),t("Select parameters in the PRO workspace; run explicitly when ready."))),label).clicked() {
                     self.tools.prefs.set_pro_collapsed(spectrum,false);
                     if let Some(pro) = &mut self.pro { pro.select(operation); }
                 }

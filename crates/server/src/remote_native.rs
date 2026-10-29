@@ -187,12 +187,13 @@ pub fn run(web: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
         return Err("No local display is available for the native helper".into());
     }
+    let windows=crate::native_windows::Instance::remote(fitsviewer_web::FitsApp::window_registry_path()).map_err(std::io::Error::other)?;
     let app = fitsviewer_web::FitsApp::new(
         connection.path.clone(),
         Some(connection.api.clone()),
         connection.token.clone(),
         connection.hdu,
-    );
+    ).with_window_control(windows.control());
     let api = connection.api.clone();
     let token = connection.token.clone();
     let (sender, receiver) = mpsc::sync_channel(8);

@@ -9,7 +9,8 @@ const GAP: f32 = 6.;
 const SNAP: f32 = 24.;
 // Layout keys include a task suffix; retain that full key for independent sizes.
 // 布局键含子任务后缀；默认值按模块判断，独立尺寸仍保留完整键。
-fn default_tool_height(operation:&str)->f32{if operation.split(':').next()==Some("archive_search"){600.}else{300.}}
+fn default_tool_height(operation:&str)->f32{if matches!(operation.split(':').next(),Some("archive_search"|"spectral_analysis"|"spectral_candidates")){600.}else{300.}}
+fn content_scroll_id(surface:&str,page:Page,operation:&str)->egui::Id{egui::Id::new((surface,page,if page==Page::Tool{operation}else{""}))}
 fn saved_rect(value:&serde_json::Value)->Option<Rect>{let values=value.as_array().filter(|v|v.len()==4)?;let numbers=values.iter().map(|v|v.as_f64().filter(|n|n.is_finite() && n.abs()<1e6).map(|n|n as f32)).collect::<Option<Vec<_>>>()?;let rect=Rect::from_min_max(egui::pos2(numbers[0],numbers[1]),egui::pos2(numbers[2],numbers[3]));(rect.width()>=180. && rect.height()>=24.).then_some(rect)}
 fn saved_size(value:&serde_json::Value)->Option<Vec2>{let values=value.as_array().filter(|v|v.len()==2)?;let size=egui::vec2(values[0].as_f64()? as f32,values[1].as_f64()? as f32);size.is_finite().then_some(egui::vec2(size.x.clamp(220.,2400.),size.y.clamp(96.,2400.)))}
 
@@ -237,7 +238,7 @@ impl Dock {
                             if page!=Page::Tool && icon_button(&mut trailing_ui,Icon::Close,t("Close panel")).clicked(){actions.push(Action::Close(page));}
                             if icon_button(&mut trailing_ui,Icon::Float,t("Float panel")).clicked(){actions.push(Action::Float(page,None,false));}
                             if !folded {
-                                ui.separator();egui::ScrollArea::vertical().id_salt("panel-content").max_height(height).auto_shrink([false,false]).show(ui,|ui|{if drawn.insert(page){body(ui,page);}});
+                                ui.separator();egui::ScrollArea::vertical().id_salt(content_scroll_id("panel-content",page,operation)).max_height(height).auto_shrink([false,false]).show(ui,|ui|{if drawn.insert(page){body(ui,page);}});
                                 let (rect,response)=ui.allocate_exact_size(egui::vec2(ui.available_width(),6.),Sense::drag());
                                 ui.painter().line_segment([rect.center()-egui::vec2(18.,0.),rect.center()+egui::vec2(18.,0.)],ui.visuals().widgets.noninteractive.bg_stroke);
                                 response.clone().on_hover_cursor(egui::CursorIcon::ResizeVertical);
@@ -281,7 +282,7 @@ impl Dock {
                     if icon_button(ui,Icon::Dock,t("Dock panel group")).clicked(){actions.push(Action::Dock(group.id));}
                     if visible.len()>1 && icon_button(ui,Icon::Float,t("Float selected tab")).clicked(){actions.push(Action::Float(group.active,Some(group.rect.min+egui::vec2(24.,24.)),false));}
                     if group.active!=Page::Tool && icon_button(ui,Icon::Close,t("Close panel")).clicked(){actions.push(Action::Close(group.active));}
-                });ui.separator();egui::ScrollArea::vertical().id_salt(("floating-content",group.id)).auto_shrink([false,false]).show(ui,|ui|{if drawn.insert(group.active){body(ui,group.active);}else{ctx.request_repaint();}});
+                });ui.separator();egui::ScrollArea::vertical().id_salt((group.id,content_scroll_id("floating-content",group.active,operation))).auto_shrink([false,false]).show(ui,|ui|{if drawn.insert(group.active){body(ui,group.active);}else{ctx.request_repaint();}});
                 ui.min_rect().size()
             })){
                 crate::ui_style::weight_window_title(ctx,&response.response,&caption);
@@ -347,6 +348,18 @@ mod tests {
     #[test]fn restored_layout_keeps_geometry_group_tab_fold_and_closed_pages(){
         let mut dock=Dock::default();dock.sync(&[Page::Tool,Page::Coordinates,Page::Photometry],"detect_stars:");dock.float(Page::Coordinates,Some(egui::pos2(123.,87.)),false);let first=dock.groups[0].id;dock.float(Page::Photometry,None,false);let second=dock.groups[1].id;dock.attach(second,Target::Group(first));dock.groups[0].folded=true;dock.panels.get_mut(&Page::Tool).unwrap().folded=true;
         let restored=Dock::restore(&dock.summary());assert_eq!(restored.groups.len(),1);assert_eq!(restored.groups[0].active,Page::Photometry);assert_eq!(restored.groups[0].rect.min,egui::pos2(123.,87.));assert!(restored.groups[0].folded);assert!(restored.panels[&Page::Tool].folded);assert!(!restored.was_open(Page::Header));
+    }
+    #[test]fn spectral_tasks_have_independent_scroll_and_preserve_explicit_heights(){
+        for surface in ["panel-content","floating-content"]{
+            assert_ne!(content_scroll_id(surface,Page::Tool,"spectral_analysis:Measure"),content_scroll_id(surface,Page::Tool,"spectral_analysis:Fit"));
+            assert_eq!(content_scroll_id(surface,Page::Header,"spectral_analysis:Measure"),content_scroll_id(surface,Page::Header,"spectral_analysis:Fit"));
+        }
+        let mut dock=Dock::default();dock.sync(&[Page::Tool],"spectral_analysis:Measure");assert_eq!(dock.panels[&Page::Tool].height,600.);
+        dock.panels.get_mut(&Page::Tool).unwrap().height=360.;dock.sync(&[Page::Tool],"spectral_analysis:Fit");assert_eq!(dock.panels[&Page::Tool].height,600.);
+        dock.panels.get_mut(&Page::Tool).unwrap().height=460.;let mut restored=Dock::restore(&dock.summary());
+        restored.sync(&[Page::Tool],"spectral_analysis:Measure");assert_eq!(restored.panels[&Page::Tool].height,360.);
+        restored.sync(&[Page::Tool],"spectral_analysis:Fit");assert_eq!(restored.panels[&Page::Tool].height,460.);
+        restored.sync(&[Page::Tool],"spectral_candidates:");assert_eq!(restored.panels[&Page::Tool].height,600.);
     }
     #[test]fn archive_height_is_larger_and_each_tool_remembers_user_resizing(){
         let mut dock=Dock::default();dock.sync(&[Page::Tool],"detect_stars:");

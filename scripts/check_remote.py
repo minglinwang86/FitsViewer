@@ -7,6 +7,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import shlex
 import struct
 import sys
 import tempfile
@@ -76,6 +77,47 @@ class RemoteCliTests(unittest.TestCase):
         for value in ["-oProxyCommand=evil", "host;command", "host name", "host$(command)", "host/../../file"]:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 remote._tunnel(remote._parser().parse_args(["helper", "--ssh=" + value]))
+
+    def _pair_output(self, public_url):
+        output = io.StringIO()
+        active = {"port": 13007, "public_url": public_url, "token": "private-control-pair-fixture"}
+        result = {"instance": "fixture-instance", "pair_code": "one-use-pair-fixture"}
+        with patch.object(remote, "_server", return_value=active), patch.object(remote, "api", return_value=result) as api, contextlib.redirect_stdout(output):
+            self.assertEqual(remote.command(["pair", "--target", "desk"]), 0)
+        api.assert_called_once_with("http://127.0.0.1:13007/", "pair", active["token"], {"target": "desk"})
+        text = output.getvalue()
+        self.assertNotIn(active["token"], text)
+        self.assertIn("one-use-pair-fixture", text)
+        commands = [line[line.index("fver helper "):] for line in text.splitlines() if "fver helper " in line]
+        parsed = [remote._parser().parse_args(shlex.split(line)[1:]) for line in commands]
+        tunnel = [args for args in parsed if args.ssh]
+        self.assertEqual(len(tunnel), 1)
+        self.assertEqual(tunnel[0].target, "desk")
+        self.assertEqual(tunnel[0].remote_port, 13007)
+        return text, parsed
+
+    def test_pair_direct_url_explains_required_forward_and_keeps_distinct_ports(self):
+        text, commands = self._pair_output("http://127.0.0.1:18007/")
+        direct = [args for args in commands if args.url]
+        self.assertEqual(len(direct), 1)
+        self.assertEqual(remote.endpoint(direct[0].url), "http://127.0.0.1:18007/")
+        self.assertEqual(direct[0].target, "desk")
+        self.assertIn("already forwarded to remote 127.0.0.1:13007", text)
+        self.assertIn("helper-owned SSH forward", text)
+
+    def test_pair_gateway_guidance_never_suggests_an_invalid_helper_url(self):
+        for public_url in ["https://viewer.example/", "https://viewer.example/fitsviewer/", "http://127.0.0.1:18007/proxy/"]:
+            with self.subTest(public_url=public_url):
+                # Public browser gateways are supported, while direct helpers remain restricted.
+                self.assertEqual(remote.endpoint(public_url, True), public_url)
+                with self.assertRaises(ValueError):
+                    remote.endpoint(public_url)
+                text, commands = self._pair_output(public_url)
+                self.assertFalse(any(args.url for args in commands))
+                self.assertIn("Browser address: " + public_url, text)
+                self.assertIn("fver YOUR_FILE.fits --target desk --route browser", text)
+                self.assertIn("one-time URL printed by that command", text)
+                self.assertIn("helper-owned SSH forward", text)
 
 
 def _fits(path):

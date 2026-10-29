@@ -286,12 +286,13 @@ impl Workspace {
                 if self.operation=="spectral_analysis"{
                     let quick=if let Some(analysis)=&self.spectral_analysis{match analysis.task.as_str(){"Measure"=>Some(("▶ Measure spectrum","measure")),"Process"=>Some(("▶ Preview smoothing","smooth")),"Fit"=>Some(("▶ Fit spectrum","fit")),_=>None}}else{None};
                     if let Some((label,action))=quick{if ui.add_enabled(!self.busy,egui::Button::new(crate::i18n::t(label))).clicked(){if let (Some(analysis),Some(lines),Some(image))=(&mut self.spectral_analysis,&self.spectral_lines,image){match analysis.request(action,image,lines){Ok(params)=>self.send(ctx,client,generation,"spectral_analysis",params),Err(error)=>self.message=error,}}}}
+                    if self.current_spectral_result() && ui.button(crate::i18n::t("Copy result")).clicked(){ctx.copy_text(serde_json::to_string_pretty(&self.result).unwrap_or_default());}
                     let request=if let (Some(analysis),Some(lines),Some(image))=(&mut self.spectral_analysis,&mut self.spectral_lines,image){
                         analysis.ui(ui,image,lines,self.busy,multi).map(|action|analysis.request(&action,image,lines))
                     }else{None};
                     if let Some(request)=request{match request{Ok(params)=>self.send(ctx,client,generation,"spectral_analysis",params),Err(error)=>self.message=error,}}
                     if let Some(job)=&self.job{if ui.button(crate::i18n::t("Cancel")).clicked(){client.request(ctx,generation,"job_cancel",json!({"job_id":job}));}}
-                    if ui.button(crate::i18n::t("Copy result")).clicked(){ctx.copy_text(serde_json::to_string_pretty(&self.result).unwrap_or_default());}return;
+                    return;
                 }
                 if self.operation=="spectral_candidates"{
                     if ui.add_enabled(!self.busy && self.spectral_lines.as_ref().is_some_and(|lines|lines.ready()),egui::Button::new(crate::i18n::t("▶ Detect spectral candidates"))).clicked(){if let (Some(lines),Some(image))=(&self.spectral_lines,image){match lines.request(image){Ok(params)=>self.send(ctx,client,generation,"spectral_candidates",params),Err(error)=>self.message=error,}}}
@@ -417,10 +418,19 @@ impl Workspace {
             });
         if let (Some(analysis),Some(lines))=(&mut self.spectral_analysis,&self.spectral_lines){analysis.sync_context(lines);}
     }
+    fn current_spectral_result(&self)->bool{
+        self.spectral_analysis.as_ref().is_some_and(|analysis|self.result["source"]==analysis.source
+            && self.result["revision"].as_u64()==Some(analysis.revision)
+            && match analysis.task.as_str(){"Measure"=>self.result["action"]=="measure","Fit"=>self.result["action"]=="fit","Process"=>matches!(self.result["action"].as_str(),Some("smooth"|"continuum")),_=>false})
+    }
     fn status_ui(&mut self,ui:&mut egui::Ui,ctx:&egui::Context,client:&Client,generation:u64){
+        let current=self.operation!="spectral_analysis" || self.current_spectral_result();
         if self.busy{ui.horizontal_wrapped(|ui|{ui.spinner();ui.label(crate::i18n::t("Running…"));if self.download.saving{if ui.add_enabled(!self.download.cancel_pending,egui::Button::new(crate::i18n::t("Cancel"))).clicked(){self.download.cancel_pending=true;client.request(ctx,generation,"persist_cancel",json!({}));}}else if let Some(job)=&self.job{if ui.button(crate::i18n::t("Cancel")).clicked(){client.request(ctx,generation,"job_cancel",json!({"job_id":job}));}}});}
-        if !self.message.is_empty() && !(self.busy && self.message.starts_with("Running ")){crate::controls::status_message(ui,&self.message);}
+        if !self.message.is_empty() && !(self.busy && self.message.starts_with("Running ")) && (current || self.message!="Completed"){crate::controls::status_message(ui,&self.message);}
         if self.result_stale{ui.colored_label(Color32::YELLOW,crate::i18n::t("Parameters changed; displayed results belong to previous inputs."));}
+        // A task switch must not present another task's status/warnings as its own.
+        // 切换任务时保留原结果，但不把测量的状态/警告贴到尚未运行的拟合页面。
+        if !current{return;}
         if let Some(status)=self.result["status"].as_str(){
             if status=="coverage_mismatch"{ui.colored_label(Color32::YELLOW,crate::i18n::t("Coverage mismatch: returned footprints do not overlap the requested field."));}
             else{ui.strong(format!("{}: {}",crate::i18n::t("Result status"),crate::i18n::t(status)));}
@@ -428,7 +438,11 @@ impl Workspace {
         if let Some(count)=self.result["spatial_checks"]["outside_query"].as_u64().filter(|count|*count>0){ui.colored_label(Color32::YELLOW,format!("{}: {count}",crate::i18n::t("Products outside the requested field")));}
         ui.horizontal_wrapped(|ui|{for key in ["rows","visible_rows","used","matched","ambiguous","factor"]{if let Some(value)=self.result.get(key).filter(|v|v.is_number()){ui.label(format!("{}: {value}",crate::i18n::t(&key.replace('_'," "))));}}});
         for key in ["scientific_note","reason","warning"]{if let Some(note)=self.result[key].as_str(){ui.add(egui::Label::new(crate::i18n::t(note)).wrap());}}
-        if let Some(warnings)=self.result["warnings"].as_array(){for warning in warnings.iter().filter_map(Value::as_str){ui.label(crate::i18n::t(warning));}}
+        if let Some(warnings)=self.result["warnings"].as_array(){
+            if self.operation=="spectral_analysis" && !warnings.is_empty(){
+                egui::CollapsingHeader::new(format!("{} ({})",crate::i18n::t("Scientific warnings"),warnings.len())).id_salt("spectral-result-warnings").show(ui,|ui|{for warning in warnings.iter().filter_map(Value::as_str){ui.label(crate::i18n::t(warning));}});
+            }else{for warning in warnings.iter().filter_map(Value::as_str){ui.label(crate::i18n::t(warning));}}
+        }
     }
     pub fn take_open_notice(&mut self)->Option<String>{self.download.notice.take()}
     fn choose_product(&mut self,index:usize){

@@ -6,6 +6,38 @@ use serde::{Deserialize,Serialize};
 
 pub const ACTIONS:[&str;10]=["Auto display","Fit","1:1","Zoom +","Zoom -","ZScale","Min/Max","Reset B/C","Invert","Header"];
 
+fn valid_display_limits(pair:(f64,f64))->bool{pair.0.is_finite() && pair.1.is_finite() && pair.0<pair.1 && (pair.1-pair.0).is_finite()}
+fn histogram_bound(pair:(f64,f64),value:f64,lower:bool)->Option<(f64,f64)>{
+    let next=if lower{(value,pair.1)}else{(pair.0,value)};
+    valid_display_limits(next).then_some(next)
+}
+
+#[cfg(test)]mod histogram_interaction_tests{
+    use super::*;
+    #[test]fn clicking_and_dragging_real_histogram_changes_ordered_limits(){
+        let image=FitsImage{info:fitsviewer_core::ImageInfo{path:"histogram.fits".into(),hdu:0,width:128,height:1,bitpix:-64,bscale:1.,bzero:0.,blank:None,header:String::new(),hdus:vec![],spectrum:None},pixels:fitsviewer_core::RawPixels::F64((0..128).map(|v|v as f64).collect()),spectrum:None};
+        let mut tools=Tools::default();let ctx=egui::Context::default();let mut limits=(20.,100.);
+        let frame=|tools:&mut Tools,limits:&mut (f64,f64),events:Vec<egui::Event>|{
+            let output=ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(500.,300.))),events,..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|tools.histogram_ui(ui,Some(&image),limits.0,limits.1));});
+            if let Some(next)=tools.histogram_limits.take(){*limits=next;}
+            let mut rect=Rect::NOTHING;
+            for shape in output.shapes{if let egui::epaint::Shape::Rect(shape)=shape.shape{if shape.fill==Color32::from_rgb(75,155,185){rect=rect.union(shape.rect);}}}rect
+        };
+        let rect=frame(&mut tools,&mut limits,vec![]);assert!(rect.is_positive());
+        let position=|value:f32|Pos2::new(rect.left()+rect.width()*value/127.,rect.center().y);
+        for (value,button) in [(40.,egui::PointerButton::Primary),(110.,egui::PointerButton::Secondary)]{
+            for pressed in [true,false]{frame(&mut tools,&mut limits,vec![egui::Event::PointerMoved(position(value)),egui::Event::PointerButton{pos:position(value),button,pressed,modifiers:egui::Modifiers::default()}]);}
+        }
+        assert!((limits.0-40.).abs()<0.01 && (limits.1-110.).abs()<0.01,"{limits:?}");
+        frame(&mut tools,&mut limits,vec![egui::Event::PointerMoved(position(40.)),egui::Event::PointerButton{pos:position(40.),button:egui::PointerButton::Primary,pressed:true,modifiers:Default::default()}]);
+        frame(&mut tools,&mut limits,vec![egui::Event::PointerMoved(position(25.))]);
+        frame(&mut tools,&mut limits,vec![egui::Event::PointerButton{pos:position(25.),button:egui::PointerButton::Primary,pressed:false,modifiers:Default::default()}]);
+        assert!((limits.0-25.).abs()<0.01 && (limits.1-110.).abs()<0.01,"{limits:?}");
+        assert!(histogram_bound(limits,120.,true).is_none());assert!(histogram_bound(limits,f64::NAN,false).is_none());
+        assert_eq!(image.physical(127),Some(127.));
+    }
+}
+
 pub struct AutoDisplay{pub low:f64,pub high:f64,pub stretch:Stretch}
 /// A viewing starting point from the existing bounded sample, not a scientific calibration.
 /// 复用已缓存的有限像素抽样选择查看参数，不进行科学定标或修改数据。
@@ -46,6 +78,8 @@ pub struct Preferences {
     pub schema:u32,
     pub mode:String,
     pub default_mode:String,
+    pub open_in_same_window:bool,
+    pub compact_large_images:bool,
     pub theme:String,
     pub language:String,
     pub render:RenderOptions,
@@ -67,12 +101,12 @@ pub struct Preferences {
     pub shortcuts:Vec<(String,String)>,
 }
 impl Default for Preferences {
-    fn default()->Self {Self{schema:1,mode:"Minimal".into(),default_mode:"Minimal".into(),theme:"Dark".into(),language:"en".into(),render:RenderOptions::default(),colorbar:false,scale_bar:true,scale_pixels:100.,compass:false,colorbar_position:"Right".into(),toolbar:vec!["Fit".into(),"ZScale".into(),"Reset B/C".into()],ribbon_tab:"View".into(),ribbon_collapsed:false,image_pro_width:330.,spectrum_pro_width:330.,image_pro_collapsed:false,spectrum_pro_collapsed:false,image_pro_layout:serde_json::Value::Null,spectrum_pro_layout:serde_json::Value::Null,window_layouts:Default::default(),shortcuts:vec![]}}
+    fn default()->Self {Self{schema:1,mode:"Minimal".into(),default_mode:"Minimal".into(),open_in_same_window:false,compact_large_images:true,theme:"Dark".into(),language:"en".into(),render:RenderOptions::default(),colorbar:false,scale_bar:true,scale_pixels:100.,compass:false,colorbar_position:"Right".into(),toolbar:vec!["Fit".into(),"ZScale".into(),"Reset B/C".into()],ribbon_tab:"View".into(),ribbon_collapsed:false,image_pro_width:330.,spectrum_pro_width:330.,image_pro_collapsed:false,spectrum_pro_collapsed:false,image_pro_layout:serde_json::Value::Null,spectrum_pro_layout:serde_json::Value::Null,window_layouts:Default::default(),shortcuts:vec![]}}
 }
 impl Preferences {
     pub fn validate(&self)->Result<(),String>{
         #[cfg(not(feature="pro"))] if self.mode!="Minimal" || self.default_mode!="Minimal" || !["View","Measure","Coordinates"].contains(&self.ribbon_tab.as_str()){return Err("PRO is not included in this Mini build".into());}
-        if self.schema!=1 || !["en","zh-CN"].contains(&self.language.as_str()) || !["Minimal","PRO"].contains(&self.mode.as_str()) || !["Dark","Light","Night"].contains(&self.theme.as_str()) || !["Left","Right","Top","Bottom"].contains(&self.colorbar_position.as_str()) {return Err("Unsupported preferences schema, mode, theme or colorbar position".into());}
+        if self.schema!=1 || !crate::i18n::supported(&self.language) || !["Minimal","PRO"].contains(&self.mode.as_str()) || !["Dark","Light","Night"].contains(&self.theme.as_str()) || !["Left","Right","Top","Bottom"].contains(&self.colorbar_position.as_str()) {return Err("Unsupported preferences schema, mode, theme or colorbar position".into());}
         self.render.validate()?;
         if !self.scale_pixels.is_finite() || !(0.001..=1e7).contains(&self.scale_pixels){return Err("Invalid scale bar length".into());}
         self.window_layouts.validate()?;
@@ -115,6 +149,14 @@ mod tests{
         let restored=Preferences::parse(&serde_json::to_string(&prefs).unwrap()).unwrap();assert_eq!(restored.render.palette.name,"Open");
         prefs.shortcuts=vec![("Ctrl+F".into(),"Fit".into()),("Ctrl+F".into(),"Header".into())];assert!(prefs.validate().is_err());
         assert!(Preferences::parse("{\"language\":\"invalid\"}").is_err());
+    }
+    #[test]fn preferences_round_trip_every_language_without_translating_identifiers(){
+        for (language,_) in crate::i18n::LANGUAGES{
+            let mut prefs=Preferences::default();prefs.language=language.into();prefs.render.palette.name="Open".into();
+            prefs.shortcuts=vec![("Ctrl+F".into(),"Fit".into())];prefs.open_in_same_window=true;
+            let serialized=serde_json::to_string(&prefs).unwrap();let restored=Preferences::parse(&serialized).unwrap().for_startup();
+            assert_eq!(restored.language,language);assert_eq!(restored.render.palette.name,"Open");assert_eq!(restored.shortcuts,prefs.shortcuts);assert!(restored.open_in_same_window);assert_eq!(restored.mode,"Minimal");
+        }
     }
     #[cfg(feature="pro")]
     #[test]fn ribbon_preferences_restore_old_defaults_and_round_trip(){
@@ -183,6 +225,8 @@ pub struct Tools {
     pub histogram_open:bool,
     pub histogram:Option<Histogram>,
     pub histogram_builds:usize,
+    pub histogram_limits:Option<(f64,f64)>,
+    histogram_drag_low:bool,
     pub logarithmic_counts:bool,
     pub json:String,
     pub message:String,
@@ -192,7 +236,7 @@ pub struct Tools {
     io_path:String,
 }
 impl Default for Tools {
-    fn default()->Self{Self{prefs:load().for_startup(),settings_open:false,histogram_open:false,histogram:None,histogram_builds:0,logarithmic_counts:false,json:String::new(),message:String::new(),applied_theme:String::new(),shortcut_key:"Ctrl+F".into(),shortcut_action:"Fit".into(),io_path:"fitsviewer-ui.json".into()}}
+    fn default()->Self{Self{prefs:load().for_startup(),settings_open:false,histogram_open:false,histogram:None,histogram_builds:0,histogram_limits:None,histogram_drag_low:true,logarithmic_counts:false,json:String::new(),message:String::new(),applied_theme:String::new(),shortcut_key:"Ctrl+F".into(),shortcut_action:"Fit".into(),io_path:"fitsviewer-ui.json".into()}}
 }
 impl Tools {
     pub fn apply_theme(&mut self,ctx:&egui::Context){
@@ -218,9 +262,11 @@ impl Tools {
         crate::ribbon::align_controls(ui);
         ui.checkbox(&mut self.prefs.compass,crate::i18n::t("N / E"));
         information(ui,"settings-help",|ui|{ui.label(crate::i18n::t("Applies to new windows only; does not switch the current mode."));ui.label(crate::i18n::t("Manual threshold, in scaled physical units; no detector saturation is inferred."));});
-            egui::ComboBox::from_id_salt("interface-language").selected_text(if self.prefs.language=="zh-CN"{"界面语言：简体中文"}else{"Language: English"}).show_ui(ui,|ui|{ui.selectable_value(&mut self.prefs.language,"en".into(),"English");ui.selectable_value(&mut self.prefs.language,"zh-CN".into(),"简体中文");});
+            egui::ComboBox::from_id_salt("interface-language").selected_text(crate::i18n::language_label(&self.prefs.language)).show_ui(ui,|ui|{for (code,name) in crate::i18n::LANGUAGES{ui.selectable_value(&mut self.prefs.language,code.into(),name);}});
             egui::ComboBox::new("Interface theme",crate::i18n::t("Interface theme")).selected_text(crate::i18n::t(&self.prefs.theme)).show_ui(ui,|ui|{for name in ["Dark","Light","Night"]{ui.selectable_value(&mut self.prefs.theme,name.into(),crate::i18n::t(name));}});
             egui::ComboBox::new("default-startup-mode",crate::i18n::t("Default startup mode")).selected_text(crate::i18n::t(&self.prefs.default_mode)).show_ui(ui,|ui|{for &mode in if cfg!(feature="pro"){&["Minimal","PRO"][..]}else{&["Minimal"][..]}{ui.selectable_value(&mut self.prefs.default_mode,mode.into(),crate::i18n::t(mode));}});
+            ui.checkbox(&mut self.prefs.open_in_same_window,crate::i18n::t("Open new images in the same window"));
+            ui.checkbox(&mut self.prefs.compact_large_images,crate::i18n::t("Use 16-bit display tiles for large images in Minimal mode"));
             let mut palette=self.prefs.render.palette.name.clone();
             egui::ComboBox::new("Palette",crate::i18n::t("Palette")).selected_text(if Palette::NAMES.contains(&palette.as_str()){crate::i18n::t(&palette)}else{&palette}).show_ui(ui,|ui|{for name in Palette::NAMES{ui.selectable_value(&mut palette,name.into(),crate::i18n::t(name));}});
             if palette!=self.prefs.render.palette.name{self.prefs.render.palette=Palette::builtin(&palette);}
@@ -280,11 +326,29 @@ impl Tools {
                     let details=format!("{} {} · {} {} · {}",hist.finite,crate::i18n::t("finite values"),hist.counts.len(),crate::i18n::t("bins"),crate::i18n::t(if hist.sampled{"sampled"}else{"full image"}));
                     ui.add(egui::Label::new(egui::RichText::new(&details).size(11.)).truncate()).on_hover_text(details);
                 });
+                let mut edited=(low,high);
+                ui.horizontal(|ui|{
+                    ui.label(crate::i18n::t("Low"));let lower=ui.add(egui::DragValue::new(&mut edited.0).speed((hist.maximum/1000.-hist.minimum/1000.).abs().max(f64::MIN_POSITIVE)).custom_formatter(|value,_|format!("{value:.6e}"))).changed();
+                    ui.label(crate::i18n::t("High"));let upper=ui.add(egui::DragValue::new(&mut edited.1).speed((hist.maximum/1000.-hist.minimum/1000.).abs().max(f64::MIN_POSITIVE)).custom_formatter(|value,_|format!("{value:.6e}"))).changed();
+                    if (lower || upper) && valid_display_limits(edited){self.histogram_limits=Some(edited);}
+                });
+                if !valid_display_limits(edited){edited=(low,high);}
                 let plot_height=(ui.available_width()*0.33).clamp(84.,120.);
-                let (response,painter)=ui.allocate_painter(Vec2::new(ui.available_width(),plot_height),egui::Sense::hover());let rect=response.rect;
+                let (response,painter)=ui.allocate_painter(Vec2::new(ui.available_width(),plot_height),egui::Sense::click_and_drag());let rect=response.rect;
+                let to_x=|value:f64|rect.left()+((value-hist.minimum)/(hist.maximum-hist.minimum)) as f32*rect.width();
+                if let Some(pos)=response.interact_pointer_pos(){
+                    if response.drag_started(){self.histogram_drag_low=(pos.x-to_x(edited.0)).abs()<=(pos.x-to_x(edited.1)).abs();}
+                    if response.clicked() || response.secondary_clicked(){self.histogram_drag_low=!response.secondary_clicked() && (pos.x-to_x(edited.0)).abs()<=(pos.x-to_x(edited.1)).abs();}
+                    if response.dragged() || response.clicked() || response.secondary_clicked(){
+                        let fraction=((pos.x-rect.left())/rect.width()).clamp(0.,1.) as f64;
+                        let value=hist.minimum*(1.-fraction)+hist.maximum*fraction;
+                        if let Some(limits)=histogram_bound(edited,value,self.histogram_drag_low){edited=limits;self.histogram_limits=Some(limits);}
+                    }
+                }
+                response.on_hover_text(crate::i18n::t("Drag Low / High markers; right-click to set High"));
                 let height=|n:u64|if self.logarithmic_counts{(n as f64).ln_1p()}else{n as f64};let maximum=height(*hist.counts.iter().max().unwrap_or(&1)).max(1.);
                 for (i,&n) in hist.counts.iter().enumerate(){let x0=rect.left()+rect.width()*i as f32/hist.counts.len() as f32;let x1=rect.left()+rect.width()*(i+1) as f32/hist.counts.len() as f32;painter.rect_filled(Rect::from_min_max(Pos2::new(x0,rect.bottom()-(height(n)/maximum) as f32*rect.height()),Pos2::new(x1,rect.bottom())),0.,Color32::from_rgb(75,155,185));}
-                for bound in [low,high]{let x=rect.left()+((bound-hist.minimum)/(hist.maximum-hist.minimum)) as f32*rect.width();if x>=rect.left() && x<=rect.right(){painter.line_segment([Pos2::new(x,rect.top()),Pos2::new(x,rect.bottom())],Stroke::new(1.5_f32,Color32::YELLOW));}}
+                for (bound,label) in [(edited.0,"L"),(edited.1,"H")]{let x=to_x(bound);if x>=rect.left() && x<=rect.right(){painter.line_segment([Pos2::new(x,rect.top()),Pos2::new(x,rect.bottom())],Stroke::new(1.5_f32,Color32::YELLOW));painter.circle_filled(Pos2::new(x,rect.top()+5.),4.,Color32::YELLOW);painter.text(Pos2::new(x,rect.top()+12.),egui::Align2::CENTER_TOP,label,egui::FontId::proportional(10.),Color32::YELLOW);}}
                 let range=format!("{:.3e} … {:.3e} · {}",hist.minimum,hist.maximum,crate::i18n::t("yellow = Low / High"));
                 ui.add(egui::Label::new(egui::RichText::new(&range).size(11.)).truncate()).on_hover_text(format!("{range}\nLow: {low:.7e}\nHigh: {high:.7e}"));
             }else{ui.label(crate::i18n::t("Open an image to compute its histogram."));}

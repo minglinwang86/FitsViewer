@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fitsviewer"
-version = "0.1.6"
+version = "0.1.7"
 description = "fitsrs-powered FITS viewer integration for JupyterLab and notebooks"
 readme = "README.md"
 authors = [{name = "FitsViewer contributors"}]

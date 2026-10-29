@@ -19,12 +19,17 @@ from macos_licenses import collect_from_metadata, verify_inventory, sha256
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", type=Path, required=True)
+    parser.add_argument("--assets-lock", type=Path)
     args = parser.parse_args()
+    if args.assets_lock:
+        mac.LOCK_PATH = args.assets_lock.resolve()
     wheel = args.wheel.resolve()
     mac.validate_wheel(wheel, mac.lock())
     parent = ROOT / "build/macos-packaging-tests"
     parent.mkdir(parents=True, exist_ok=True)
     original_root = mac.ROOT
+    original_lock = mac.lock
+    expected_lock = mac.lock()
     with tempfile.TemporaryDirectory(prefix="owned-", dir=parent) as temporary:
         work = Path(temporary)
         assert work.resolve().is_relative_to(parent.resolve())
@@ -36,6 +41,7 @@ def main():
             blob = subprocess.check_output(["git", "show", "HEAD:web/python/" + source.name], cwd=ROOT)
             (adapters / source.name).write_bytes(blob.replace(b"\r\n", b"\n"))
         mac.ROOT = simulated
+        mac.lock = lambda: expected_lock
         try:
             mac.extract_resources(wheel, work / "accepted")
             changed = adapters / "fitsviewer_science.py"
@@ -50,6 +56,7 @@ def main():
                 raise AssertionError("A non-line-ending source change was accepted")
         finally:
             mac.ROOT = original_root
+            mac.lock = original_lock
         # License coverage follows normal/build edges and preserves original text.
         # 真实依赖必须有原始许可；缺失、篡改许可均应阻断打包。
         legal_root = work / "legal-source"

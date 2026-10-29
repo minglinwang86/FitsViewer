@@ -93,7 +93,9 @@ def prepare(assets=None, windows=False):
     shutil.copytree(ROOT / "licenses", output / "licenses")
     shutil.copy2(ROOT / "jupyter/hatch_build.py", output / "hatch_build.py")
     if metadata["jupyter"]:
-        shutil.copytree(ROOT / "jupyter/fitsviewer/labextension", package / "labextension")
+        # Cross-platform stages may carry the same manifest-verified Lab build.
+        lab_source = assets / "labextension" if assets and (assets / "labextension").is_dir() else ROOT / "jupyter/fitsviewer/labextension"
+        shutil.copytree(lab_source, package / "labextension")
         shutil.copytree(ROOT / "jupyter/jupyter-config", output / "jupyter-config")
         (package / "labextension/install.json").write_text(json.dumps({"packageManager": "python", "packageName": "fitsviewer", "uninstallInstructions": "python -m pip uninstall fitsviewer"}), encoding="utf-8")
     text = (ROOT / "jupyter/pyproject.toml").read_text(encoding="utf-8")

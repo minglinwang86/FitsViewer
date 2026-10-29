@@ -54,3 +54,38 @@ fn gzip_prefix_is_bounded_and_source_revision_changes(){
     let before=source_version(&path).unwrap();fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(&[0]).unwrap();assert_ne!(before,source_version(&path).unwrap());
     let truncated=directory.path().join("truncated.fits");let bytes=fs::read(&path).unwrap();fs::write(&truncated,&bytes[..2881]).unwrap();assert!(inspect(&truncated,LoadOptions::default()).is_err());
 }
+
+#[test]
+fn compressed_roi_matches_original_samples_at_edges_and_reduced_levels(){
+    let directory=tempfile::tempdir().unwrap();
+    for codec in ["GZIP_1","GZIP_2"]{
+        let (width,height,tw,th)=(608usize,273usize,128usize,32usize);
+        let mut descriptors=vec![];let mut heap=vec![];
+        for ty in 0..height.div_ceil(th){for tx in 0..width.div_ceil(tw){
+            let mut values=vec![];
+            for y in ty*th..((ty+1)*th).min(height){for x in tx*tw..((tx+1)*tw).min(width){values.extend((((y*width+x)%101) as i16).to_be_bytes());}}
+            if codec=="GZIP_2"{values=(0..2).flat_map(|byte|(0..values.len()/2).map(move|i|(i,byte))).map(|(i,byte)|values[i*2+byte]).collect();}
+            let mut encoder=flate2::write::GzEncoder::new(Vec::new(),flate2::Compression::fast());encoder.write_all(&values).unwrap();let bytes=encoder.finish().unwrap();
+            descriptors.extend((bytes.len() as i32).to_be_bytes());descriptors.extend((heap.len() as i32).to_be_bytes());heap.extend(bytes);
+        }}
+        let mut primary=[card("SIMPLE","T"),card("BITPIX","8"),card("NAXIS","0"),card("EXTEND","T"),format!("{:<80}","END")].concat().into_bytes();primary.resize(2880,b' ');
+        let header=[card("XTENSION","'BINTABLE'"),card("BITPIX","8"),card("NAXIS","2"),card("NAXIS1","8"),card("NAXIS2",&(descriptors.len()/8).to_string()),card("PCOUNT",&heap.len().to_string()),card("GCOUNT","1"),card("TFIELDS","1"),card("TTYPE1","'COMPRESSED_DATA'"),card("TFORM1","'1PB'"),card("ZIMAGE","T"),card("ZBITPIX","16"),card("ZNAXIS","2"),card("ZNAXIS1",&width.to_string()),card("ZNAXIS2",&height.to_string()),card("ZTILE1",&tw.to_string()),card("ZTILE2",&th.to_string()),card("ZCMPTYPE",&format!("'{codec}'")),card("BSCALE","2.5"),card("BZERO","-10"),card("BLANK","17"),format!("{:<80}","END")].concat();
+        primary.extend(header.as_bytes());primary.resize(primary.len().div_ceil(2880)*2880,b' ');primary.extend(descriptors);primary.extend(heap);primary.resize(primary.len().div_ceil(2880)*2880,0);
+        let path=directory.path().join(format!("edge-{codec}.fits.fz"));fs::write(&path,primary).unwrap();
+        let options=LoadOptions{hdu:Some(1),..Default::default()};let plane=inspect(&path,options).unwrap();let full=crate::load_file_with_options(&path,options).unwrap();
+        for (level,tx,ty) in [(0,0,0),(0,2,1),(1,1,0),(3,0,0)]{
+            let tile=read_tile(&path,&plane,level,tx,ty).unwrap();let (x,y,w,h,step)=tile_bounds(&plane.info,level,tx,ty).unwrap();
+            for oy in 0..h{for ox in 0..w{let sx=(x+ox*step+step/2).min(width-1);let sy=(y+oy*step+step/2).min(height-1);assert_eq!(tile.physical(oy*w+ox),full.physical(sy*width+sx));}}
+        }
+        let pixel=read_pixel(&path,&plane,607,272).unwrap();assert_eq!(pixel["value"].as_f64(),full.physical(272*width+607));
+    }
+}
+
+#[test]
+fn huge_sparse_image_headers_and_tiles_do_not_load_the_full_array(){
+    let directory=tempfile::tempdir().unwrap();let path=directory.path().join("huge.fits");
+    let header=[card("SIMPLE","T"),card("BITPIX","-64"),card("NAXIS","2"),card("NAXIS1","16000"),card("NAXIS2","10000"),format!("{:<80}","END")].concat();
+    let mut bytes=header.into_bytes();bytes.resize(2880,b' ');let mut file=fs::File::create(&path).unwrap();file.write_all(&bytes).unwrap();file.set_len((2880u64+16000*10000*8).div_ceil(2880)*2880).unwrap();drop(file);
+    assert!(crate::load_header(&path,0).unwrap().contains("16000"));
+    let plane=inspect(&path,LoadOptions::default()).unwrap();let tile=read_tile(&path,&plane,6,0,0).unwrap();assert!(tile.pixels.len()<=TILE_SIZE*TILE_SIZE);assert_eq!(read_pixel(&path,&plane,15999,9999).unwrap()["value"],0.);
+}

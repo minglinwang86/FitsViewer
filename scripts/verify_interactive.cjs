@@ -25,7 +25,8 @@ const save=()=>fs.writeFileSync(path.join(out,'interactive-validation.json'),JSO
    await command(first,'aperture.add',{name:'truth star',shape:{kind:'circle',center:[42.3,53.7],radius:6},background:{kind:'ring',center:[42.3,53.7],inner:9,outer:14},exclude:[]});
    await first.waitForFunction(()=>window.FitsViewer.state()?.measurements?.[0]?.net_flux>0);const s=await state(first);assert.equal(s.measurements[0].total_error,null);assert.ok(Math.abs(s.measurements[0].background_per_pixel-20)<1);return s.measurements[0];
   });
-  await check('j2000_from_real_pointer',async()=>{const s=await state(first),box=await first.locator('canvas').boundingBox(),r=s.view_rect;await first.mouse.move(box.x+(r[0]+r[2])/2,box.y+(r[1]+r[3])/2);await first.waitForFunction(()=>window.FitsViewer.state()?.wcs && /J2000.*[0-9]/.test(window.FitsViewer.state()?.j2000),undefined,{timeout:45000});return (await state(first)).j2000;});
+  // The aperture dialog covers the center of this fixed fixture; use its visible upper-right image area.
+  await check('j2000_from_real_pointer',async()=>{const s=await state(first),box=await first.locator('canvas').boundingBox(),r=s.view_rect;await first.mouse.move(box.x+r[0]+.8*(r[2]-r[0]),box.y+r[1]+.2*(r[3]-r[1]));await first.waitForFunction(()=>window.FitsViewer.state()?.cursor_pixel && window.FitsViewer.state()?.wcs && /J2000.*[0-9]/.test(window.FitsViewer.state()?.j2000),undefined,{timeout:45000});return (await state(first)).j2000;});
   await mode(first,'PRO');
   await check('star_detection_and_centroid',async()=>{const r=await tool(first,'detect_stars',{fwhm:3.3,threshold_sigma:8});const source=r.sources.reduce((a,b)=>Math.hypot(b.x-42.3,b.y-53.7)<Math.hypot(a.x-42.3,a.y-53.7)?b:a);assert.ok(Math.hypot(source.x-42.3,source.y-53.7)<.08);return source;});
   await check('cross_image_apertures_and_independent_views',async()=>{
