@@ -30,7 +30,8 @@ jobs:
           cache: npm
           cache-dependency-path: jupyter/package-lock.json
       - run: rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
-      - uses: actions/cache@v6
+      - uses: actions/cache/restore@v6
+        id: shared-cache
         with:
           path: |
             ~/.cargo/registry
@@ -41,11 +42,26 @@ jobs:
             target/release
           key: full-shared-v1-rust1.99.1-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**', 'vendor/**', 'web/locales/**') }}
           restore-keys: full-shared-v1-rust1.99.1-
+      - name: Install the JupyterLab extension builder
+        run: python -m pip install jupyterlab==4.6.4
       - name: Build once from this commit and lock every resource
         run: python scripts/build_ci_resources.py --execute --output "$RUNNER_TEMP/ci-resources"
+      - name: Retain compiler cache even if later resource packaging fails
+        if: always() && steps.shared-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/wasm-bindgen*
+            ~/.cargo/.crates*
+            target/wasm32-unknown-unknown
+            target/release
+          key: ${{ steps.shared-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v5
         with:
-          name: full-shared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: full-shared-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/ci-resources/*.whl
             ${{ runner.temp }}/ci-resources/assets-lock.json
@@ -75,7 +91,7 @@ jobs:
       - run: rustup toolchain install 1.99.1 --profile minimal
       - uses: actions/download-artifact@v6
         with:
-          name: full-shared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: full-shared-${{ github.run_id }}
           path: ${{ runner.temp }}/ci-resources
       - uses: actions/cache/restore@v6
         id: native-cache
@@ -97,6 +113,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - uses: actions/cache/save@v6
         if: steps.native-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
         with:
           path: |
             ~/.cargo/registry
@@ -183,7 +200,7 @@ jobs:
       - run: rustup toolchain install 1.99.1 --profile minimal
       - uses: actions/download-artifact@v6
         with:
-          name: full-shared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: full-shared-${{ github.run_id }}
           path: ${{ runner.temp }}/ci-resources
       - uses: actions/cache/restore@v6
         id: native-cache
@@ -198,6 +215,7 @@ jobs:
         run: python scripts/build_macos_full.py --assets-lock "$RUNNER_TEMP/ci-resources/assets-lock.json" --wheel "$(find "$RUNNER_TEMP/ci-resources" -maxdepth 1 -name '*.whl' -print -quit)" --execute --reuse-common-tests
       - uses: actions/cache/save@v6
         if: steps.native-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
         with:
           path: |
             ~/.cargo/registry
@@ -243,7 +261,7 @@ jobs:
       - run: rustup toolchain install 1.99.1 --profile minimal
       - uses: actions/download-artifact@v6
         with:
-          name: full-shared-${{ github.run_id }}-${{ github.run_attempt }}
+          name: full-shared-${{ github.run_id }}
           path: ${{ runner.temp }}/ci-resources
       - name: Linux packaging tools
         run: |

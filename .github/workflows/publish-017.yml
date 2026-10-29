@@ -1,0 +1,37 @@
+name: Publish reviewed Full 0.1.7
+
+on:
+  push:
+    branches: [codex/publish-0.1.7]
+    paths: [.github/release-approval-0.1.7.json]
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-full-0.1.7
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Verify reviewed run, artifact identities, checks and release digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/publish_reviewed_017.py --approval .github/release-approval-0.1.7.json --output "$RUNNER_TEMP/reviewed-release" --execute
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: publication-receipt-0.1.7
+          path: ${{ runner.temp }}/reviewed-release/publication-receipt.json
+          if-no-files-found: ignore

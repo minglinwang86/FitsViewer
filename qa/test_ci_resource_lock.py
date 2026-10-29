@@ -37,6 +37,15 @@ class ResourceIdentity(unittest.TestCase):
     def test_same_source_and_run_accepted(self):
         self.assertEqual(self.read(), self.value)
 
+    def test_failed_platform_retry_reuses_earlier_same_run_resources(self):
+        earlier = {**self.value, "run_attempt": "1"}
+        self.assertEqual(self.read(earlier), earlier)
+
+    def test_future_or_zero_attempt_rejected(self):
+        for attempt in ["0", "3", "-1"]:
+            with self.subTest(attempt=attempt), self.assertRaisesRegex(ValueError, "another run or source"):
+                self.read({**self.value, "run_attempt": attempt})
+
     def test_other_run_or_attempt_rejected(self):
         for field in ["run_id", "run_attempt", "repository", "source_commit"]:
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, "another run or source|Unexpected shared"):

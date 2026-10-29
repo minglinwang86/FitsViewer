@@ -39,15 +39,20 @@ def lock():
             if not isinstance(value[name], int) or value[name] <= 0:
                 raise ValueError("Invalid locked GitHub release/asset ID")
     else:
-        # CI resources are accepted only by this exact run/attempt and checkout.
-        # 同 run 的资源不能替代已审阅的发行资产锁，也不能跨提交复用。
+        # A failed platform job may reuse an earlier attempt of this exact run.
+        # 同run重试复用资源，不能跨提交、跨run或使用未来attempt的资源。
         if value.get("origin") != "github-actions-same-run":
             raise ValueError("Unexpected CI resource origin")
         expected = {"repository": "GITHUB_REPOSITORY", "source_commit": "GITHUB_SHA",
-                    "run_id": "GITHUB_RUN_ID", "run_attempt": "GITHUB_RUN_ATTEMPT"}
+                    "run_id": "GITHUB_RUN_ID"}
         if os.environ.get("GITHUB_ACTIONS") != "true" or any(
                 not os.environ.get(env) or str(value.get(key)) != os.environ[env]
                 for key, env in expected.items()):
+            raise ValueError("CI resource lock belongs to another run or source")
+        resource_attempt = str(value.get("run_attempt", ""))
+        current_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
+        if not (resource_attempt.isdecimal() and current_attempt.isdecimal()
+                and 0 < int(resource_attempt) <= int(current_attempt)):
             raise ValueError("CI resource lock belongs to another run or source")
         revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
         if not re.fullmatch(r"[0-9a-f]{40}", value["source_commit"]) or revision != value["source_commit"]:
