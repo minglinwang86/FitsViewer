@@ -24,7 +24,14 @@ const save=()=>fs.writeFileSync(path.join(out,'histogram-fixed-result.json'),JSO
   await route.fulfill({status:200,contentType:name.endsWith('.wasm')?'application/wasm':'application/javascript',headers:{'Cache-Control':'no-store'},body:asset.body});
  });
  page.on('pageerror',e=>report.errors.push(String(e).replace(/token=[^&\s"')]+/g,'token=[redacted]')));
- page.on('response',r=>{if(/\/pkg\/fitsviewer_web(?:_bg\.wasm|\.js)(?:\?.*)?$/.test(r.url()))responses.push((async()=>{const name=new URL(r.url()).pathname.split('/').pop();const actual=sha(await r.body());report.served_assets.push({file:name,sha256:actual,source:cfg.override_assets?'qa-route':'server'});assert.equal(actual,assets[name].sha256);})().catch(error=>{report.errors.push(String(error).replace(/token=[^&\s"')]+/g,'token=[redacted]'));save();}));});
+ page.on('response',r=>{if(/\/pkg\/fitsviewer_web(?:_bg\.wasm|\.js)(?:\?.*)?$/.test(r.url()))responses.push((async()=>{
+  const name=new URL(r.url()).pathname.split('/').pop(),status=r.status();
+  // Redirect/cache-validation responses have no response body. The terminal 200
+  // response is still required and hash-checked for each generated asset below.
+  if(status>=300&&status<400){(report.asset_redirects_or_cache_validation??=[]).push({file:name,status});return;}
+  assert.equal(status,200,'Unexpected generated-asset HTTP status');
+  const actual=sha(await r.body());report.served_assets.push({file:name,sha256:actual,source:cfg.override_assets?'qa-route':'server'});assert.equal(actual,assets[name].sha256);
+ })().catch(error=>{report.errors.push(String(error).replace(/token=[^&\s"')]+/g,'token=[redacted]'));save();}));});
  const command=(op,params)=>frame.evaluate(({op,params})=>window.FitsViewer.command(op,params),{op,params});
  const state=()=>frame.evaluate(()=>window.FitsViewer.state());
  async function settle(){await page.waitForTimeout(400);}

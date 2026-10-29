@@ -1,0 +1,147 @@
+name: Windows-only Full 0.1.7 revalidation
+
+on:
+  push:
+    branches: [codex/windows-revalidate-017]
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  RUSTUP_TOOLCHAIN: '1.99.1'
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  windows:
+    name: Windows x86_64 Full revalidation
+    runs-on: windows-2022
+    timeout-minutes: 70
+    defaults:
+      run:
+        working-directory: application
+        shell: pwsh
+    env:
+      CARGO_TARGET_DIR: target/windows-full
+      CARGO_ENCODED_RUSTFLAGS: ''
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout current QA and infrastructure driver
+        uses: actions/checkout@v6
+        with:
+          path: driver
+          persist-credentials: false
+      - name: Checkout exact tested application source
+        uses: actions/checkout@v6
+        with:
+          ref: f613840afb90fa88f9bc41d0f1c88e35e4bffa10
+          path: application
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.22.0'
+      - uses: ilammy/msvc-dev-cmd@v1
+      - run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Verify origin run and exact historical shared archive
+        run: |
+          python ../driver/scripts/stage_windows_revalidation.py download --application . --resources "$env:RUNNER_TEMP/ci-resources"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/cache/restore@v6
+        id: native-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            application/target/windows-full
+          key: full-windows-v1-rust1.99.1-${{ hashFiles('application/Cargo.lock', 'application/Cargo.toml', 'application/crates/**', 'application/vendor/**', 'application/web/locales/**', 'application/windows/app.ico') }}
+          restore-keys: full-windows-v1-rust1.99.1-
+      - name: Build unchanged native Full; original run already passed its IPC step
+        shell: pwsh
+        run: |
+          if ((git rev-parse HEAD).Trim() -ne 'f613840afb90fa88f9bc41d0f1c88e35e4bffa10') { throw 'Wrong application source' }
+          if (git status --porcelain --untracked-files=no) { throw 'Dirty application before compilation' }
+          $flags = @("--remap-path-prefix=$($pwd.Path)=fitsviewer-source", "--remap-path-prefix=$env:USERPROFILE/.cargo=cargo-source", '-Ctarget-feature=+crt-static')
+          $env:CARGO_ENCODED_RUSTFLAGS = $flags -join [char]31
+          cargo build --locked --release -p fitsviewer --no-default-features --features desktop,pro
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/cache/save@v6
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            application/target/windows-full
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+      - name: Stage and package wheel, portable and Setup
+        shell: pwsh
+        run: |
+          python -m pip install hatchling==1.32.4
+          python ../driver/scripts/stage_windows_revalidation.py stage --application . --resources "$env:RUNNER_TEMP/ci-resources" --native target/windows-full/release/fitsviewer.exe --output build/ci-windows
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/build_wheel.py --assets-dir build/ci-windows --windows
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/build_windows_installer.py --wheel dist/full/fitsviewer-0.1.7-py3-none-win_amd64.whl --payload "$env:RUNNER_TEMP/windows-payload" --out dist/windows --iscc 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Prepare isolated platform validation and CI-only OpenGL
+        shell: pwsh
+        run: |
+          if (git status --porcelain --untracked-files=no) { throw 'Compilation or packaging changed tracked source' }
+          Copy-Item -LiteralPath ../driver/qa/histogram_window.cjs -Destination qa/histogram_window.cjs
+          python -m venv "$env:RUNNER_TEMP/validation-venv"
+          & "$env:RUNNER_TEMP/validation-venv/Scripts/python.exe" -m pip install jupyterlab==4.6.4 jupyter-server-proxy==4.6.0 ipykernel psutil 'numpy>=2,<3' 'astropy>=6,<8'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm ci --prefix qa
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & ./qa/node_modules/.bin/playwright install chromium
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Invoke-WebRequest 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.4/mesa3d-26.2.4-release-msvc.7z' -OutFile "$env:RUNNER_TEMP/mesa.7z"
+          if ((Get-FileHash "$env:RUNNER_TEMP/mesa.7z").Hash.ToLower() -ne '351fc8c8b695878ffb3eaa044b3ead08672a48b1a045e3c3e3975811df0f6695') { throw 'CI renderer hash differs' }
+          7z x "$env:RUNNER_TEMP/mesa.7z" "-o$env:RUNNER_TEMP/mesa"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Native render, Unicode, Jupyter proxy, Notebook and cleanup
+        shell: pwsh
+        run: |
+          $env:FITSVIEWER_CI_MESA_DIR = "$env:RUNNER_TEMP/mesa/x64"
+          & "$env:RUNNER_TEMP/validation-venv/Scripts/python.exe" scripts/verify_windows.py --wheel dist/full/fitsviewer-0.1.7-py3-none-win_amd64.whl --python "$env:RUNNER_TEMP/validation-venv/Scripts/python.exe" --scratch "$env:RUNNER_TEMP/windows-runtime-test"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/reuse_platform_checks.py windows_setup_options
+          if ($LASTEXITCODE) { throw 'Setup options inputs changed; narrow rerun requires review' }
+          python scripts/verify_windows_setup.py --setup dist/windows/FitsViewer-0.1.7-windows-x86_64-setup.exe --python "$env:RUNNER_TEMP/validation-venv/Scripts/python.exe" --scratch "$env:RUNNER_TEMP/windows-setup-test" --payload "$env:RUNNER_TEMP/windows-payload" --payload-only
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Bind final packages, source and corrected QA provenance
+        run: |
+          python ../driver/scripts/stage_windows_revalidation.py receipt --application . --resources "$env:RUNNER_TEMP/ci-resources"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v5
+        with:
+          name: full-windows-x86_64
+          path: |
+            ${{ runner.temp }}/ci-resources/provenance.json
+            ${{ runner.temp }}/ci-resources/native-source-blobs.txt
+            application/dist/full/*.whl
+            application/dist/windows/*.exe
+            application/dist/windows/*.zip
+            ${{ runner.temp }}/windows-runtime-test/validation.json
+            ${{ runner.temp }}/windows-runtime-test/histogram/*.json
+            ${{ runner.temp }}/windows-runtime-test/histogram/*.png
+            ${{ runner.temp }}/windows-setup-test/validation.json
+            application/reports/screenshots/*.png
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v5
+        if: failure()
+        with:
+          name: windows-revalidation-failure-evidence
+          path: |
+            ${{ runner.temp }}/ci-resources/provenance.json
+            ${{ runner.temp }}/ci-resources/native-source-blobs.txt
+            ${{ runner.temp }}/windows-runtime-test/validation.json
+            ${{ runner.temp }}/windows-runtime-test/native-*.json
+            ${{ runner.temp }}/windows-runtime-test/histogram/*.json
+            ${{ runner.temp }}/windows-runtime-test/histogram/*.png
+            ${{ runner.temp }}/windows-setup-test/validation.json
+            application/reports/screenshots/*.png
+          if-no-files-found: ignore
