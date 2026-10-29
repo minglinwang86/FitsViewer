@@ -10,8 +10,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "jupyter"))
 from fitsviewer.interactive import (ViewerClient, Selection, SelectionError,
-                                   SelectionCancelled, SelectionTimeout, SelectionChanged)
-from fitsviewer.pyec import PyECViewer, UnsupportedDS9Command, make_pyec_xparun
+                                   SelectionCancelled, SelectionTimeout)
 
 
 def snapshot(status="selecting", points=None, revision=1, **changes):
@@ -133,90 +132,6 @@ class ClientTests(unittest.TestCase):
                 path.chmod(0o644)
                 with self.assertRaises(ValueError):
                     ViewerClient.from_runtime(path)
-
-
-class PyECAdapterTests(unittest.TestCase):
-    def viewer(self, replies):
-        client, active = selection()
-        client.start_selection.return_value = active
-        client._request.side_effect = replies
-        viewer = PyECViewer(client, open_browser=False, on_url=lambda _: None)
-        viewer.display("synthetic image.fits", hdu=1)
-        return client, viewer
-
-    def test_actual_pyec_decode_x_loop_and_q_use_one_based_image(self):
-        client, viewer = self.viewer([snapshot(points=[[0.25, 1.5]], revision=2),
-                                      snapshot("completed", [[0.25, 1.5], [5, 6]], revision=3),
-                                      snapshot("completed", [[0.25, 1.5], [5, 6]], revision=3)])
-        returned = []
-        while True:
-            output = viewer.xpaget("iexam key coordinate image").decode()
-            if output[0] == "q":
-                break
-            self.assertEqual(output[0], "x")
-            returned.append([float(x) for x in output.split()[1:]])
-        self.assertEqual(returned, [[1.25, 2.5], [6, 7]])
-
-    def test_undo_of_already_consumed_point_is_explicit(self):
-        _, viewer = self.viewer([snapshot(points=[[1, 2]], revision=2), snapshot(points=[], revision=3)])
-        self.assertTrue(viewer.get("iexam key coordinate image").startswith("x "))
-        with self.assertRaises(SelectionChanged):
-            viewer.get("iexam key coordinate image")
-
-    def test_cancel_does_not_fabricate_q(self):
-        _, viewer = self.viewer([snapshot("cancelled", revision=2)])
-        with self.assertRaises(SelectionCancelled):
-            viewer.xpaget("iexam key coordinate image")
-
-    def test_q_during_pyec_processing_keeps_the_last_point_valid(self):
-        client, viewer = self.viewer([snapshot("completed", [[2, 3]], revision=2)])
-        self.assertEqual(viewer.get("iexam key coordinate image"), "x 3 4")
-        before = client._request.call_count
-        viewer.xpa_region([[3, 4]], False)
-        self.assertEqual(client._request.call_count, before)
-
-    def test_completion_winning_feedback_request_does_not_abort_pyec(self):
-        client, viewer = self.viewer([snapshot(points=[[2, 3]], revision=2),
-                                      SelectionError("Completed during feedback"),
-                                      snapshot("completed", [[2, 3]], revision=3)])
-        self.assertEqual(viewer.get("iexam key coordinate image"), "x 3 4")
-        viewer.xpa_region([[3, 4]], False)
-        self.assertEqual(viewer.selection._snapshot["status"], "completed")
-
-    def test_scale_limits_wait_for_real_view_ack(self):
-        first = snapshot(revision=2, config_revision=2, view_revision=1)
-        second = snapshot(revision=3, config_revision=2, view_revision=2, view={"low": 10, "high": 60})
-        client, viewer = self.viewer([first, second])
-        with patch("fitsviewer.pyec.time.sleep"):
-            self.assertEqual(viewer.get("scale limits"), "10 60")
-        self.assertEqual(client._request.call_count, 2)
-
-    def test_marker_conversion_and_view_subset_are_explicit(self):
-        client, viewer = self.viewer([snapshot(revision=2), snapshot(revision=3), snapshot(revision=4)])
-        viewer.xpa_region([[1, 1], [3.5, 9]], True)
-        markers = client._request.call_args.args[1]["markers"]
-        self.assertEqual([(m["x"], m["y"]) for m in markers], [(0, 0), (2.5, 8)])
-        viewer.xpaset("scale limits -10 200")
-        self.assertEqual(client._request.call_args.args[1]["view"], {"low": -10, "high": 200})
-        viewer.xpaset("regions delete")
-        self.assertEqual(client._request.call_args.args[1]["markers"], [])
-        for command in ("iexam key coordinate physical", "iexam coordinate wcs fk5"):
-            with self.assertRaises(UnsupportedDS9Command):
-                viewer.get(command)
-        for command in ("frame 2", "catalog sdss", "scale log", "regions load /tmp/not-read.reg"):
-            with self.assertRaises(UnsupportedDS9Command):
-                viewer.set(command)
-        viewer.csystem = "fk5"
-        with self.assertRaises(UnsupportedDS9Command):
-            viewer.xpa_region([[1, 1]], False)
-
-    def test_factory_is_explicit_and_does_not_import_or_modify_pyec(self):
-        client = Mock(); client._request.return_value = {"viewer": "fitsviewer"}
-        before = set(sys.modules)
-        factory = make_pyec_xparun(client, open_browser=False)
-        viewer = factory(False)
-        self.assertTrue(viewer.status)
-        self.assertFalse(any(name.startswith("ecsnoopy") for name in set(sys.modules) - before))
 
 
 if __name__ == "__main__":

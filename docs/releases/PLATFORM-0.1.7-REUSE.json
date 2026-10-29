@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "source_commit": "6f8b15f98df8ba5df1c3e02c5cb20b14b2b393a3",
+  "run_id": 40952310116,
+  "run_url": "https://github.com/minglinwang86/FitsViewer/actions/runs/40952310116",
+  "checks": {
+    "windows_ipc": {
+      "accepted": true,
+      "files_sha256_lf": {
+        "Cargo.lock": "23a4811e4c6603f86a1d47bc42d3d106b58cef5cd40be10284b5bcdcf089c68d",
+        "Cargo.toml": "b79f96fb22eec6d6ed0a13c460677bad60123679af0f06481f11279c06c7c0eb",
+        "crates/server/Cargo.toml": "9ad7e77c72c1c06c134f871512dcabaa6c90dbde8867863b17447c7bdef142f1",
+        "crates/viewer/Cargo.toml": "8ff06f1a22694fc05a674c2ce949fc0ebee78ecc84167f07ee67d0c44d095145",
+        "crates/core/src/compressed_reader.rs": "f881dbdbad896ff739a2312f44f30bef9b7ef736d0d800848c9e32ddc258d144",
+        "crates/core/src/display.rs": "a5d9009a13c5d62a12f29797850ba34e2909d1428528d2d6078cf5038ce9c953",
+        "crates/core/src/display_tile.rs": "77a63e347b1920a035b962bf0676f1a7647300acf9ae715a2b9c2aec5818378f",
+        "crates/core/src/lib.rs": "f4dbfbb9a8514422a08723778ed418ca32725daa6e0e912cb53c6b7fa0e435b8",
+        "crates/core/src/reader.rs": "a13a3559fd535a8bb6f673d19a1ecc0ffaac4403a407d4bc989a93d32070fa7a",
+        "crates/core/src/regions.rs": "2bc34dd73d0477514806d9d39731c9d136c56cf9a8cbf5fb789a446af96c5de1",
+        "crates/core/src/remote.rs": "403b79b98dace177fd02cfda8c0cec0a888b4a4f5bb85c5a106842c5e3325776",
+        "crates/core/src/remote_tests.rs": "8db036bd33fb8fa465e641f2f5a61725915acca10e7ab07664a2232a3b7afcac",
+        "crates/core/src/spectral_reader.rs": "c3e2ac7ba23b6d0e25bc6933fa233b12fbbe06d9c22ac49e3c5b41dec850d82c",
+        "crates/core/src/view.rs": "a79b4603e22ea83e1677cecfe9dbb39a7b8596a57e2c6956edd488120aaeb766",
+        "crates/server/src/desktop_unix.rs": "de155463a2dad112a6f5e76daab88b4ecd3706ca00cc339dc8a4b4e3bfd3bcbb",
+        "crates/server/src/desktop_windows.rs": "a409d3e256b147c5b4df410edc61a31d61bf442adc44b6b5fef9bf7a2ceaf6d1",
+        "crates/server/src/download_save.rs": "a4da06f4f8511d579cea4630c9523a2329b8dc4ae7b42c6f881c8f7d96eb9b58",
+        "crates/server/src/environment.rs": "8a0d1e0956aeb9b9368bbb6252feebaad7c43e124baff774fc1ce2191ef75382",
+        "crates/server/src/main.rs": "1cac146c5074c2f918c4e05aa368312dd820f1fad8fa05ad4d342f1f190db916",
+        "crates/server/src/measurement.rs": "f312409318486fac8f0daef325693672947ed832be12d9b7032d932847c3c5cc",
+        "crates/server/src/native_images.rs": "96a79a312c12a288608f1172be730eb459c3a3cc602c3a815690d2a79aec6545",
+        "crates/server/src/native_windows.rs": "e6992004b638fa34da57ce7d28952af9ca969a63515e425874eef0cf9d963af9",
+        "crates/server/src/remote_broker.rs": "2abdc9cd4b24f4ef55cb4bd7fe2ecb52117efe8550ece556623a4bc4e30dfaeb",
+        "crates/server/src/remote_data.rs": "ead8372293eff52bc490983cd3f74b06454865a27cc0cd951e0d8901c9dd244a",
+        "crates/server/src/remote_native.rs": "8aa21c81bc27118a970e5052602438cd2ed6b0361639eddf7d860a6c718ad361",
+        "crates/server/src/remote_sources.rs": "40ffb34e964889b91e0996856612b0b3844e8e7f8a5f5e1813b13142817e8963",
+        "crates/server/src/science.rs": "23bdd4b7dbcb38ef100fc142473eb828c54d949344cbd6ec5d05e6aafff8e469",
+        "crates/server/src/science_process.rs": "3dec8a6a52897d1e38eb7bad09cf07fb53aa58383ce274a5329df2f408268929",
+        "crates/server/src/science_sessions.rs": "41855a5fa8bd9d611653d3dc1b20d497a588cea594dcb373bda0c14569170870",
+        "crates/server/src/selection.rs": "ea5f9a61d0c215199036babb1a214d06dafcfa89d2814306d82abe574f999cc4",
+        "crates/server/src/supervisor.rs": "1107068e95c43cc4e398e109fbd54130d3dbb0f51e095cbac27f4535cf6829fe"
+      }
+    },
+    "windows_setup_options": {
+      "accepted": true,
+      "files_sha256_lf": {
+        "windows/FitsViewer.iss": "b2e7c7a8cd32e5595713f9179a7fad9aede8d27112e4749f0a7bf3d4c23c7c11",
+        "windows/link_environment.py": "f95f0f664e5437d4bd8d66999e1304bd5ebf0114da2e68067f6540a5724791b9",
+        "scripts/build_windows_installer.py": "8705413d9158ca26c055065400018503c82c0f75fa7d46cc3074f2266cdb6420",
+        "jupyter/fitsviewer/install.py": "1a3db3d49f963a2498e314b44a1ec82064c96afd11f47592dd4ad2ebdff32d93",
+        "jupyter/pyproject.toml": "819b38c3a6e1abc5c5c83cdb038baeffaf979f2b72c5c7026c1f5a8ac55b66fa"
+      }
+    }
+  }
+}

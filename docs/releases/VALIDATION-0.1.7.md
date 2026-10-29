@@ -6,20 +6,22 @@ This is a source-development checkpoint, not a published cross-platform release.
 ## 2026-10-29 Linux candidate / 最新 Linux 验收
 
 Earlier counts below describe the October 28 checkpoint. The current local Full
-candidate includes the subsequent fixes, six languages and Python/PyEC manual selection.
+candidate includes the subsequent fixes, six languages and generic Python manual selection.
 Windows/macOS final builds and public publication are still pending.
 
 - Six dictionaries share **918 keys**. New-key checks passed; existing six-language
   narrow-layout and scientific numerical evidence was reused where code did not change.
-- Focused checks: Python interactive/client **18**, host selection **6**, viewer selection
+- Historical checks: Python interactive/client **18** (10 generic-client checks and
+  8 downstream-adapter checks retained privately), host selection **6**, viewer selection
   **4**, spectral analysis **8**, workspace **5**, PRO result presentation **7**, locale
   checks **4**. JavaScript selection bridge passed six controlled scenarios. These
   overlapping module checks are not a claim that the entire workspace was rerun.
-- Imported actual PyEC `snoopylib`, opted into `make_pyec_xparun`, displayed real M67,
-  selected with X/mouse, finished with Q and received matching one-based coordinates.
-  The same browser then opened another FITS at HDU 1 and returned explicit Esc cancellation.
-  Source files and PyEC source hashes stayed unchanged. This exercises the interface,
-  not a complete seeing/PSF/photometry pipeline.
+- A historical external Python client used an explicitly selected downstream adapter
+  to display real M67 data, select with X/mouse and receive one-based coordinates
+  after Q. A second FITS at HDU 1 returned explicit Esc cancellation. Input and
+  external-source hashes stayed unchanged. This was interface evidence, not a full
+  scientific pipeline. That private adapter and its integration example are excluded
+  from the current public package; the original record is archived privately.
 - The packaged wheel was installed into a fresh task-local Jupyter target. Actual Lab
   double-click, aperture mouse input, measurement and spectral-result display passed.
   Private backend header authentication and proxy access passed; no backend credential
@@ -46,6 +48,38 @@ One early selection-UI filter executed zero tests; it was not accepted as covera
 The final filter executed all four tests. An initial browser-bridge check failed
 because Node VM objects have different prototypes; the corrected test compares their
 serialized values. Both earlier results were preserved.
+
+## 2026-10-29 histogram visibility follow-up
+
+The earlier candidate is superseded for release acceptance. A real Jupyter
+switch to another document hid the first canvas at 0×0, causing the previous
+layout code to persist a 64-point content height and a top-left rectangle.
+The fix ignores transient zero/one-point viewports, re-applies saved popup
+geometry on visibility restoration, and avoids capturing egui auto-placement
+when the X button closes a window. Reopening explicitly uses the saved layout.
+
+Histogram content defaults to 360×240 points; older truncated layouts recover
+to at least 320×220, subject to the real viewport. Log counts is a serialized
+preference with a backward-compatible false default.
+
+- The hidden-canvas unit regression failed before the fix with the same 64-point
+  height seen in the real browser. Nine focused layout checks and two histogram
+  checks cover the changed module paths; simple close-button units alone did not
+  reproduce the browser-only close-frame placement bug and are not its red evidence.
+- Strict browser QA passed five overlapping groups using actual pointer input,
+  a second Jupyter document tab, explicit display:none, X/close/reopen and reload.
+  Position/size stayed identical, and both count-scale states survived reopening.
+  A source-level isolated browser route verified the actual generated response
+  bytes without changing a user installation or research kernel.
+- That final local WASM SHA256 is
+  e4e8a2b54c115012f42c89ce9dd67261b40eac51c499fb4348c09c765187b6e3;
+  the strict result JSON SHA256 is
+  29d99c0c8ee2618cf5af734ae444940308c28fa4b2d1d685ea461a6d6d43f2f0.
+  New packaged-platform validation remains required and uses served assets,
+  without source overrides, before publication.
+- Previously accepted core scientific checks are reused. Unchanged Windows IPC
+  and installer-option inputs are hash-checked against the accepted CI run;
+  new package integrity, native rendering and histogram checks still execute.
 
 ## Implemented behavior
 
@@ -100,3 +134,12 @@ There is no new Windows or macOS runtime-acceptance claim or installer in this
 checkpoint. Published 0.1.6 packages and tags remain unchanged. A future 0.1.7
 release must rebuild generated viewer/Jupyter assets and update the macOS resource
 locks against its matching Full Linux asset; it must not reuse 0.1.6 generated assets.
+
+
+## Public package cleanup boundary (2026-10-29)
+
+The public Python test file now contains ten generic selection/client checks.
+Eight adapter-specific checks and their exact original documentation are retained
+privately. The historical wheel/hash above identifies the earlier candidate; it is
+not a claim that the cleaned source has already been rebuilt or accepted on every
+platform. Generic selection behavior remains part of the public interface.

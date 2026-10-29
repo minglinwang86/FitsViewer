@@ -65,7 +65,9 @@ def main():
     assert run["head_sha"] == source and run["status"] == "completed" and run["conclusion"] == "success"
     assert run["path"] == ".github/workflows/full-release.yml" and run["event"] in {"push", "workflow_dispatch"}
     assert run["run_attempt"] == approval["run_attempt"]
-    jobs = api(f"repos/{REPO}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100")["jobs"]
+    history = api(f"repos/{REPO}/actions/runs/{run['id']}/jobs?filter=all&per_page=100")["jobs"]
+    latest = {j["name"]: j for j in sorted(history, key=lambda j: (j["started_at"] or "", j["id"]))}
+    jobs = list(latest.values())
     assert len(jobs) == 5 and all(j["conclusion"] == "success" for j in jobs), "Every platform job must pass"
     listed = api(f"repos/{REPO}/actions/runs/{run['id']}/artifacts?per_page=100")["artifacts"]
     output = args.output.resolve()
@@ -111,6 +113,7 @@ def main():
             assert len(reports[platform]) == 2 and all(p["passed"] for p in reports[platform])
             runtime = next(p for p in reports[platform] if "native_render_close_cycles" in p)
             assert len(runtime["native_render_close_cycles"]) == 3 and runtime["browser"]["passed"]
+            assert runtime["histogram"]["passed"] and all(c["passed"] for c in runtime["histogram"]["checks"])
     release = output / "release"
     release.mkdir()
     for filename in sorted(PACKAGES):

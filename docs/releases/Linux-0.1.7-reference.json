@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "scope": "Previously accepted Linux Full candidate; platform-only packaging changes may reuse these checks if runtime hashes match",
+  "scope": "Historical Linux Full candidate before public-package cleanup; hashes identify that earlier artifact, not a rebuilt current release",
   "wheel": "fitsviewer-0.1.7-py3-none-manylinux_2_28_x86_64.whl",
   "wheel_bytes": 11191023,
   "wheel_sha256": "085e8072e0535560ca2b52698cc0d7f85f664f96bbdd1def5445a808fcde5eb8",
@@ -18,14 +18,17 @@
     "javascript_bridge_scenarios": 6,
     "native_same_window_and_exit_all": true,
     "installed_wheel_jupyter": true,
-    "real_pyec_selection_and_cancel": true,
-    "two_gib_sparse_precision_and_cleanup": true
+    "two_gib_sparse_precision_and_cleanup": true,
+    "python_interactive_public_subset": 10,
+    "python_interactive_private_subset": 8,
+    "historical_external_python_selection_and_cancel": true
   },
   "limits": [
     "Counts overlap; do not sum as a whole-workspace test count",
     "The large image test is synthetic, not an observational performance benchmark",
     "Original failing template unavailable",
-    "External service availability is not guaranteed"
+    "External service availability is not guaranteed",
+    "The historical 18 client checks include 10 generic checks and 8 private downstream-adapter checks; private compatibility is not a public feature"
   ],
   "runtime_files": [
     {
@@ -453,10 +456,6 @@
       "sha256_lf": "da02ada1fe57aa57433db21bda42fc9e8914ed5a148bdc24463c2867de24c748"
     },
     {
-      "path": "jupyter/fitsviewer/pyec.py",
-      "sha256_lf": "b0826c51ea5a5bc711728146ff9447688113c91da20752a9456321b0dfcd37ae"
-    },
-    {
       "path": "jupyter/fitsviewer/remote.py",
       "sha256_lf": "2f16a74cae39f43b64cdb640c1b69306baa517e29430e6988f033438622710e7"
     },
@@ -480,5 +479,6 @@
       "path": "jupyter/fitsviewer/settings.py",
       "sha256_lf": "f1bc8799902eb4c156766928fbe3a9f8b88368fec463082392318f0dc29ee67d"
     }
-  ]
+  ],
+  "runtime_files_scope": "Historical public-source reference subset; the private adapter entry was removed. Rebuild and record a complete manifest for the next release."
 }

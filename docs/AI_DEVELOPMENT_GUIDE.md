@@ -28,7 +28,7 @@
 | 同窗打开与全部退出 | `server/src/native_windows.rs`, `viewer/src/controls.rs` | `lib.rs`/`ribbon.rs`, `remote_native.rs`, `web/index.html`, `jupyter/src/index.ts`; acknowledge opens, separate local/remote file capabilities, preserve Jupyter |
 | 普通 SSH 的独立查看 | `jupyter/fitsviewer/remote.py`, `server/src/remote_broker.rs` | `remote_native.rs`, `remote_sources.rs`, `web/remote.js`, `scripts/check_remote.py`; scopes and pairing never share master credentials |
 | 孔径测光 | `regions_ui.rs`, `core/src/regions.rs` | bridge `measure`, optional `fitsviewer_measure.py` |
-| Python/PyEC 人工选星 | `jupyter/fitsviewer/interactive.py`, `pyec.py` | `server/src/selection.rs`, `viewer/src/selection_ui.rs`, `web/index.html`; [接入说明](MANUAL_STAR_SELECTION.md)，来源/HDU/起点必须显式 |
+| Python 人工选星 | `jupyter/fitsviewer/interactive.py` | `server/src/selection.rs`, `viewer/src/selection_ui.rs`, `web/index.html`; [接入说明](MANUAL_STAR_SELECTION.md)，来源/HDU/起点必须显式 |
 | CLI/API/worker | `server/src/main.rs`, `science.rs` | `jupyter/fitsviewer/cli.py`, `scientific.py` |
 | Lab 双击、关闭释放 | `jupyter/src/index.ts` | Python `server.py`, shared viewer `release_view` |
 | Jupyter 退出与子进程回收 | `server/src/supervisor.rs` | `server.py` supervisor PID, HTTP shutdown, science process tree |

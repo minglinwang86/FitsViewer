@@ -1,6 +1,6 @@
 # FitsViewer
 
-[简体中文](README.zh-CN.md) · [Latest release](https://github.com/minglinwang86/FitsViewer/releases/latest) · [Download 0.1.6](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.6) · [Install](docs/INSTALL.md) · [Commands](docs/COMMANDS.md) · [Architecture](docs/ARCHITECTURE.md) · [Agent work log (中文)](AgentWorkLog.md)
+[简体中文](README.zh-CN.md) · [Latest release](https://github.com/minglinwang86/FitsViewer/releases/latest) · [Download 0.1.7](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.7) · [Install](docs/INSTALL.md) · [Commands](docs/COMMANDS.md) · [Architecture](docs/ARCHITECTURE.md) · [Agent work log (中文)](AgentWorkLog.md)
 
 A lightweight viewer for quickly opening and inspecting astronomical FITS images and spectra on remote servers, in local containers, and on Linux, Windows or macOS desktops. Double-click a file in JupyterLab, open it from a terminal, or embed it in a Notebook.
 
@@ -10,7 +10,9 @@ A lightweight viewer for quickly opening and inspecting astronomical FITS images
 
 ![JWST SMACS 0723 gravitational-lensing field in FitsViewer](docs/images/jwst-smacs0723-interface.png)
 
-JWST/NIRCam F277W, SMACS 0723; an earlier interface screenshot retained as the project's astronomical preview. The current 0.1.6 interface is shown below. Observations: NASA, ESA, CSA, STScI. Mosaic: [Gabriel Brammer (2022)](https://doi.org/10.5281/zenodo.6874301), CC BY 4.0. [Crop and reproduction details](docs/images/README.md).
+JWST/NIRCam F277W, SMACS 0723; an earlier interface screenshot retained as the project's astronomical preview. The module screenshots below document 0.1.6; see the [0.1.7 changes and download guide](docs/releases/v0.1.7.md) for the latest behavior. Observations: NASA, ESA, CSA, STScI. Mosaic: [Gabriel Brammer (2022)](https://doi.org/10.5281/zenodo.6874301), CC BY 4.0. [Crop and reproduction details](docs/images/README.md).
+
+0.1.7 adds direct histogram limits, same-window opening, graceful Exit all, bounded large-image display, six interface languages and an optional [Python manual star-selection interface](docs/MANUAL_STAR_SELECTION.md). Scientific values retain their original precision. [Validation scope and limits](docs/releases/VALIDATION-0.1.7.md).
 
 ## Minimal mode
 
@@ -36,7 +38,7 @@ The **Scale bar** control sits beside the HDU selector. Rotate the display by ±
 
 View 1D FITS spectra, recognized binary-table spectra, or numeric text files. Select wavelength/flux/error columns, show uncertainties, zoom and pan, and read the nearest original sample. Invalid samples break the plot instead of being joined across gaps.
 
-**Settings** switches English/简体中文, theme and default startup mode, and opens as a separate window. Select an external Python environment, inspect its actual dependencies and explicitly install selected missing packages. Chinese paths are retained for opening and copying. Popup size, position and folded state are remembered.
+**Settings** switches English, 简体中文, Italiano, Español, Deutsch or Français, theme and default startup mode, and opens as a separate window. Select an external Python environment, inspect its actual dependencies and explicitly install selected missing packages. Chinese paths are retained for opening and copying. Popup size, position and folded state are remembered.
 
 ![Minimal spectrum display using public SDSS data](docs/images/v0.1.6/mini-spectrum.png)
 

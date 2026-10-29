@@ -156,6 +156,17 @@ try:
     config_file.write_text(json.dumps(config))
     browser=output([shutil.which('node'),root/'scripts/verify_wheel.cjs',config_file])
     report['browser']=json.loads(browser.strip().splitlines()[-1])
+    histogram_config=scratch/'histogram-private.json'
+    histogram_config.write_text(json.dumps({'base_url':jupyter_info['url'],'token':jupyter_info.get('token',''),
+        'workspace':'histogram-platform-check','output':str(scratch/'histogram'),
+        'image1':'science.fits','image2':'second.fits','candidate_web':str(web),'override_assets':False}))
+    try:
+        output([shutil.which('node'),root/'qa/histogram_window.cjs',histogram_config])
+        histogram=json.loads((scratch/'histogram/histogram-fixed-result.json').read_text())
+        assert histogram['passed'] and not histogram['errors']
+        report['histogram']={'passed':True,'checks':histogram['checks'],'candidate_assets':histogram['candidate_assets']}
+    finally:
+        histogram_config.unlink(missing_ok=True)
     # Close kernels before stopping Jupyter; only processes from this test are touched.
     headers={'Authorization':'token '+jupyter_info.get('token','')}
     with get(jupyter_info['url']+'api/sessions',headers) as reply: sessions=json.load(reply)

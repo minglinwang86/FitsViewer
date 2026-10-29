@@ -90,9 +90,9 @@ Manual star picking is an independent bounded session in `server/src/selection.r
 `viewer/src/selection_ui.rs` uses the existing original-image transform and separate
 markers, without creating photometry apertures. `web/index.html` follows source/HDU,
 writer identity, revisions, cancellation and actual display-setting acknowledgements.
-The stdlib clients `jupyter/fitsviewer/interactive.py` and `pyec.py` expose final-list
-selection and a narrow incremental DS9-style adapter respectively. Browser/Jupyter
-selection is implemented; native selection IPC and a complete XPA server are not.
+The stdlib client `jupyter/fitsviewer/interactive.py` exposes final-list selection
+for external Python callers. Browser/Jupyter selection is implemented; native
+selection IPC and a complete XPA server are not.
 See [the manual selection contract](MANUAL_STAR_SELECTION.md).
 
 The independent SSH entry is `jupyter/fitsviewer/remote.py` / `fver`. It uses a

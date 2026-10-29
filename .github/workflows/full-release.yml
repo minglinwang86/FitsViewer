@@ -112,8 +112,12 @@ jobs:
           $env:CARGO_ENCODED_RUSTFLAGS = $flags -join [char]31
           cargo build --locked --release -p fitsviewer --no-default-features --features desktop,pro
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo test --locked --release -p fitsviewer --no-default-features --features desktop,pro native_windows::tests
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/reuse_platform_checks.py windows_ipc
+          $reuse = $LASTEXITCODE
+          if ($reuse -eq 1) {
+            cargo test --locked --release -p fitsviewer --no-default-features --features desktop,pro native_windows::tests
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          } elseif ($reuse -ne 0) { exit $reuse }
       - uses: actions/cache/save@v6
         if: steps.native-cache.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -154,7 +158,12 @@ jobs:
           $env:FITSVIEWER_CI_MESA_DIR = "$env:RUNNER_TEMP/mesa/x64"
           & "$env:RUNNER_TEMP/validation-venv/Scripts/python.exe" scripts/verify_windows.py --wheel dist/full/fitsviewer-0.1.7-py3-none-win_amd64.whl --python "$env:RUNNER_TEMP/validation-venv/Scripts/python.exe" --scratch "$env:RUNNER_TEMP/windows-runtime-test"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python scripts/verify_windows_setup.py --setup dist/windows/FitsViewer-0.1.7-windows-x86_64-setup.exe --python "$env:RUNNER_TEMP/validation-venv/Scripts/python.exe" --scratch "$env:RUNNER_TEMP/windows-setup-test" --payload "$env:RUNNER_TEMP/windows-payload"
+          python scripts/reuse_platform_checks.py windows_setup_options
+          $reuse = $LASTEXITCODE
+          $extra = @()
+          if ($reuse -eq 0) { $extra = @('--payload-only') }
+          elseif ($reuse -ne 1) { exit $reuse }
+          python scripts/verify_windows_setup.py --setup dist/windows/FitsViewer-0.1.7-windows-x86_64-setup.exe --python "$env:RUNNER_TEMP/validation-venv/Scripts/python.exe" --scratch "$env:RUNNER_TEMP/windows-setup-test" --payload "$env:RUNNER_TEMP/windows-payload" @extra
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v5
         with:
@@ -164,6 +173,8 @@ jobs:
             dist/windows/*.exe
             dist/windows/*.zip
             ${{ runner.temp }}/windows-runtime-test/validation.json
+            ${{ runner.temp }}/windows-runtime-test/histogram/*.json
+            ${{ runner.temp }}/windows-runtime-test/histogram/*.png
             ${{ runner.temp }}/windows-setup-test/validation.json
             reports/screenshots/*.png
           if-no-files-found: error
@@ -174,6 +185,8 @@ jobs:
           path: |
             ${{ runner.temp }}/windows-runtime-test/validation.json
             ${{ runner.temp }}/windows-runtime-test/native-*.json
+            ${{ runner.temp }}/windows-runtime-test/histogram/*.json
+            ${{ runner.temp }}/windows-runtime-test/histogram/*.png
             ${{ runner.temp }}/windows-setup-test/validation.json
             reports/screenshots/*.png
           if-no-files-found: ignore
@@ -215,7 +228,11 @@ jobs:
           key: macos-full-v1-${{ matrix.runner }}-rust1.99.1-macos11-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**', 'vendor/**', 'windows/app.png', 'web/locales/**') }}
           restore-keys: macos-full-v1-${{ matrix.runner }}-rust1.99.1-macos11-
       - name: Build native app; reuse accepted Linux common tests
-        run: python scripts/build_macos_full.py --assets-lock "$RUNNER_TEMP/ci-resources/assets-lock.json" --wheel "$(find "$RUNNER_TEMP/ci-resources" -maxdepth 1 -name '*.whl' -print -quit)" --execute --reuse-common-tests
+        run: |
+          # Metadata resolves workspace/dev dependencies for the legal inventory;
+          # fetch them without running the already accepted common tests.
+          cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+          python scripts/build_macos_full.py --assets-lock "$RUNNER_TEMP/ci-resources/assets-lock.json" --wheel "$(find "$RUNNER_TEMP/ci-resources" -maxdepth 1 -name '*.whl' -print -quit)" --execute --reuse-common-tests
       - uses: actions/cache/save@v6
         if: steps.native-cache.outputs.cache-hit != 'true'
         continue-on-error: true

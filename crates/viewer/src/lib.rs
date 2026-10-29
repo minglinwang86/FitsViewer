@@ -989,6 +989,15 @@ impl eframe::App for FitsApp {
             }
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
+        // Inactive Jupyter iframes can have a zero-sized canvas. Never clamp or
+        // persist layouts against that transient viewport. Native IPC is polled
+        // above, so a minimized app still receives a graceful Exit all request.
+        // 隐藏画布不更新布局；原生通信仍先处理，最小化时也能正常退出。
+        if !window_layout::usable_viewport(ctx.screen_rect()){
+            self.popup_windows.suspend();
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+            return;
+        }
         self.sync_coordinates(ctx);
         if i18n::set(&self.tools.prefs.language){
             #[cfg(target_arch="wasm32")] let _=text_io::browser("setLanguage",&[&self.tools.prefs.language]);

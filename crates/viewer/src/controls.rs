@@ -84,6 +84,7 @@ pub struct Preferences {
     pub language:String,
     pub render:RenderOptions,
     pub colorbar:bool,
+    pub histogram_log_counts:bool,
     pub scale_bar:bool,
     pub scale_pixels:f64,
     pub compass:bool,
@@ -101,7 +102,7 @@ pub struct Preferences {
     pub shortcuts:Vec<(String,String)>,
 }
 impl Default for Preferences {
-    fn default()->Self {Self{schema:1,mode:"Minimal".into(),default_mode:"Minimal".into(),open_in_same_window:false,compact_large_images:true,theme:"Dark".into(),language:"en".into(),render:RenderOptions::default(),colorbar:false,scale_bar:true,scale_pixels:100.,compass:false,colorbar_position:"Right".into(),toolbar:vec!["Fit".into(),"ZScale".into(),"Reset B/C".into()],ribbon_tab:"View".into(),ribbon_collapsed:false,image_pro_width:330.,spectrum_pro_width:330.,image_pro_collapsed:false,spectrum_pro_collapsed:false,image_pro_layout:serde_json::Value::Null,spectrum_pro_layout:serde_json::Value::Null,window_layouts:Default::default(),shortcuts:vec![]}}
+    fn default()->Self {Self{schema:1,mode:"Minimal".into(),default_mode:"Minimal".into(),open_in_same_window:false,compact_large_images:true,theme:"Dark".into(),language:"en".into(),render:RenderOptions::default(),colorbar:false,histogram_log_counts:false,scale_bar:true,scale_pixels:100.,compass:false,colorbar_position:"Right".into(),toolbar:vec!["Fit".into(),"ZScale".into(),"Reset B/C".into()],ribbon_tab:"View".into(),ribbon_collapsed:false,image_pro_width:330.,spectrum_pro_width:330.,image_pro_collapsed:false,spectrum_pro_collapsed:false,image_pro_layout:serde_json::Value::Null,spectrum_pro_layout:serde_json::Value::Null,window_layouts:Default::default(),shortcuts:vec![]}}
 }
 impl Preferences {
     pub fn validate(&self)->Result<(),String>{
@@ -143,6 +144,14 @@ impl Preferences {
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]fn histogram_count_scale_is_a_persistent_preference_with_legacy_default(){
+        let old=Preferences::parse("{\"schema\":1}").unwrap();assert!(!old.histogram_log_counts);
+        for selected in [true,false,true]{
+            let mut prefs=old.clone();prefs.histogram_log_counts=selected;
+            let restored=Preferences::parse(&serde_json::to_string(&prefs).unwrap()).unwrap().for_startup();
+            assert_eq!(restored.histogram_log_counts,selected);
+        }
+    }
     #[test]fn preferences_reject_conflicting_keys_and_keep_custom_names(){
         let old=Preferences::parse("{\"schema\":1}").unwrap();assert_eq!(old.language,"en");
         let mut prefs=old;prefs.language="zh-CN".into();prefs.render.palette.name="Open".into();
@@ -227,7 +236,6 @@ pub struct Tools {
     pub histogram_builds:usize,
     pub histogram_limits:Option<(f64,f64)>,
     histogram_drag_low:bool,
-    pub logarithmic_counts:bool,
     pub json:String,
     pub message:String,
     applied_theme:String,
@@ -236,7 +244,7 @@ pub struct Tools {
     io_path:String,
 }
 impl Default for Tools {
-    fn default()->Self{Self{prefs:load().for_startup(),settings_open:false,histogram_open:false,histogram:None,histogram_builds:0,histogram_limits:None,histogram_drag_low:true,logarithmic_counts:false,json:String::new(),message:String::new(),applied_theme:String::new(),shortcut_key:"Ctrl+F".into(),shortcut_action:"Fit".into(),io_path:"fitsviewer-ui.json".into()}}
+    fn default()->Self{Self{prefs:load().for_startup(),settings_open:false,histogram_open:false,histogram:None,histogram_builds:0,histogram_limits:None,histogram_drag_low:true,json:String::new(),message:String::new(),applied_theme:String::new(),shortcut_key:"Ctrl+F".into(),shortcut_action:"Fit".into(),io_path:"fitsviewer-ui.json".into()}}
 }
 impl Tools {
     pub fn apply_theme(&mut self,ctx:&egui::Context){
@@ -314,7 +322,7 @@ impl Tools {
     }
     pub fn histogram(&mut self,ctx:&egui::Context,image:Option<&FitsImage>,low:f64,high:f64,windows:&mut crate::window_layout::Runtime){
         if !self.histogram_open{return;}let mut open=self.histogram_open;
-        windows.show(ctx,crate::window_layout::Key::Histogram,crate::i18n::t("Physical-value histogram"),&mut open,egui::vec2(340.,180.),|ui|self.histogram_ui(ui,image,low,high));self.histogram_open=open;
+        windows.show(ctx,crate::window_layout::Key::Histogram,crate::i18n::t("Physical-value histogram"),&mut open,egui::vec2(360.,240.),|ui|self.histogram_ui(ui,image,low,high));self.histogram_open=open;
     }
     pub fn histogram_ui(&mut self,ui:&mut egui::Ui,image:Option<&FitsImage>,low:f64,high:f64){
         if self.histogram.is_none(){if let Some(image)=image{self.histogram=Some(Histogram::new(image,128));self.histogram_builds+=1;}}
@@ -322,7 +330,7 @@ impl Tools {
                 // Keep counts beside their control; a dock must not stretch the plot to its full height.
                 // 计数紧跟选项，直方图不随工作区高度无限扩张。
                 ui.horizontal(|ui|{
-                    ui.checkbox(&mut self.logarithmic_counts,egui::RichText::new(crate::i18n::t("Log counts")).size(11.));
+                    ui.checkbox(&mut self.prefs.histogram_log_counts,egui::RichText::new(crate::i18n::t("Log counts")).size(11.));
                     let details=format!("{} {} · {} {} · {}",hist.finite,crate::i18n::t("finite values"),hist.counts.len(),crate::i18n::t("bins"),crate::i18n::t(if hist.sampled{"sampled"}else{"full image"}));
                     ui.add(egui::Label::new(egui::RichText::new(&details).size(11.)).truncate()).on_hover_text(details);
                 });
@@ -346,7 +354,7 @@ impl Tools {
                     }
                 }
                 response.on_hover_text(crate::i18n::t("Drag Low / High markers; right-click to set High"));
-                let height=|n:u64|if self.logarithmic_counts{(n as f64).ln_1p()}else{n as f64};let maximum=height(*hist.counts.iter().max().unwrap_or(&1)).max(1.);
+                let height=|n:u64|if self.prefs.histogram_log_counts{(n as f64).ln_1p()}else{n as f64};let maximum=height(*hist.counts.iter().max().unwrap_or(&1)).max(1.);
                 for (i,&n) in hist.counts.iter().enumerate(){let x0=rect.left()+rect.width()*i as f32/hist.counts.len() as f32;let x1=rect.left()+rect.width()*(i+1) as f32/hist.counts.len() as f32;painter.rect_filled(Rect::from_min_max(Pos2::new(x0,rect.bottom()-(height(n)/maximum) as f32*rect.height()),Pos2::new(x1,rect.bottom())),0.,Color32::from_rgb(75,155,185));}
                 for (bound,label) in [(edited.0,"L"),(edited.1,"H")]{let x=to_x(bound);if x>=rect.left() && x<=rect.right(){painter.line_segment([Pos2::new(x,rect.top()),Pos2::new(x,rect.bottom())],Stroke::new(1.5_f32,Color32::YELLOW));painter.circle_filled(Pos2::new(x,rect.top()+5.),4.,Color32::YELLOW);painter.text(Pos2::new(x,rect.top()+12.),egui::Align2::CENTER_TOP,label,egui::FontId::proportional(10.),Color32::YELLOW);}}
                 let range=format!("{:.3e} … {:.3e} · {}",hist.minimum,hist.maximum,crate::i18n::t("yellow = Low / High"));

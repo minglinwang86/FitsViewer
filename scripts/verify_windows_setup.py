@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import time
 import winreg
 
@@ -17,6 +18,7 @@ parser.add_argument('--python',required=True,type=Path)
 parser.add_argument('--conda-prefix',type=Path,help='Optional dedicated Conda environment; omitted tests are reported explicitly')
 parser.add_argument('--scratch',required=True,type=Path)
 parser.add_argument('--payload',type=Path,help='Optional source payload for installed-file integrity checks')
+parser.add_argument('--payload-only',action='store_true',help='Reuse accepted unchanged installer-option checks; verify this new payload and uninstall')
 args=parser.parse_args()
 assert os.name=='nt'
 scratch=args.scratch.resolve()
@@ -65,6 +67,26 @@ def inspect(python):
     code='import json,sys; from fitsviewer.install import installation_details; print(json.dumps(installation_details()))'
     result=subprocess.run([str(python),'-c',code],env=selected,capture_output=True,text=True,encoding='utf-8',check=True)
     return json.loads(result.stdout)
+if args.payload_only:
+    assert args.payload, '--payload-only requires the current source payload'
+    try:
+        install('desktop-only',['/TASKS='])
+        assert (app/'fitsviewer.exe').is_file()
+        expected=[p for p in args.payload.resolve().rglob('*') if p.is_file()]
+        assert expected
+        for file in expected:
+            installed=app/file.relative_to(args.payload.resolve())
+            assert installed.is_file() and hashlib.sha256(installed.read_bytes()).digest()==hashlib.sha256(file.read_bytes()).digest()
+        report['installed_payload_integrity']={'files':len(expected),'sha256_matches':True}
+        assert defaults()==before
+        uninstall()
+        report['unchanged_setup_options']='Reused accepted CI run 40952310116; source hashes checked by workflow'
+        report['passed']=True
+    finally:
+        if value('Software\\RegisteredApplications','FitsViewer') is not None and (app/'unins000.exe').exists(): uninstall()
+        (scratch/'validation.json').write_text(json.dumps(report,indent=2)+'\n')
+    print(json.dumps(report))
+    sys.exit(0)
 try:
     result=install('invalid-environment',['/TASKS=','/PYTHON='+str(scratch/'missing.exe')],check=False)
     assert result.returncode!=0 and not (app/'fitsviewer.exe').exists()

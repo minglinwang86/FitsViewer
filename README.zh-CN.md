@@ -1,6 +1,6 @@
 # FitsViewer
 
-[English](README.md) · [最新版本](https://github.com/minglinwang86/FitsViewer/releases/latest) · [下载 0.1.6](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.6) · [安装](docs/INSTALL.md) · [基础命令](docs/COMMANDS.md) · [代码架构](docs/ARCHITECTURE.md) · [Agent 工作记录](AgentWorkLog.md)
+[English](README.md) · [最新版本](https://github.com/minglinwang86/FitsViewer/releases/latest) · [下载 0.1.7](https://github.com/minglinwang86/FitsViewer/releases/tag/v0.1.7) · [安装](docs/INSTALL.md) · [基础命令](docs/COMMANDS.md) · [代码架构](docs/ARCHITECTURE.md) · [Agent 工作记录](AgentWorkLog.md)
 
 一款轻量、快速启动的天文 FITS 图像与光谱查看器，为科研中使用远程服务器、本地容器时的人工查看和检查提供便捷方案，也支持 Linux、Windows 和 macOS 桌面。可在 JupyterLab 文件列表中双击打开，通过命令行调用，或内嵌到 Notebook。
 
@@ -10,7 +10,9 @@
 
 ![FitsViewer 中的 JWST SMACS 0723 引力透镜视场](docs/images/jwst-smacs0723-interface.png)
 
-JWST/NIRCam F277W 的 SMACS 0723 视场；这张较早界面的截图保留为项目天文预览，下方展示当前 0.1.6 界面。观测：NASA、ESA、CSA、STScI；拼接数据：[Gabriel Brammer (2022)](https://doi.org/10.5281/zenodo.6874301)，CC BY 4.0。[裁剪、署名与复现说明](docs/images/README.md)。
+JWST/NIRCam F277W 的 SMACS 0723 视场；这张较早界面的截图保留为项目天文预览，下方模块截图记录的是 0.1.6 界面；最新行为参见 [0.1.7 更新与下载说明](docs/releases/v0.1.7.md)。观测：NASA、ESA、CSA、STScI；拼接数据：[Gabriel Brammer (2022)](https://doi.org/10.5281/zenodo.6874301)，CC BY 4.0。[裁剪、署名与复现说明](docs/images/README.md)。
+
+0.1.7 新增直方图直接设置上下限、同窗口打开、退出全部窗口、有界大图显示、六种界面语言，以及可选的 [Python 手动选星接口](docs/MANUAL_STAR_SELECTION.md)。科学计算保留原始精度。[验证范围与限制](docs/releases/VALIDATION-0.1.7.md)。
 
 ## 极简模式
 
@@ -36,7 +38,7 @@ JWST/NIRCam F277W 的 SMACS 0723 视场；这张较早界面的截图保留为�
 
 查看一维 FITS、已识别列结构的二进制表光谱，或数值文本光谱。选择波长、流量、误差列，显示不确定度，缩放平移并读出最近的原始采样点。无效采样会断线显示，不跨缺口连线。
 
-**设置**在独立窗口中切换英文／简体中文、主题和默认启动模式，也可选择外部 Python 环境、识别其实际依赖，单击安装选中的缺失包。打开及复制保留完整中文路径；弹窗的位置、大小和收起状态会保存。
+**设置**在独立窗口中切换中文、英文、意大利语、西班牙语、德语或法语，以及主题和默认启动模式，也可选择外部 Python 环境、识别其实际依赖，单击安装选中的缺失包。打开及复制保留完整中文路径；弹窗的位置、大小和收起状态会保存。
 
 ![使用公开 SDSS 数据的极简光谱界面](docs/images/v0.1.6/mini-spectrum.png)
 

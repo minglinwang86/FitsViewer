@@ -14,10 +14,9 @@
 候选构建、源码检查、实际 GUI 验收和跨平台发布仍须分别记录，不能互相替代。
 
 **本地 Linux 收尾已完成：** 测光结果前移、光谱结果摘要/独立滚动、大图精度切换、
-Jupyter 私有后端认证均已有针对性与实际运行证据。PyEC 通过显式
-`make_pyec_xparun(client)` 使用浏览器选星并取得一/零起点明确的原图坐标；具体接入和
-不支持的 XPA 范围见 [人工选星指南](docs/MANUAL_STAR_SELECTION.md)。不要改写 PyEC
-自己的质心、剔除或测光算法。最新 wheel/hash 与边界见上述 0.1.7 验证记录；此状态
+Jupyter 私有后端认证均已有针对性与实际运行证据。通用 Python 客户端使用浏览器
+选星并取得一/零起点明确的原图坐标；接入和范围见
+[人工选星指南](docs/MANUAL_STAR_SELECTION.md)。外部科学处理保持在调用方自己的环境中。最新 wheel/hash 与边界见上述 0.1.7 验证记录；此状态
 不代表 Windows/macOS 或 GitHub 发布已经完成。为控制消耗，子智能体已全部暂停，
 未修改的科学与布局检查沿用已有证据，只补测新增或失败的部分。
 
@@ -1372,3 +1371,32 @@ acceptance of every workflow. Platform results remain pending until CI completes
 The local Linux candidate was installed independently into the user-requested local
 container without replacing its active older service, scientific dependencies or data.
 The versioned entry and rollback instructions are kept in the private installation log.
+
+
+## Public Python selection boundary (2026-10-29)
+
+An earlier unreleased candidate included a downstream compatibility shim and its
+integration notes. They were removed from public source and package inputs; the
+generic `fitsviewer.interactive` API remains. Original records and eight adapter
+checks are retained privately, separately from the ten public client checks. No
+external scientific package source is included in this public integration. The
+historical Linux wheel/hash does not validate a newly cleaned or rebuilt package.
+
+
+### Histogram hidden-canvas and close-frame correction (2026-10-29)
+
+Jupyter document-tab switching was reproduced with a zero-size canvas while the
+iframe window dimensions remained normal. Saving a constrained popup in this
+frame overwrote a valid position and size. Layout rendering now skips unusable
+viewports and restores the saved geometry when visible. A separate real X-close
+probe exposed egui auto-placement being sampled in the closing frame; closed
+windows no longer overwrite their valid geometry and reopen with an explicit
+saved position. Simplified close units had already passed before this browser
+bug was corrected, so their logs are not presented as red evidence.
+
+Log counts moved from transient Tools state into backward-compatible Preferences.
+The histogram starts with enough height for controls, plot and range; legacy tiny
+saved windows are repaired. Focused Rust and strict Jupyter pointer/tab/reload
+checks passed; packaged Windows/macOS builds must include this correction before
+release. Generic Python selection remains public; locally private integration
+helpers and their dedicated material are excluded from public source/packages.

@@ -30,7 +30,12 @@ impl Layouts {
 /// 会话状态不序列化；导入布局优先于旧帧采样，PRO 独立窗与极简弹窗分开记忆。
 #[derive(Default)]
 pub struct Runtime {context:Option<Context>,source:Layouts,current:Layouts,applied:BTreeSet<Key>,initialized:bool}
+pub(crate) fn usable_viewport(screen:Rect)->bool{screen.is_finite() && screen.width()>1. && screen.height()>1.}
 impl Runtime {
+    /// A hidden browser canvas is not a user-selected layout. Restore the saved
+    /// geometry when it becomes visible, rather than egui's temporary tiny area.
+    /// 隐藏画布不代表用户布局；恢复可见时重新应用保存的几何。
+    pub fn suspend(&mut self){self.applied.clear();}
     pub fn begin(&mut self,prefs:&Layouts,context:Option<Context>)->Option<[bool;6]>{
         if self.initialized && self.context==context && &self.source==prefs{return None;}
         self.context=context;self.source=prefs.clone();self.current=prefs.clone();self.applied.clear();self.initialized=true;
@@ -39,13 +44,25 @@ impl Runtime {
     pub fn finish(&mut self,prefs:&mut Layouts,context:Option<Context>,open:[bool;6]){
         if self.context!=context || *prefs!=self.source {self.initialized=false;return;}
         let Some(context)=context else{return;};
-        for (key,open) in Key::ALL.into_iter().zip(open){self.current.get_mut(context).entry(key).or_default().open=open;}
+        for (key,open) in Key::ALL.into_iter().zip(open){
+            self.current.get_mut(context).entry(key).or_default().open=open;
+            // egui may auto-place an area after it has been closed. Reopening
+            // must explicitly restore our saved position instead of auto-place.
+            // 重新打开时明确恢复保存位置，避免自动排布逐次把窗口向右移。
+            if !open{self.applied.remove(&key);}
+        }
         *prefs=self.current.clone();self.source=prefs.clone();
     }
     pub fn show(&mut self,ctx:&egui::Context,key:Key,title:&str,open:&mut bool,default_size:Vec2,body:impl FnOnce(&mut egui::Ui)){
         if !*open{return;}
+        if !usable_viewport(ctx.screen_rect()){self.applied.remove(&key);return;}
         let context=self.context.unwrap_or(Context::Empty);
-        let saved=self.current.get(context).get(&key).cloned().unwrap_or_default();
+        let mut saved=self.current.get(context).get(&key).cloned().unwrap_or_default();
+        // Older hidden-canvas frames could save an unusable 64-point content
+        // height. A histogram must still fit its controls, plot and range row.
+        // 同时修复旧版残留的小窗尺寸，保留有效的大窗位置与大小。
+        let minimum=if key==Key::Histogram{egui::vec2(320.,220.)}else{egui::vec2(180.,64.)};
+        if key==Key::Histogram{if let Some(size)=saved.size{saved.size=Some([size[0].max(minimum.x),size[1].max(minimum.y)]);}}
         let first=self.applied.insert(key);
         let id=egui::Id::new(("viewer-popup-v1",context,key));
         let screen=ctx.screen_rect();let margin=8_f32.min(screen.width().max(0.)/4.).min(screen.height().max(0.)/4.);let bounds=screen.shrink(margin);
@@ -55,7 +72,7 @@ impl Runtime {
         let padded=|size|crate::ui_style::padded_window_size(ctx,size);
         let mut window=egui::Window::new(egui::WidgetText::Galley(caption.clone())).id(id).open(open).resizable(true).constrain_to(bounds)
             .frame(crate::ui_style::compact_window_frame(ctx))
-            .min_size(padded(maximum.min(egui::vec2(180.,64.)))).max_size(padded(maximum)).default_size(padded(size));
+            .min_size(padded(maximum.min(minimum))).max_size(padded(maximum)).default_size(padded(size));
         if first {
             // Explicitly reset egui's in-session area/resize memory too when an
             // imported/default layout has no geometry for this window.
@@ -81,7 +98,7 @@ impl Runtime {
             // Keep content size while collapsed, and avoid disk/localStorage writes
             // during pointer movement. Logical points survive DPI changes.
             // 折叠时保留内容尺寸；拖动期间不落盘。使用逻辑点兼容 DPI 变化。
-            if !ctx.input(|input|input.pointer.primary_down()) {
+            if *open && !ctx.input(|input|input.pointer.primary_down()) {
                 let state=self.current.get_mut(context).entry(key).or_default();
                 state.collapsed=response.inner.is_none();
                 let rect=response.response.rect;let next=[rect.min.x,rect.min.y,rect.max.x,rect.max.y];
@@ -102,6 +119,66 @@ fn fit(saved:&State,bounds:Rect,default_size:Vec2)->(Option<Pos2>,Vec2){
 
 #[cfg(test)]mod tests {
     use super::*;
+    #[test]fn popup_geometry_survives_hidden_canvas_and_becomes_visible_at_the_same_place(){
+        let ctx=egui::Context::default();let mut prefs=Layouts::default();let mut runtime=Runtime::default();
+        prefs.image.insert(Key::Histogram,State{open:true,rect:Some([350.,280.,896.,630.]),size:Some([520.,310.]),..Default::default()});
+        let mut baseline=None;
+        for (frame,viewport) in [egui::vec2(1400.,950.),egui::vec2(1400.,950.),Vec2::ZERO,egui::vec2(0.,950.),egui::vec2(1400.,0.),egui::vec2(1.,1.),egui::vec2(1400.,950.),egui::vec2(1400.,950.)].into_iter().enumerate(){
+            let _=ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,viewport)),time:Some(frame as f64/60.),..Default::default()},|ctx|{
+                crate::ui_style::apply_theme(ctx,"Dark");runtime.begin(&prefs,Some(Context::Image));
+                let mut open=true;runtime.show(ctx,Key::Histogram,"Physical-value histogram",&mut open,egui::vec2(360.,240.),|ui|{ui.label("Histogram");});
+                runtime.finish(&mut prefs,Some(Context::Image),[false,true,false,false,false,false]);
+            });
+            let current=prefs.image[&Key::Histogram].clone();
+            if frame==1 {baseline=Some(current.clone());}
+            if frame>=2 {assert_eq!(Some(&current),baseline.as_ref(),"popup changed at frame {frame} with viewport {viewport:?}");}
+        }
+    }
+    #[test]fn histogram_recovers_a_legacy_truncated_content_size(){
+        let ctx=egui::Context::default();let mut prefs=Layouts::default();let mut runtime=Runtime::default();
+        prefs.image.insert(Key::Histogram,State{open:true,rect:Some([8.,8.,202.,110.]),size:Some([180.,64.]),..Default::default()});
+        let _=ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(1400.,950.))),..Default::default()},|ctx|{
+            runtime.begin(&prefs,Some(Context::Image));let mut open=true;
+            runtime.show(ctx,Key::Histogram,"Physical-value histogram",&mut open,egui::vec2(360.,240.),|ui|{ui.label("Histogram");});
+            runtime.finish(&mut prefs,Some(Context::Image),[false,true,false,false,false,false]);
+        });
+        let saved=&prefs.image[&Key::Histogram];assert!(!saved.collapsed);
+        let size=saved.size.unwrap();assert!(size[0]>=320. && size[1]>=220.,"{size:?}");
+    }
+    #[test]fn closing_and_reopening_a_popup_keeps_its_saved_position(){
+        let ctx=egui::Context::default();let mut prefs=Layouts::default();let mut runtime=Runtime::default();
+        prefs.image.insert(Key::Histogram,State{open:true,rect:Some([350.,280.,896.,630.]),size:Some([520.,310.]),..Default::default()});
+        let mut expected=None;
+        for (frame,mut open) in [true,true,false,false,true,true,false,true].into_iter().enumerate(){
+            let _=ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(1400.,950.))),time:Some(frame as f64/60.),..Default::default()},|ctx|{
+                runtime.begin(&prefs,Some(Context::Image));
+                runtime.show(ctx,Key::Histogram,"Physical-value histogram",&mut open,egui::vec2(360.,240.),|ui|{ui.label("Histogram");});
+                runtime.finish(&mut prefs,Some(Context::Image),[false,open,false,false,false,false]);
+            });
+            let saved=&prefs.image[&Key::Histogram];
+            if frame==1{expected=Some((saved.rect,saved.size));}
+            if frame>=2 && open{assert_eq!(Some((saved.rect,saved.size)),expected,"popup moved when reopened at frame {frame}");}
+        }
+    }
+    #[test]fn clicking_the_close_button_does_not_save_egui_auto_placement(){
+        let ctx=egui::Context::default();let mut prefs=Layouts::default();let mut runtime=Runtime::default();let mut open=true;
+        prefs.image.insert(Key::Histogram,State{open:true,rect:Some([350.,280.,896.,630.]),size:Some([520.,310.]),..Default::default()});
+        let draw=|ctx:&egui::Context,prefs:&mut Layouts,runtime:&mut Runtime,open:&mut bool,events:Vec<egui::Event>|{
+            let _=ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(1400.,950.))),events,..Default::default()},|ctx|{
+                crate::ui_style::apply_theme(ctx,"Dark");runtime.begin(prefs,Some(Context::Image));
+                runtime.show(ctx,Key::Histogram,"Physical-value histogram",open,egui::vec2(360.,240.),|ui|{ui.label("Histogram");});
+                runtime.finish(prefs,Some(Context::Image),[false,*open,false,false,false,false]);
+            });
+        };
+        draw(&ctx,&mut prefs,&mut runtime,&mut open,vec![]);draw(&ctx,&mut prefs,&mut runtime,&mut open,vec![]);
+        let saved=prefs.image[&Key::Histogram].clone();let rect=saved.rect.unwrap();let pos=egui::pos2(rect[2]-12.,rect[1]+12.);
+        draw(&ctx,&mut prefs,&mut runtime,&mut open,vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed:true,modifiers:Default::default()}]);
+        draw(&ctx,&mut prefs,&mut runtime,&mut open,vec![egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed:false,modifiers:Default::default()}]);
+        assert!(!open,"the actual close control must have been clicked");
+        assert_eq!(prefs.image[&Key::Histogram].rect,saved.rect,"closing must not save a temporary placement");
+        open=true;draw(&ctx,&mut prefs,&mut runtime,&mut open,vec![]);
+        assert_eq!(prefs.image[&Key::Histogram].rect,saved.rect,"reopening must restore the last visible position");
+    }
     #[test]fn pro_independent_windows_do_not_overwrite_minimal_popups(){
         let mut prefs=Layouts::default();prefs.image.insert(Key::Coordinates,State{open:true,..Default::default()});
         let mut runtime=Runtime::default();let open=runtime.begin(&prefs,Some(Context::ProImage)).unwrap();assert_eq!(open,[false;6]);
