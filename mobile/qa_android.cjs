@@ -14,7 +14,18 @@ function tapNode(xml,pattern){for(const attributes of nodes(xml))if(pattern.test
  const header=[card('SIMPLE','                    T'),card('BITPIX','                   16'),card('NAXIS','                    2'),card('NAXIS1','                   64'),card('NAXIS2','                   64'),card('END')].join('').padEnd(2880);
  const pixels=Buffer.alloc(8640);for(let i=0;i<4096;i++)pixels.writeInt16BE(i,i*2);
  fs.writeFileSync(out+'/mobile-fixture.fits',Buffer.concat([Buffer.from(header),pixels]));
- adb('install','-r',apk);adb('push',out+'/mobile-fixture.fits','/sdcard/Download/mobile-fixture.fits');
+ adb('install','-r',apk);
+ const storageSetup={attempts:0,errors:[]};
+ await until(()=>{
+  storageSetup.attempts++;
+  try{
+   adb('shell','mkdir','-p','/sdcard/Download');
+   adb('push',out+'/mobile-fixture.fits','/sdcard/Download/mobile-fixture.fits');
+   if(adb('shell','stat','-c','%s','/sdcard/Download/mobile-fixture.fits')!=='11520')throw new Error('Fixture size differs after native storage copy');
+   return true;
+  }catch(error){storageSetup.errors.push({attempt:storageSetup.attempts,stderr:String(error.stderr||error.message)});throw error;}
+  finally{fs.writeFileSync(out+'/storage-setup.json',JSON.stringify(storageSetup,null,2));}
+ },60);
  adb('shell','am','start','-W','-n','org.fitsviewer.mini.test/org.fitsviewer.mini.MainActivity');
  const pid=await until(()=>adb('shell','pidof','org.fitsviewer.mini.test'));
  adb('forward','tcp:19227','localabstract:webview_devtools_remote_'+pid);
