@@ -11,6 +11,9 @@
   place details in the title menu and allow resizing of the compact window and plot.
 - Add internal new-tab/replacement destinations in both modes and new-layer opening in PRO,
   with per-mode preferences, per-tab state and bounded retained caches.
+- Place document tabs below the toolbars; PRO shares its existing comparison row,
+  with session/file controls on the right. Keep View/Measure/Coordinates height
+  stable and prevent rapid cross-task clicks from accidentally folding the ribbon.
 - Exit all registered FitsViewer windows gracefully and optionally reuse an existing window when opening another image; Jupyter and unrelated applications remain running.
 - Native startup uses asynchronous metadata, previews and viewport tiles. Minimal mode can use compact 16-bit display tiles; PRO retains original-bit-depth tiles. Exact readouts and scientific calculations retain original data.
 - Large internally compressed FITS images use bounded decoding of the compression tiles required by the view, instead of requiring a full decoded-array cache. Original headers can be inspected independently of the full-array input limit.

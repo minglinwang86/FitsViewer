@@ -111,6 +111,10 @@ pub struct FitsApp {
     plot: spectrum::Plot,
     status_height: f32,
     ribbon_height: f32,
+    ribbon_rect: [f32;4],
+    ribbon_tabs: serde_json::Value,
+    ribbon_task_rect: [f32;4],
+    ribbon_layout: serde_json::Value,
     view_rect: [f32; 4],
     tools: controls::Tools,
     environment:environment_ui::Environment,
@@ -195,6 +199,10 @@ impl FitsApp {
             plot: spectrum::Plot::default(),
             status_height: 0.,
             ribbon_height: 0.,
+            ribbon_rect: [0.;4],
+            ribbon_tabs: serde_json::Value::Null,
+            ribbon_task_rect: [0.;4],
+            ribbon_layout: serde_json::Value::Null,
             view_rect: [0.; 4],
             tools: controls::Tools::default(),
             environment:Default::default(),
@@ -693,6 +701,10 @@ if let Some(pro)=&mut self.pro {pro.reply(reply);}
         state["selection"]=self.selection.state();
         state["histogram_controls"]=self.tools.histogram_controls.clone();
         state["ribbon_height"]=serde_json::json!(self.ribbon_height);
+        state["ribbon_rect"]=serde_json::json!(self.ribbon_rect);
+        state["ribbon_tabs"]=self.ribbon_tabs.clone();
+        state["ribbon_task_rect"]=serde_json::json!(self.ribbon_task_rect);
+        state["ribbon_layout"]=self.ribbon_layout.clone();
         state["first_frame_ready"]=serde_json::json!(self.first_frame_ready());
         state["remote_image"]=self.remote.as_ref().map_or(serde_json::Value::Null,|remote|remote.state());
         state["wcs_cache"]=self.wcs_cache.summary();
@@ -710,6 +722,7 @@ if let Some(pro)=&mut self.pro {pro.reply(reply);}
             state["pro_message"]=serde_json::json!(self.pro.as_ref().map(|p|&p.message));
             state["pro_busy"]=serde_json::json!(self.pro.as_ref().map(|p|p.busy));
             state["multi"]=serde_json::json!(self.multi.as_ref().map(|m|m.configuration()));
+            state["multi_toolbar"]=self.multi.as_ref().map_or(serde_json::Value::Null,|m|m.toolbar_geometry());
             state["cache_bytes"]=serde_json::json!(self.multi.as_ref().map(|m|m.bytes()));
         state["image_layer_renderer"]=self.pro.as_ref().and_then(|pro|pro.image_layers.as_ref()).map(|renderer|renderer.summary()).unwrap_or(serde_json::Value::Null);
         state["spectral_lines"]=self.pro.as_ref().and_then(|pro|pro.spectral_lines.as_ref()).map(|lines|lines.summary()).unwrap_or(serde_json::Value::Null);
@@ -1067,7 +1080,6 @@ impl eframe::App for FitsApp {
         self.commands(ctx);
         self.selection.validate(self.generation,self.image.as_ref().map(|i|i.info.path.as_str()),self.image.as_ref().map(|i|i.info.hdu),self.remote.as_ref().map(|r|r.manifest.source_version.as_str()),self.loading);
         self.selection.toolbar(ctx);
-        if let Some(action)=self.documents.toolbar(ctx){let result=match action{document_tabs::Action::Select(i)=>self.select_document(ctx,i),document_tabs::Action::Close(i)=>self.close_document_tab(ctx,i)};if let Err(error)=result{self.error=error;}}
         self.tools.apply_theme(ctx);
         self.sync_coordinates(ctx);
         self.shortcuts(ctx);
@@ -1097,10 +1109,14 @@ impl eframe::App for FitsApp {
         if !cfg!(feature="pro") || self.tools.prefs.mode!="PRO" || self.image.is_none(){self.tools.histogram(ctx,self.image.as_deref(),self.low,self.high,&mut self.popup_windows);}
         let spectrum=self.image.as_ref().is_some_and(|image|image.spectrum.is_some());
         let is_pro=cfg!(feature="pro") && self.tools.prefs.mode=="PRO";
+        #[allow(unused_mut)] let mut document_action=None;
+        #[allow(unused_mut)] let mut documents_shown=false;
         #[cfg(feature="pro")]
         {
         self.sync_pro(ctx);
-        let multi_action=if spectrum{ribbon_multi_action}else{self.multi.as_mut().and_then(|multi|multi.toolbar_documents(ctx,self.documents.len()<2)).or(ribbon_multi_action)};
+        let multi_action=if spectrum{ribbon_multi_action}else if let Some(multi)=&mut self.multi{
+            documents_shown=true;let (action,selected)=multi.toolbar_with_documents(ctx,&mut self.documents);document_action=selected;action.or(ribbon_multi_action)
+        }else{ribbon_multi_action};
         if let Some(action)=multi_action {
             self.cache_current();
             match action {
@@ -1112,6 +1128,9 @@ if let Some(pro)=&mut self.pro{pro.send(ctx,&self.science,self.generation,"expor
             }
         }
         }
+        // Documents sit below every top toolbar, directly before the image workspace.
+        if !documents_shown{document_action=self.documents.toolbar(ctx);}
+        if let Some(action)=document_action{let result=match action{document_tabs::Action::Select(i)=>self.select_document(ctx,i),document_tabs::Action::Close(i)=>self.close_document_tab(ctx,i)};if let Err(error)=result{self.error=error;}}
         self.sync_coordinates(ctx);
         let available=self.api.is_some() || self.science.local.is_some();
         if !spectrum{if is_pro && self.image.is_some(){self.coordinates.tick(ctx,&self.science,self.generation);}else{self.coordinates.panel(ctx,&self.science,self.generation,self.image.as_deref(),self.wcs_result.as_ref(),self.cursor_pixel,available,&mut self.popup_windows);}}

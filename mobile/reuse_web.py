@@ -81,15 +81,15 @@ def main():
             raise ValueError('Pinned accepted job is not successful: '+name)
     comparison=api(f'compare/{SOURCE}...{head}',token)
     changes=comparison.get('files',[])
-    if comparison.get('status') not in ('ahead','identical') or len(changes)>2:
+    if comparison.get('status') not in ('ahead','identical') or len(changes)>3:
         raise ValueError('Unexpected source ancestry/diff; use workflow_dispatch for a fresh build')
-    allowed={'.github/workflows/mobile-mini.yml','mobile/reuse_web.py'}
+    allowed={'.github/workflows/mobile-mini.yml','mobile/reuse_web.py','mobile/qa_android.cjs'}
     if any(item['filename'] not in allowed or item['status'] not in ('added','modified') for item in changes):
         raise ValueError('Application inputs changed; use workflow_dispatch instead of artifact reuse')
     output=args.output.resolve()
     if output.exists():raise FileExistsError('Use a clean task output directory')
     output.mkdir(parents=True)
-    receipt={'original_run':RUN,'original_source':SOURCE,'repair_commit':head,'application_source_unchanged':True,'accepted_jobs':{'web':WEB_JOB,'ios':IOS_JOB},'artifacts':{}}
+    receipt={'original_run':RUN,'original_source':SOURCE,'repair_commit':head,'application_source_unchanged':True,'test_harness_changes':[item['filename'] for item in changes if item['filename']=='mobile/qa_android.cjs'],'accepted_jobs':{'web':WEB_JOB,'ios':IOS_JOB},'artifacts':{}}
     for kind,(artifact_id,name,digest) in ARTIFACTS.items():
         metadata=api(f'actions/artifacts/{artifact_id}',token)
         if metadata['id']!=artifact_id or metadata['name']!=name or metadata['expired'] or metadata['digest']!='sha256:'+digest or metadata['workflow_run']['id']!=RUN or metadata['workflow_run']['head_sha']!=SOURCE:

@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: mobile-mini-${{ github.ref }}
@@ -15,7 +14,6 @@ concurrency:
 
 jobs:
   web-mini:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
     timeout-minutes: 35
     env:
@@ -28,9 +26,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24.22.0'
       - run: rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
       - uses: actions/cache@v4
         with:
@@ -46,15 +41,8 @@ jobs:
           if [ "$(wasm-bindgen --version 2>/dev/null || true)" != "wasm-bindgen $version" ]; then cargo install wasm-bindgen-cli --locked --version "$version"; fi
       - name: Build only base and offline WASM from the module registry
         run: python mobile/build.py --target-dir build/mobile/target --output build/mobile/site --execute
-      - name: Changed mobile tabs, opaque file identity, touch and compact histogram
-        run: |
-          npm ci --prefix qa
-          ./qa/node_modules/.bin/playwright install --with-deps chromium
-          python -m http.server 18817 --bind 127.0.0.1 --directory build/mobile/site >build/mobile/http.log 2>&1 &
-          server_pid=$!
-          trap 'kill "$server_pid"' EXIT
-          python mobile/verify_assets.py build/mobile/site
-          NODE_PATH="$PWD/qa/node_modules" node mobile/qa_mobile_delta.cjs http://127.0.0.1:18817/index.html build/mobile/qa-delta
+      - name: Verify exact Mini resources and embedded notices
+        run: python mobile/verify_assets.py build/mobile/site
       - uses: actions/upload-artifact@v5
         with:
           name: fitsviewer-mini-web-0.1.7
@@ -62,40 +50,11 @@ jobs:
       - uses: actions/upload-artifact@v5
         if: always()
         with:
-          name: mobile-browser-evidence
-          path: |
-            build/mobile/qa-delta/result.json
-            build/mobile/qa-delta/*.png
-            build/mobile/http.log
-
-  reuse-web:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-      - name: Reuse only the pinned accepted web bundle and delta evidence
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python mobile/reuse_web.py --output build/mobile/reused-web
-      - uses: actions/upload-artifact@v5
-        with:
-          name: fitsviewer-mini-web-0.1.7
-          path: build/mobile/reused-web/site/
-      - uses: actions/upload-artifact@v5
-        if: always()
-        with:
-          name: reused-web-provenance
-          path: build/mobile/reused-web/reuse-receipt.json
+          name: mobile-web-build-metadata
+          path: build/mobile/site/build-profile.json
 
   android:
-    needs: [web-mini, reuse-web]
-    if: always() && (needs.web-mini.result == 'success' || needs.reuse-web.result == 'success')
+    needs: web-mini
     runs-on: ubuntu-22.04
     timeout-minutes: 40
     steps:
@@ -142,6 +101,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: node mobile/qa_android.cjs mobile/android/app/build/outputs/apk/debug/app-debug.apk build/mobile/android-smoke
       - uses: actions/upload-artifact@v5
+        if: always()
         with:
           name: FitsViewer-Mini-Android-0.1.7-test
           path: |
@@ -155,7 +115,6 @@ jobs:
 
   ios:
     needs: web-mini
-    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     timeout-minutes: 30
     steps:

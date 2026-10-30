@@ -31,14 +31,18 @@
         "crates/server/src/native_windows.rs": "e6992004b638fa34da57ce7d28952af9ca969a63515e425874eef0cf9d963af9",
         "crates/server/src/remote_broker.rs": "2abdc9cd4b24f4ef55cb4bd7fe2ecb52117efe8550ece556623a4bc4e30dfaeb",
         "crates/server/src/remote_data.rs": "ead8372293eff52bc490983cd3f74b06454865a27cc0cd951e0d8901c9dd244a",
-        "crates/server/src/remote_native.rs": "8aa21c81bc27118a970e5052602438cd2ed6b0361639eddf7d860a6c718ad361",
+        "crates/server/src/remote_native.rs": "0f094c9df29d6dd6541c8be9e9aad22e56e619ba8e3c949dee8d9a3a730d6c9b",
         "crates/server/src/remote_sources.rs": "40ffb34e964889b91e0996856612b0b3844e8e7f8a5f5e1813b13142817e8963",
         "crates/server/src/science.rs": "23bdd4b7dbcb38ef100fc142473eb828c54d949344cbd6ec5d05e6aafff8e469",
         "crates/server/src/science_process.rs": "3dec8a6a52897d1e38eb7bad09cf07fb53aa58383ce274a5329df2f408268929",
         "crates/server/src/science_sessions.rs": "41855a5fa8bd9d611653d3dc1b20d497a588cea594dcb373bda0c14569170870",
         "crates/server/src/selection.rs": "ea5f9a61d0c215199036babb1a214d06dafcfa89d2814306d82abe574f999cc4",
         "crates/server/src/supervisor.rs": "1107068e95c43cc4e398e109fbd54130d3dbb0f51e095cbac27f4535cf6829fe"
-      }
+      },
+      "source_commit": "f613840afb90fa88f9bc41d0f1c88e35e4bffa10",
+      "run_id": 40968317884,
+      "run_url": "https://github.com/minglinwang86/FitsViewer/actions/runs/40968317884",
+      "accepted_step": "Build native Full host; check Windows window registry and IPC"
     },
     "windows_setup_options": {
       "accepted": true,

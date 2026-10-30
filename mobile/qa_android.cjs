@@ -3,10 +3,12 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
 const {execFileSync}=require('node:child_process');
 const apk=path.resolve(process.argv[2]),out=path.resolve(process.argv[3]);fs.mkdirSync(out,{recursive:true});
 const adb=(...args)=>execFileSync('adb',args,{encoding:'utf8'}).trim(),delay=ms=>new Promise(r=>setTimeout(r,ms));
-async function until(fn,seconds=60){const deadline=Date.now()+seconds*1000;let last;while(Date.now()<deadline){try{const value=await fn();if(value)return value;}catch(error){last=error;}await delay(300);}throw last||new Error('Emulator wait expired');}
+async function until(fn,seconds=60){const deadline=Date.now()+seconds*1000;let last;while(Date.now()<deadline){try{const value=await fn();if(value)return value;}catch(error){if(error.fatal)throw error;last=error;}await delay(300);}throw last||new Error('Emulator wait expired');}
 function screenshot(name){fs.writeFileSync(path.join(out,name),execFileSync('adb',['exec-out','screencap','-p']));}
 function dump(){adb('shell','uiautomator','dump','/sdcard/mobile-window.xml');return adb('shell','cat','/sdcard/mobile-window.xml');}
-function tapNode(xml,pattern){for(const node of xml.matchAll(/<node\s+([^>]+)>?/g)){const attributes=Object.fromEntries([...node[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(m=>[m[1],m[2]]));if(!pattern.test((attributes.text||'')+' '+(attributes['content-desc']||'')))continue;const b=(attributes.bounds||'').match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);if(b){adb('shell','input','tap',String((+b[1]+ +b[3])/2),String((+b[2]+ +b[4])/2));return true;}}return false;}
+function nodes(xml){return [...xml.matchAll(/<node\s+([^>]+)>?/g)].map(node=>Object.fromEntries([...node[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(m=>[m[1],m[2]])));}
+function tapBounds(attributes){const b=(attributes.bounds||'').match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);if(!b)return false;adb('shell','input','tap',String((+b[1]+ +b[3])/2),String((+b[2]+ +b[4])/2));return true;}
+function tapNode(xml,pattern){for(const attributes of nodes(xml))if(pattern.test((attributes.text||'')+' '+(attributes['content-desc']||''))&&tapBounds(attributes))return true;return false;}
 (async()=>{
  const card=(k,v)=>(k.padEnd(8)+(v===undefined?'':'= '+v)).padEnd(80);
  const header=[card('SIMPLE','                    T'),card('BITPIX','                   16'),card('NAXIS','                    2'),card('NAXIS1','                   64'),card('NAXIS2','                   64'),card('END')].join('').padEnd(2880);
@@ -26,7 +28,21 @@ function tapNode(xml,pattern){for(const node of xml.matchAll(/<node\s+([^>]+)>?/
   await until(()=>evaluate('Boolean(window.FitsViewer?.state())'),90);
   screenshot('01-startup.png');
   await evaluate('document.querySelector("#file").click()');
-  let xml=await until(()=>{const text=dump();return text.includes('com.google.android.documentsui')||text.includes('com.android.documentsui')?text:null;});
+  const systemRecovery=[];
+  let xml=await until(()=>{
+   const text=dump();
+   if(/isn't responding|is not responding/.test(text)){
+    const elements=nodes(text),title=elements.find(node=>node.package==='android'&&node['resource-id']==='android:id/alertTitle'&&node.text==="Pixel Launcher isn't responding");
+    const close=elements.find(node=>node.package==='android'&&node['resource-id']==='android:id/aerr_close'&&node.text==='Close app');
+    if(title&&close&&systemRecovery.length<2&&tapBounds(close)){
+     systemRecovery.push({dialogPackage:title.package,title:title.text,actionId:close['resource-id'],action:close.text});
+     fs.writeFileSync(out+'/system-recovery.json',JSON.stringify(systemRecovery,null,2));
+     return null;
+    }
+    const error=new Error('Unexpected or repeated Android ANR; preserve failure evidence');error.fatal=true;throw error;
+   }
+   return text.includes('com.google.android.documentsui')||text.includes('com.android.documentsui')?text:null;
+  });
   screenshot('02-system-picker.png');fs.writeFileSync(out+'/picker.xml',xml);
   if(!tapNode(xml,/mobile-fixture\.fits/)){
    tapNode(xml,/Show roots|Open navigation drawer/);await delay(500);xml=dump();
@@ -42,6 +58,6 @@ function tapNode(xml,pattern){for(const node of xml.matchAll(/<node\s+([^>]+)>?/
   await call('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
   await until(()=>evaluate(`window.FitsViewer.state().zoom>${before}`));screenshot('03-local-fits.png');
   await evaluate('document.querySelector("#close").click()');await until(()=>evaluate('!window.FitsViewer.state().loaded'));
-  fs.writeFileSync(out+'/result.json',JSON.stringify({nativeSystemPicker:true,localFile:'mobile-fixture.fits',proExcluded:true,texture:true,touchZoomButton:true,close:true,device:adb('shell','getprop','ro.product.model')},null,2));
+  fs.writeFileSync(out+'/result.json',JSON.stringify({nativeSystemPicker:true,localFile:'mobile-fixture.fits',proExcluded:true,texture:true,touchZoomButton:true,close:true,systemRecoveryCount:systemRecovery.length,systemRecovery,device:adb('shell','getprop','ro.product.model')},null,2));
  }finally{socket.close();adb('shell','am','force-stop','org.fitsviewer.mini.test');adb('forward','--remove','tcp:19227');}
 })().catch(error=>{try{screenshot('failure.png');fs.writeFileSync(out+'/failure-ui.xml',dump());}catch{}console.error(error);process.exitCode=1;});

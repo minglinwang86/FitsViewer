@@ -26,7 +26,7 @@ def main():
         if changed:
             print("Run the original check; changed inputs: " + ", ".join(changed))
             return 1
-        print("Reuse accepted " + sys.argv[1] + " from " + record["run_url"])
+        print("Reuse accepted " + sys.argv[1] + " from " + check.get("run_url", record["run_url"]))
         return 0
     except (AssertionError, KeyError, OSError, ValueError, IndexError) as error:
         print("Invalid reuse record: " + str(error), file=sys.stderr)

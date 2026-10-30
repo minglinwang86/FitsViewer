@@ -1415,3 +1415,32 @@ alongside the visible tab strip. The cache budgets bound retained content rather
 than total process memory. Focused tests cover original-HDU/measurement/view restore,
 failed opens, generated-file destinations and source eviction; unchanged scientific
 tests are reused rather than rerun solely for these UI changes.
+
+### Toolbar and PRO document-row follow-up (2026-10-30)
+
+Real Windows use exposed two remaining layout problems: the document tabs were
+drawn before the main toolbar, and View/Measure switching changed the image's top
+edge. Tabs now follow all toolbar controls. One document retains its tab row, so
+closing the second tab does not move the image. PRO reuses its existing comparison
+row: tabs take the left space, while Add files, session copying and cache status
+stay on the right. `Tabs::ui` and `Workspace::toolbar_ui` render reusable bodies;
+the app owns their combined panel and dispatches the same document/workspace actions.
+
+View/Measure/Coordinates reserve the same measured task height for the current
+width, language and mode, with natural wrapping on narrow windows. Hidden sizing
+uses independent, stable `Ui::new` IDs: `new_child` advanced the real parent's ID
+sequence only on cache misses and destabilized actual widgets. Sizing must never
+change focus, preferences, regions, generation or instantiate PRO in Minimal.
+
+A real rapid-click probe also found that egui's double-click response could fold
+the toolbar on the first activation of another task. Folding now requires that
+the clicked task was already active before the click. Tests distinguish rapid
+cross-task switching from an intentional double-click of the active task.
+
+Only the affected layout paths were tested: English/Chinese, Minimal/PRO,
+narrow/wide windows, first and settled frames, one/two documents and actual tab
+selection/close. The final PRO shared-row probe passed six browser cases and one
+six-language unit. Existing scientific, lifecycle, transport and platform runtime
+evidence keeps its original f613 source identity. New native/WASM packages are
+compiled from the final source and checked separately; old reports are never
+relabelled as new execution evidence.

@@ -24,9 +24,9 @@ struct ComparisonView{zoom:f32,pan:[f32;2],fit:bool}
 impl Default for ComparisonView{fn default()->Self{Self{zoom:1.,pan:[0.,0.],fit:true}}}
 impl ComparisonView{fn valid(&self)->bool{self.zoom.is_finite() && (0.005..=128.).contains(&self.zoom) && self.pan.iter().all(|v|v.is_finite() && v.abs()<=1e8)}}
 struct Slot {path:String,hdu:Option<usize>,image:Option<Arc<FitsImage>>,preview:Option<Arc<FitsImage>>,view:Value,apertures:Vec<Aperture>,texture:Option<egui::TextureHandle>,zoom:f32,pan:Vec2,fit:bool,touched:u64,overlay:Overlay,revision:u64,alignment:Option<Alignment>,calibration:Value}
-pub struct Workspace {slots:Vec<Slot>,pub selected:Option<usize>,secondary:Option<usize>,pub link:String,paths:String,open:bool,clock:u64,pub linked_center:Option<[f64;2]>,pub linked_ratio:f64,last_link:Option<[f64;3]>,pub message:String,pub pending_selection:Option<usize>,flux_mode:String,flux_aligned:bool,flux_allow_filter:bool,flux_options:Value,flux_target:Option<usize>}
+pub struct Workspace {slots:Vec<Slot>,pub selected:Option<usize>,secondary:Option<usize>,pub link:String,paths:String,open:bool,clock:u64,pub linked_center:Option<[f64;2]>,pub linked_ratio:f64,last_link:Option<[f64;3]>,pub message:String,pub pending_selection:Option<usize>,flux_mode:String,flux_aligned:bool,flux_allow_filter:bool,flux_options:Value,flux_target:Option<usize>,toolbar_layout:Value}
 impl Default for Workspace {fn default()->Self{Self{slots:vec![],selected:None,secondary:None,link:"Independent".into(),paths:String::new(),open:false,clock:0,linked_center:None,linked_ratio:1.,last_link:None,message:String::new(),pending_selection:None,flux_mode:"wcs".into(),flux_aligned:false,flux_allow_filter:false,
-    flux_target:None,flux_options:json!({"aperture_radius":5.,"annulus_inner":8.,"annulus_outer":12.,"fwhm":3.,"threshold_sigma":5.,"match_radius":2.,"max_stars":200,"min_matches":5})}}}
+    flux_target:None,toolbar_layout:Value::Null,flux_options:json!({"aperture_radius":5.,"annulus_inner":8.,"annulus_outer":12.,"fwhm":3.,"threshold_sigma":5.,"match_radius":2.,"max_stars":200,"min_matches":5})}}}
 impl Workspace {
     pub fn insert_layer(&mut self,image:Arc<FitsImage>,preview:Option<Arc<FitsImage>>)->Result<usize,String>{
         let index=self.add(image.info.path.clone(),Some(image.info.hdu)).ok_or("At most 32 views; close unused tabs")?;
@@ -264,22 +264,56 @@ impl Workspace {
     }
     pub fn toolbar(&mut self,ctx:&egui::Context)->Option<Action>{self.toolbar_documents(ctx,true)}
     pub fn toolbar_documents(&mut self,ctx:&egui::Context,show_views:bool)->Option<Action>{
-        let mut action=None;let mut close=None;
+        let mut action=None;
         egui::TopBottomPanel::top("multi_tabs").show(ctx,|ui|{
             crate::ribbon::align_controls(ui);
-            ui.horizontal_wrapped(|ui|{
-                ui.weak(crate::i18n::t("Layers / comparisons"));
-                if ui.button(crate::i18n::t("Add files…")).clicked(){self.open=true;}
-                if ui.button(crate::i18n::t("Copy session JSON")).clicked(){action=Some(Action::CopySession);}
+            ui.horizontal_wrapped(|ui|{action=self.toolbar_ui(ui,show_views,false);});
+        });action
+    }
+    pub fn toolbar_geometry(&self)->Value{self.toolbar_layout.clone()}
+    fn toolbar_width(ui:&egui::Ui,compact:bool)->f32{
+        let font=egui::TextStyle::Button.resolve(ui.style());let color=ui.visuals().text_color();
+        let width=|text:&str|ui.fonts(|fonts|fonts.layout_no_wrap(crate::i18n::t(text).into(),font.clone(),color).size().x);
+        let button=|text:&str|(width(text)+2.*ui.spacing().button_padding.x).max(ui.spacing().interact_size.x);
+        button("Add files…")+button("Copy session JSON")+if compact{44.}else{110.+width("Layers / comparisons")+ui.spacing().item_spacing.x}
+            +2.*ui.spacing().item_spacing.x
+    }
+    /// Share the existing PRO row: scrolling document tabs left, existing controls right.
+    pub fn toolbar_with_documents(&mut self,ctx:&egui::Context,tabs:&mut crate::document_tabs::Tabs)->(Option<Action>,Option<crate::document_tabs::Action>){
+        let mut action=None;let mut document_action=None;
+        let panel=egui::TopBottomPanel::top("multi_tabs").show(ctx,|ui|{
+            crate::ribbon::align_controls(ui);let h=ui.spacing().interact_size.y;let gap=ui.spacing().item_spacing.x;
+            let available=ui.available_rect_before_wrap();let compact=Self::toolbar_width(ui,false)+100.>available.width();
+            let right_width=Self::toolbar_width(ui,compact).min(available.width());
+            let right=Rect::from_min_size(egui::pos2(available.right()-right_width,available.top()),egui::vec2(right_width,h));
+            let left=Rect::from_min_max(available.min,egui::pos2((right.left()-gap).max(available.left()),right.bottom()));
+            let mut left_ui=ui.new_child(egui::UiBuilder::new().id_salt("document-tabs-left").max_rect(left).layout(egui::Layout::left_to_right(egui::Align::Center)));
+            left_ui.set_clip_rect(left.intersect(ui.clip_rect()));
+            document_action=tabs.ui(&mut left_ui,(left.width()-h-gap).clamp(56.,170.));
+            let mut right_ui=ui.new_child(egui::UiBuilder::new().id_salt("comparison-controls-right").max_rect(right).layout(egui::Layout::left_to_right(egui::Align::Center)));
+            action=self.toolbar_ui(&mut right_ui,false,compact);
+            let rect=|r:Rect|json!([r.min.x,r.min.y,r.max.x,r.max.y]);
+            self.toolbar_layout["documents"]=rect(left);self.toolbar_layout["controls"]=rect(right);self.toolbar_layout["compact"]=compact.into();
+            ui.allocate_rect(Rect::from_min_max(available.min,egui::pos2(available.right(),right.bottom())),egui::Sense::hover());
+        });
+        tabs.remember_row(panel.response.rect);let r=panel.response.rect;self.toolbar_layout["row"]=json!([r.min.x,r.min.y,r.max.x,r.max.y]);
+        (action,document_action)
+    }
+    pub fn toolbar_ui(&mut self,ui:&mut egui::Ui,show_views:bool,compact:bool)->Option<Action>{
+        let mut action=None;let mut close=None;
+                if !compact{ui.weak(crate::i18n::t("Layers / comparisons"));}
+                let add=ui.button(crate::i18n::t("Add files…"));if add.clicked(){self.open=true;}
+                let copy=ui.button(crate::i18n::t("Copy session JSON"));if copy.clicked(){action=Some(Action::CopySession);}
                 if show_views {for (index,slot) in self.slots.iter().enumerate(){
                     let label=slot.path.rsplit(['/', '\\']).next().unwrap_or(&slot.path);
                     if ui.selectable_label(self.selected==Some(index),format!("{label} [{}]",slot.hdu.map(|h|h.to_string()).unwrap_or_else(||"auto".into()))).clicked(){action=Some(Action::Select(index));}
                     if ui.button("×").on_hover_text(format!("{}: {}",crate::i18n::t("Remove view"),slot.path)).clicked(){close=Some(index);}
                 }}
-                ui.label(format!("{} {:.1} MiB",crate::i18n::t("Cache"),self.bytes() as f64/1048576.)).on_hover_text(crate::i18n::t("128 MiB LRU budget; active main and comparison images may exceed it."));
-                if !self.message.is_empty(){ui.label(crate::i18n::t(&self.message));}
-            });
-        });
+                let bytes=self.bytes() as f64/1048576.;let caption=if compact{format!("{bytes:.0}M")}else{format!("{} {bytes:.1} MiB",crate::i18n::t("Cache"))};
+                let cache=ui.add_sized([if compact{44.}else{110.},ui.spacing().interact_size.y],egui::Label::new(caption).truncate()).on_hover_text(format!("{} {bytes:.1} MiB · {}",crate::i18n::t("Cache"),crate::i18n::t("128 MiB LRU budget; active main and comparison images may exceed it.")));
+                if !self.message.is_empty(){if show_views{ui.label(crate::i18n::t(&self.message));}else{cache.clone().on_hover_text(crate::i18n::t(&self.message));}}
+                let rect=|r:Rect|json!([r.min.x,r.min.y,r.max.x,r.max.y]);
+                self.toolbar_layout=json!({"add":rect(add.rect),"copy":rect(copy.rect),"cache":rect(cache.rect)});
         if let Some(index)=close{action=Some(Action::Close(index));}
         action
     }
@@ -370,6 +404,32 @@ impl Workspace {
                 for aperture in &slot.apertures{crate::regions_ui::draw_shape(&painter,rect,view_zoom,&aperture.shape,Color32::YELLOW);}
             }
         self.trim();
+    }
+}
+
+#[cfg(test)]
+mod merged_document_row_tests{
+    use super::*;
+    #[test]fn zero_one_two_documents_share_one_row_and_preserve_right_controls(){
+        for (language,_) in crate::i18n::LANGUAGES{crate::i18n::set(language);
+            for width in [450.,650.,1100.]{
+                let ctx=egui::Context::default();crate::install_cjk_font(&ctx,include_bytes!("../../../web/fonts/cjk.ttf").to_vec());
+                let mut multi=Workspace::default();let mut tabs=crate::document_tabs::Tabs::default();let mut bottoms=vec![];
+                for count in [0,1,2]{
+                    if count>0{tabs.add(format!("{count}-{}.fits","long-file-name-".repeat(20)),Some(0)).unwrap();}
+                    for _ in 0..2{let _=ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(width,500.))),..Default::default()},|ctx|{
+                        egui::TopBottomPanel::top("existing-ribbon").exact_height(80.).show(ctx,|_|{});
+                        multi.toolbar_with_documents(ctx,&mut tabs);
+                        let bounds=|name:&str|{let r=&multi.toolbar_layout[name];Rect::from_min_max(egui::pos2(r[0].as_f64().unwrap() as f32,r[1].as_f64().unwrap() as f32),egui::pos2(r[2].as_f64().unwrap() as f32,r[3].as_f64().unwrap() as f32))};
+                        let row=bounds("row");let controls=bounds("controls");let documents=bounds("documents");
+                        assert!(row.height()<32. && row.top()>=80.-0.5,"{language} width={width}: {row:?}");
+                        assert!(documents.right()<=controls.left() && controls.right()<=width);
+                        for name in ["add","copy","cache"]{let r=bounds(name);assert!(controls.expand(0.5).contains_rect(r),"{language} width={width} {name}: {r:?}, controls={controls:?}");}
+                        assert!(ctx.available_rect().top()<=112.,"An extra row consumed image space");bottoms.push(row.bottom());
+                    });}
+                }assert!(bottoms.iter().all(|y|(y-bottoms[0]).abs()<0.5));
+            }
+        }crate::i18n::set("en");
     }
 }
 
