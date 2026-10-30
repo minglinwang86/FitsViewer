@@ -76,8 +76,10 @@ function tapNode(xml,pattern){for(const attributes of nodes(xml))if(pattern.test
    return elements.some(node=>node.package==='org.fitsviewer.mini.test')&&!documentNodes(current).length?current:null;
   },30);
   screenshot('02c-picker-returned.png');
-  const chosen=await evaluate('document.querySelector("#file").files[0]?.name');assert.equal(chosen,'mobile-fixture.fits');
+  // The shared loader clears input.value after consuming its bytes.
+  const chosen=await evaluate('document.querySelector("#status").textContent');assert.equal(chosen,'mobile-fixture.fits');
   const loaded=await until(()=>evaluate('window.FitsViewer.state().loaded&&window.FitsViewer.state().texture?window.FitsViewer.state():null'),90);
+  fs.writeFileSync(out+'/loaded-state.json',JSON.stringify(loaded,null,2));
   assert.equal(loaded.width,64);assert.equal(loaded.build_features.pro,false);
   const before=loaded.zoom;
   const b=await evaluate('document.querySelector("#zoom-in").getBoundingClientRect().toJSON()');
