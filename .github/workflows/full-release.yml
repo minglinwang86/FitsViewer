@@ -79,6 +79,9 @@ jobs:
         run: python -m pip install jupyterlab==4.6.4
       - name: Build once from this commit and lock every resource
         run: python scripts/build_ci_resources.py --execute --output "$RUNNER_TEMP/ci-resources"
+      - name: Keep the UI scope proof inside the flat resource archive
+        if: steps.mode.outputs.ui_only == 'true'
+        run: cp "$RUNNER_TEMP/ci-resources-scope.json" "$RUNNER_TEMP/ci-resources/ci-resources-scope.json"
       - name: Retain compiler cache even if later resource packaging fails
         if: always() && steps.shared-cache.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -99,7 +102,7 @@ jobs:
             ${{ runner.temp }}/ci-resources/*.whl
             ${{ runner.temp }}/ci-resources/assets-lock.json
             ${{ runner.temp }}/ci-resources/resources-manifest.json
-            ${{ runner.temp }}/ci-resources-scope.json
+            ${{ runner.temp }}/ci-resources/ci-resources-scope.json
           if-no-files-found: error
           retention-days: 7
 

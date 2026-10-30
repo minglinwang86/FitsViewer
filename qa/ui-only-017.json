@@ -81,5 +81,6 @@
         "sha256": "67a2221319dcf6ae48657028ac87898f2b482948d1fb88936de72602a4056356"
       }
     }
-  }
+  },
+  "resource_archive_note": "Keep scope proof beside the locked wheel so the Actions artifact remains flat; application source and targeted tests unchanged."
 }
