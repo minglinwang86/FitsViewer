@@ -1444,3 +1444,30 @@ six-language unit. Existing scientific, lifecycle, transport and platform runtim
 evidence keeps its original f613 source identity. New native/WASM packages are
 compiled from the final source and checked separately; old reports are never
 relabelled as new execution evidence.
+
+### 0.1.7 publication and installation (2026-10-30)
+
+Release `v0.1.7` targets application/source commit
+`841fca5ceede115e129fcf52d8a3ec0aae2b8cc0`. Build run `40977438784` completed
+five jobs: one shared resource build and Windows, Linux, Apple Silicon and Intel
+Mac packaging. Only the changed UI paths were functionally retested; schema-3
+approval records bind those exact source files and keep older runtime/science
+reports at their original `f613` commit. New archives/wheels received independent
+CRC, architecture, Full build-info and same-run WASM/resource checks.
+
+The first publication uploaded all ten assets but failed to retrieve an untagged
+draft by `releases/tags/v0.1.7`. Recovery enumerates authenticated releases, checks
+the unique draft's release ID, target commit, all package digests, source archive,
+JSON/ZIP evidence and SHA256SUMS, then publishes by ID. Recovery run `40979948107`
+succeeded; no application rebuild, test rerun or package re-upload was needed.
+`scripts/finalize_release_017.py` documents this bounded, idempotent recovery.
+
+Windows was upgraded in its existing per-user installation, preserving Python
+binding and prior options. Only FitsViewer was upgraded in Python, with no new
+science/Jupyter dependencies; app executable, icon, launch entries and Full
+features matched the release. The existing Windows Jupyter enable command emitted
+two validation warnings, recorded privately; metadata installation is not claimed
+as Windows Jupyter end-to-end acceptance. The local container's independent 0.1.7
+environment was replaced atomically with the final clean Linux wheel and verified
+against RECORD/HTTP asset hashes. Running Jupyter/research kernels were preserved;
+an already-running backend may retain its old executable inode until next startup.
