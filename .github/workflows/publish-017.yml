@@ -28,7 +28,16 @@ jobs:
       - name: Verify reviewed run, artifact identities, checks and release digests
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python scripts/publish_reviewed_017.py --approval .github/release-approval-0.1.7.json --output "$RUNNER_TEMP/reviewed-release" --execute
+        run: |
+          python - <<'PY'
+          import json, os, subprocess, sys
+          path = '.github/release-approval-0.1.7.json'
+          approval = json.load(open(path))
+          script = ('finalize_release_017.py' if approval.get('resume_existing_draft') is True
+                    else 'publish_reviewed_017.py')
+          subprocess.run([sys.executable, 'scripts/' + script, '--approval', path,
+                          '--output', os.environ['RUNNER_TEMP'] + '/reviewed-release', '--execute'], check=True)
+          PY
       - uses: actions/upload-artifact@v5
         if: always()
         with:

@@ -40,5 +40,6 @@
   "ui_record": {
     "path": "qa/ui-only-017.json",
     "sha256": "8498a9eed7ffdbdd84e1468988593e8360e4d04c23a9a2e9731f57d88fb843a5"
-  }
+  },
+  "resume_existing_draft": true
 }
