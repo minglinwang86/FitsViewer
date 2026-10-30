@@ -7,13 +7,15 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: mobile-mini-${{ github.ref }}
+  group: mobile-mini-picker-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   web-mini:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
     timeout-minutes: 35
     env:
@@ -54,6 +56,7 @@ jobs:
           path: build/mobile/site/build-profile.json
 
   android:
+    if: github.event_name == 'workflow_dispatch'
     needs: web-mini
     runs-on: ubuntu-22.04
     timeout-minutes: 40
@@ -114,6 +117,7 @@ jobs:
           path: build/mobile/android-smoke/
 
   ios:
+    if: github.event_name == 'workflow_dispatch'
     needs: web-mini
     runs-on: macos-15
     timeout-minutes: 30
@@ -145,6 +149,7 @@ jobs:
           xcrun simctl terminate "$udid" org.fitsviewer.mini
           xcrun simctl shutdown "$udid"
       - uses: actions/upload-artifact@v5
+        if: always()
         with:
           name: FitsViewer-Mini-iOS-0.1.7-UNSIGNED
           path: build/mobile/FitsViewer-Mini-iOS-0.1.7-UNSIGNED.app.zip
@@ -153,4 +158,46 @@ jobs:
         with:
           name: ios-simulator-evidence
           path: build/mobile/ios-simulator-startup.png
+
+  android-picker-recheck:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Reuse exact accepted APK without rebuilding application inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 mobile/reuse_android.py --output build/mobile/reused-android
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.22.0'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Permit emulator acceleration on the hosted runner
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Recheck only native picker return and touch using the same APK
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: node mobile/qa_android.cjs build/mobile/reused-android/app-debug.apk build/mobile/android-picker-recheck
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: android-picker-recheck-evidence
+          path: |
+            build/mobile/reused-android/reuse-receipt.json
+            build/mobile/android-picker-recheck/
 

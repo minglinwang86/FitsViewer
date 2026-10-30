@@ -44,12 +44,28 @@ function tapNode(xml,pattern){for(const attributes of nodes(xml))if(pattern.test
    return text.includes('com.google.android.documentsui')||text.includes('com.android.documentsui')?text:null;
   });
   screenshot('02-system-picker.png');fs.writeFileSync(out+'/picker.xml',xml);
-  if(!tapNode(xml,/mobile-fixture\.fits/)){
-   tapNode(xml,/Show roots|Open navigation drawer/);await delay(500);xml=dump();
-   if(!tapNode(xml,/^Downloads?\s*$/))throw new Error('Could not select Downloads in the native file picker');
-   await delay(700);xml=dump();
-   if(!tapNode(xml,/mobile-fixture\.fits/))throw new Error('Native picker did not expose the pushed local FITS fixture');
+  const documentNodes=text=>nodes(text).filter(node=>/^(com\.google\.android|com\.android)\.documentsui$/.test(node.package||''));
+  const fileNode=text=>documentNodes(text).find(node=>node.text==='mobile-fixture.fits');
+  if(!fileNode(xml)){
+   const drawer=documentNodes(xml).find(node=>/^(Show roots|Open navigation drawer)$/.test(node['content-desc']||''));
+   if(!drawer||!tapBounds(drawer))throw new Error('Native DocumentsUI navigation drawer was not found');
+   xml=await until(()=>{const current=dump();return documentNodes(current).some(node=>/^Downloads?$/.test(node.text||''))?current:null;},30);
+   fs.writeFileSync(out+'/roots.xml',xml);screenshot('02a-roots.png');
+   const downloads=documentNodes(xml).find(node=>/^Downloads?$/.test(node.text||''));
+   if(!tapBounds(downloads))throw new Error('Could not select Downloads in the native file picker');
+   xml=await until(()=>{const current=dump();return fileNode(current)?current:null;},30);
   }
+  fs.writeFileSync(out+'/downloads.xml',xml);screenshot('02b-downloads.png');
+  const selected=fileNode(xml);if(!selected||!tapBounds(selected))throw new Error('Native picker did not expose the exact local FITS filename label');
+  fs.writeFileSync(out+'/selection-target.json',JSON.stringify(selected,null,2));
+  xml=await until(()=>{
+   const current=dump(),elements=nodes(current);
+   fs.writeFileSync(out+'/after-selection.xml',current);
+   if(elements.some(node=>node.package==='com.google.android.apps.photos')){const error=new Error('Native selection opened Google Photos rather than returning to FitsViewer');error.fatal=true;throw error;}
+   return elements.some(node=>node.package==='org.fitsviewer.mini.test')&&!documentNodes(current).length?current:null;
+  },30);
+  screenshot('02c-picker-returned.png');
+  const chosen=await evaluate('document.querySelector("#file").files[0]?.name');assert.equal(chosen,'mobile-fixture.fits');
   const loaded=await until(()=>evaluate('window.FitsViewer.state().loaded&&window.FitsViewer.state().texture?window.FitsViewer.state():null'),90);
   assert.equal(loaded.width,64);assert.equal(loaded.build_features.pro,false);
   const before=loaded.zoom;
