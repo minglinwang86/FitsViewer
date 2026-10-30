@@ -1,0 +1,44 @@
+{
+  "schema": 3,
+  "reviewed": true,
+  "version": "0.1.7",
+  "source_commit": "841fca5ceede115e129fcf52d8a3ec0aae2b8cc0",
+  "run_id": 40977438784,
+  "run_attempt": 1,
+  "shared_artifact": "full-shared-40977438784",
+  "artifacts": {
+    "full-linux-x86_64": {
+      "id": 12942779429,
+      "sha256": "1851ebd8ec94904b348e82d4e4f98e019f917c88d56e808bb81ba87b46ec63d1"
+    },
+    "full-macos-arm64": {
+      "id": 12943810344,
+      "sha256": "cc36c662f7b7f4e185f6f6f8e9d2f9b2c8882b1c07bca116199cf68e534b207d"
+    },
+    "full-macos-x86_64": {
+      "id": 12943068330,
+      "sha256": "f5410d1b8bad9c1ff7774f5eb9a708cbf844d42d3b346f3ec157259570cabf77"
+    },
+    "full-windows-x86_64": {
+      "id": 12942359543,
+      "sha256": "9b0a9a7c6252e3a6fbfe371958225614f9a6f4f00acd08a32a3ab926d662fa45"
+    },
+    "full-shared-40977438784": {
+      "id": 12942823768,
+      "sha256": "96368309ce02d1db3153f43624d5e7d8544f018b2c2d397175c27e8f04065874"
+    }
+  },
+  "package_sha256": {
+    "fitsviewer-0.1.7-py3-none-manylinux_2_28_x86_64.whl": "1836ae0e59523a253a91e5bb09f59b11454186e1df26512a57db1c343a8a6b9e",
+    "FitsViewer-0.1.7-macos-arm64-portable.zip": "cee7df77973b19b4ce5a977838ee070593c33945df1adf9b66262bf69bb06db0",
+    "FitsViewer-0.1.7-macos-x86_64-portable.zip": "d241aa6b00586a941137cabb1f5d396da499415635bbc4e5fff086624123b129",
+    "fitsviewer-0.1.7-py3-none-win_amd64.whl": "044387ecf20d2240c589e2305663e3a8b75d50fcc6b738cb3b1da8a02ee2647a",
+    "FitsViewer-0.1.7-windows-x86_64-portable.zip": "90fa47fb5993b20408e21028a3cfb54b523e99da7b3e0d4d4ab9d8fc2335c075",
+    "FitsViewer-0.1.7-windows-x86_64-setup.exe": "fbf874f97eb3d83ee8bf47e84e62d0d1af79ff051c058125d9ac14c9b6c91093"
+  },
+  "ui_only": true,
+  "ui_record": {
+    "path": "qa/ui-only-017.json",
+    "sha256": "8498a9eed7ffdbdd84e1468988593e8360e4d04c23a9a2e9731f57d88fb843a5"
+  }
+}
