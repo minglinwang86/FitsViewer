@@ -171,6 +171,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 mobile/reuse_android.py --output build/mobile/reused-android
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
       - uses: actions/setup-node@v6
         with:
           node-version: '24.22.0'
